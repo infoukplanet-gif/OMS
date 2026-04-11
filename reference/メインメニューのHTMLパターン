@@ -1,0 +1,19 @@
+<li class="dropdown">
+  <a class="dropdown-toggle" href="javascript:void(0)">
+    <i class="icon-shopping-cart"></i>
+    <span class="nav-collapse">受注</span>
+    <b class="caret"></b>
+  </a>
+  <ul class="dropdown-menu">
+    <li class="nav-header">セクション名</li>
+    <li><a class="dropdown-menu-row" href="/Userjyuchu">受注伝票管理</a></li>
+    <!-- サブメニュー -->
+    <li class="dropdown-submenu">
+      <a class="dropdown-toggle dropdown-menu-row">メール</a>
+      <ul class="dropdown-menu">
+        <li><a href="/Usermailsend/nyukin">入金確認メール送信</a></li>
+      </ul>
+    </li>
+    <li class="divider"></li>
+  </ul>
+</li>

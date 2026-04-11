@@ -1,0 +1,31 @@
+<!-- 検索条件ドロップダウン（部分一致/前方一致/後方一致/完全一致/除外） -->
+<ul class="search_operator_listbox">
+  <li class="search_operator_list">
+    <a class="search_operator_link">
+      <div class="search_operator_partial">部分一致</div>
+    </a>
+  </li>
+  <li class="search_operator_list">
+    <a class="search_operator_link">
+      <div class="search_operator_lefthand">前方一致</div>
+    </a>
+  </li>
+  <li class="search_operator_list">
+    <a class="search_operator_link">
+      <div class="search_operator_righthand">後方一致</div>
+    </a>
+  </li>
+  <li class="search_operator_list">
+    <a class="search_operator_link">
+      <div class="search_operator_perfect">完全一致</div>
+    </a>
+  </li>
+  <li class="search_operator_list">
+    <a class="search_operator_link">
+      <div class="search_operator_not">除外キーワード</div>
+    </a>
+  </li>
+</ul>
+<div class="controls">
+  <input id="sea_jyuchu_search_field02" type="text" class="auto-trim">
+</div>

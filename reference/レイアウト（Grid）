@@ -1,0 +1,7 @@
+<div class="row-fluid">
+  <div class="span12">全幅</div>
+</div>
+<div class="row-fluid">
+  <div class="span6">半幅</div>
+  <div class="span6">半幅</div>
+</div>

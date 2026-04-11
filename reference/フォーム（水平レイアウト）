@@ -1,0 +1,48 @@
+<form class="form-horizontal">
+  <div class="control-group">
+    <label class="control-label">ラベル</label>
+    <div class="controls">
+      <input type="text">
+    </div>
+  </div>
+</form>
+```
+
+---
+
+## 5. アイコン一覧（使用確認済み）
+
+| アイコンクラス | 用途 |
+|---------------|------|
+| icon-shopping-cart | 受注メニュー |
+| icon-truck | 出荷メニュー |
+| icon-pencil | 商品メニュー |
+| icon-inbox | 発注・仕入メニュー |
+| icon-bar-chart | 分析メニュー |
+| icon-cog | 設定メニュー |
+| icon-user icon-2x | ユーザーアイコン |
+| icon-bell icon-2x | 通知ベル |
+| icon-search | 検索 |
+| icon-phone | 電話番号 |
+| icon-list-alt | 一覧 |
+| icon-arrow-right | 矢印 |
+| icon-external-link | 外部リンク |
+
+---
+
+## 6. ページURLパターン
+```
+/Userjyuchu          → 受注伝票管理（一覧）
+/Userjyuchu/index    → 受注伝票管理（検索条件付き）
+/Usercsv             → CSVインポート系
+/User_Syohin_Search  → 商品管理（Search系は検索）
+/User_Syohin_Upload  → 商品管理（Upload系は一括登録）
+/Userhachu           → 発注管理
+/Usersire            → 仕入管理
+/Userhenpin          → 返品管理
+/Userdownload/xxx    → ダウンロード系
+/usertools/xxx       → ユーティリティ系ツール
+/User_basic_xxx      → 基本設定系
+/Usermailset/xxx     → メール設定系
+/Userinspection      → 分析・照会系
+/Usermst             → マスタ管理系

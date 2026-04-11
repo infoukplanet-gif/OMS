@@ -1,0 +1,8 @@
+<ul class="nav nav-pills">
+  <li class="active"><a href="#tab1">伝票操作</a></li>
+  <li><a href="#tab2">検索履歴</a></li>
+</ul>
+
+<ul class="nav nav-tabs">
+  <li class="active"><a href="#tab">タブ名</a></li>
+</ul>

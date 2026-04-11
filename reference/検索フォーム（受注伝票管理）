@@ -1,0 +1,9 @@
+<div class="search-denpyo">
+  <div class="search-denpyo-input-wrapper">
+    <input class="search-denpyo-input" type="text" 
+           placeholder="伝票番号か受注番号で検索 (空欄の場合全件検索)">
+  </div>
+  <div class="search-denpyo-button-wrapper">
+    <button class="btn btn-primary search-denpyo-button">Q検索</button>
+  </div>
+</div>

@@ -1,0 +1,3 @@
+<div class="alert alert-info">情報メッセージ</div>
+<div class="alert alert-error alert-block">エラーメッセージ</div>
+<div class="alert alert-danger">危険メッセージ</div>

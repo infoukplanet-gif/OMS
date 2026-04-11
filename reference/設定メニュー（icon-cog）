@@ -1,0 +1,4 @@
+基本： /User_basic_companysetting（企業）、/User_basic_shopsetting（店舗）、/User_basic_userset（担当者）、/User_basic_rolema（権限グループ）、/User_basic_batchset（自動実行処理）、/Userapiset（API）、/Userip（IPアドレス）
+受注設定： /Usercsvformat（一括登録パターン）、/Usercsvkakunin（確認内容）、/Usercsvdefault（規定値）、/Usercsvtesuryo（支払方法別手数料）、/Usercsvhenkan（支払発送変換）、/Userdateset（日付自動登録）、/Userjyogaiarea（除外地域）、/Usercsvnouhinsho（納品書テンプレート）、/Usercsvhaisousijisyo（出荷指示書テンプレート）
+商品設定： /User_syohin_zaiko_wari（在庫振り分け）、/User_syohin_code_kimo（商品コード紐づけ）、/Usercsvnouperiod（納期区分）
+メール設定： /Usermailset/svr〜/Usermailset（各種メール設定）

@@ -1,0 +1,7 @@
+<button class="btn">通常</button>
+<button class="btn btn-primary">プライマリ（青）</button>
+<button class="btn btn-mini">ミニ</button>
+<button class="btn btn-mini btn-primary">ミニ・プライマリ</button>
+<button class="btn btn-info">情報</button>
+<button class="btn btn-inverse">インバース</button>
+<button class="btn btn-alert">アラート</button>
