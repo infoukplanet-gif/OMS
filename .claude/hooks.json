@@ -1,0 +1,41 @@
+{
+  "$schema": "https://claude.ai/schemas/hooks.json",
+  "_comment": "OMS自律ガードフック群。everything-claude-code / skills.sh / aitmpl.com を参考にOMS向け最適化。severityは standard。",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "name": "pre:bash:block-no-verify",
+        "description": "git commit --no-verify / --no-gpg-sign をブロック。フック回避を防ぐ。",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const cmd=i.tool_input?.command||'';if(/--no-verify|--no-gpg-sign/.test(cmd)){console.error('[OMS-HOOK] BLOCKED: --no-verify is forbidden. Fix the underlying issue.');process.exit(2)}process.stdout.write(d)})\""
+      },
+      {
+        "matcher": "Bash",
+        "name": "pre:bash:block-dangerous",
+        "description": "rm -rf / drop database / force push to main をブロック。",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const cmd=i.tool_input?.command||'';const bad=[/rm\\s+-rf\\s+\\//,/drop\\s+(database|schema)/i,/git\\s+push.*--force.*\\b(main|master)\\b/,/git\\s+reset\\s+--hard\\s+origin/];for(const r of bad){if(r.test(cmd)){console.error('[OMS-HOOK] BLOCKED: dangerous command pattern: '+r);process.exit(2)}}process.stdout.write(d)})\""
+      },
+      {
+        "matcher": "Write|Edit",
+        "name": "pre:config-protection",
+        "description": "eslint / tsconfig / next.config を弱める変更を警告。",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const p=i.tool_input?.file_path||'';const c=(i.tool_input?.content||i.tool_input?.new_string||'');if(/(eslint|tsconfig|next\\.config)/i.test(p)&&/(strict\\s*:\\s*false|noImplicitAny\\s*:\\s*false|ignoreBuildErrors\\s*:\\s*true|ignoreDuringBuilds\\s*:\\s*true)/.test(c)){console.error('[OMS-HOOK] WARN: config is being weakened. Proceed only if explicitly authorized.');}process.stdout.write(d)})\""
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "name": "post:edit:oms-design-quality",
+        "description": "Liquid Glass規約チェック。グラデーション/input type=date/英語のみ等を警告。",
+        "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const i=JSON.parse(d);const p=i.tool_input?.file_path||'';if(!/\\.(tsx|css)$/.test(p)){process.stdout.write(d);return}const c=(i.tool_input?.content||i.tool_input?.new_string||'');const warns=[];if(/bg-gradient-|from-\\w+-\\d|to-\\w+-\\d/.test(c))warns.push('gradient禁止 → Liquid Glass (bg-white/70 backdrop-blur-2xl) を使用');if(/type=\\\"date\\\"|type='date'/.test(c))warns.push('<input type=date> 禁止 → @/components/ui/date-picker DatePicker を使用');if(/\\.(tsx)$/.test(p)&&c.length>2000&&!/[\\u3040-\\u30ff\\u3400-\\u9fff]/.test(c))warns.push('日本語UI規約: 画面テキストは日本語で');if(warns.length){console.error('[OMS-DESIGN] '+p+':');warns.forEach(w=>console.error('  - '+w))}process.stdout.write(d)})\""
+      }
+    ],
+    "Stop": [
+      {
+        "name": "stop:oms-verify",
+        "description": "セッション終了時に lint + typecheck をバッチ実行。",
+        "command": "npx tsc --noEmit --pretty false 2>&1 | tail -20 || true"
+      }
+    ]
+  }
+}
