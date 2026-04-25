@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
+import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Upload, Download, FileText, CheckCircle2, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -68,7 +69,14 @@ export default function ProductImportPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">商品一括登録</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-gray-800">商品一括登録</h1>
+          <HelpHint side="bottom">
+            CSVファイルから商品マスタを一括で登録・更新します。{"\n"}
+            ①でモードとオプションを決めてから②でファイルを選択し、③のプレビューで内容を確認してから取込を実行してください。{"\n"}
+            取込履歴からは過去の操作内容を確認できます。
+          </HelpHint>
+        </div>
         <button
           type="button"
           onClick={handleDownloadTemplate}
@@ -79,7 +87,79 @@ export default function ProductImportPage() {
       </div>
 
       <GlassCard>
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">① CSVファイル選択</h2>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold text-gray-800">① 登録モードとオプション</h2>
+          <HelpHint>
+            登録モードで「新規追加のみ」「既存更新のみ」「両方」のどれを行うかを決めます。{"\n"}
+            ファイル選択前に決めておくことで、誤って既存マスタを書き換える事故を防げます。
+          </HelpHint>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          {(Object.keys(MODE_LABEL) as ImportMode[]).map((m) => (
+            <div key={m} className="relative">
+              <button
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  "w-full p-3 pr-8 rounded-xl text-sm text-left border transition-all",
+                  mode === m
+                    ? "bg-blue-500/10 border-blue-400/60 ring-2 ring-blue-500/30"
+                    : "bg-white/60 border-white/60 hover:bg-white/80"
+                )}
+              >
+                <div className="font-medium text-gray-800">{MODE_LABEL[m]}</div>
+                <div className="text-xs text-gray-500 mt-0.5">
+                  {m === "new" && "既存SKUはスキップ"}
+                  {m === "update" && "新規SKUはエラー"}
+                  {m === "upsert" && "推奨設定"}
+                </div>
+              </button>
+              <span className="absolute top-2 right-2">
+                <HelpHint side="top">
+                  {m === "new" && "CSV内のSKUのうち、既存マスタに無いものだけを新規追加します。\n既存SKUに該当する行はスキップされ、上書きされません。"}
+                  {m === "update" && "CSV内のSKUのうち、既存マスタにあるものだけを更新します。\n既存マスタに無いSKUがCSVに含まれているとエラー扱いになります。"}
+                  {m === "upsert" && "既存SKUは更新、新規SKUは追加します。\nマスタとCSVの差分を一括で反映したい時の標準オプションです。"}
+                </HelpHint>
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={skipFirstRow} onChange={(e) => setSkipFirstRow(e.target.checked)} className="rounded" />
+            <span className="text-gray-700">1行目をヘッダー行として扱う</span>
+            <HelpHint side="right">
+              ONの場合、CSVの1行目を列名として読み込み、データ取込からは除外します。{"\n"}
+              テンプレートをダウンロードしたまま使う通常運用ではONのままにしてください。
+            </HelpHint>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={updateStock} onChange={(e) => setUpdateStock(e.target.checked)} className="rounded" />
+            <span className="text-gray-700">在庫数を上書き更新する</span>
+            <HelpHint side="right">
+              OFFの場合、CSVに在庫数列が含まれていてもマスタ側の在庫は維持されます。{"\n"}
+              在庫は別ルート（倉庫連携）で管理しているケースではOFFを推奨します。
+            </HelpHint>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={updatePrice} onChange={(e) => setUpdatePrice(e.target.checked)} className="rounded" />
+            <span className="text-gray-700">販売価格を上書き更新する</span>
+            <HelpHint side="right">
+              OFFの場合、CSVに販売価格列が含まれていてもマスタ側の価格は維持されます。{"\n"}
+              モール側の価格を取り込みたくない場合などにOFFにしてください。
+            </HelpHint>
+          </label>
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <div className="flex items-center gap-2 mb-3">
+          <h2 className="text-sm font-semibold text-gray-800">② CSVファイル選択</h2>
+          <HelpHint>
+            CSV / Excel(.csv) のファイルをドラッグ＆ドロップまたはクリックで選択します。{"\n"}
+            UTF-8 / Shift-JIS のどちらにも対応。1ファイルあたり最大10,000行を推奨します。
+          </HelpHint>
+        </div>
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
@@ -123,50 +203,16 @@ export default function ProductImportPage() {
         </div>
       </GlassCard>
 
-      <GlassCard>
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">② 登録モードとオプション</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          {(Object.keys(MODE_LABEL) as ImportMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={cn(
-                "p-3 rounded-xl text-sm text-left border transition-all",
-                mode === m
-                  ? "bg-blue-500/10 border-blue-400/60 ring-2 ring-blue-500/30"
-                  : "bg-white/60 border-white/60 hover:bg-white/80"
-              )}
-            >
-              <div className="font-medium text-gray-800">{MODE_LABEL[m]}</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                {m === "new" && "既存SKUはスキップ"}
-                {m === "update" && "新規SKUはエラー"}
-                {m === "upsert" && "推奨設定"}
-              </div>
-            </button>
-          ))}
-        </div>
-        <div className="space-y-2 text-sm">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={skipFirstRow} onChange={(e) => setSkipFirstRow(e.target.checked)} className="rounded" />
-            <span className="text-gray-700">1行目をヘッダー行として扱う</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={updateStock} onChange={(e) => setUpdateStock(e.target.checked)} className="rounded" />
-            <span className="text-gray-700">在庫数を上書き更新する</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={updatePrice} onChange={(e) => setUpdatePrice(e.target.checked)} className="rounded" />
-            <span className="text-gray-700">販売価格を上書き更新する</span>
-          </label>
-        </div>
-      </GlassCard>
-
       {file && (
         <GlassCard>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-800">③ プレビュー（先頭3行）</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-800">③ プレビュー（先頭3行）</h2>
+              <HelpHint>
+                ファイルの先頭3行を表示し、列の対応や警告（在庫0など）を確認できます。{"\n"}
+                内容に問題がなければ「取込を実行」を押してください。
+              </HelpHint>
+            </div>
             <span className="text-xs text-gray-500">読み込み済み: 245行</span>
           </div>
           <div className="overflow-x-auto">
@@ -205,7 +251,13 @@ export default function ProductImportPage() {
 
       <GlassCard>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-800">取込履歴</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">取込履歴</h2>
+            <HelpHint>
+              過去に実行された取込の一覧です。{"\n"}
+              「詳細」からエラー行の確認や再実行が行えます。
+            </HelpHint>
+          </div>
           <span className="text-xs text-gray-500">直近10件</span>
         </div>
         <div className="overflow-x-auto">

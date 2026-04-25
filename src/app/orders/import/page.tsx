@@ -2,9 +2,10 @@
 
 import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
+import { HelpHint } from "@/components/ui/help-hint";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X } from "lucide-react";
+import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
 
 const steps = [
   { label: "ファイルアップロード", value: 1 },
@@ -60,6 +61,24 @@ const previewData: PreviewRow[] = [
   { row: 5, productName: "急速充電器 65W", skuCode: "CHG-007", price: 3480, quantity: 1, status: "ok" },
   { row: 6, productName: "", skuCode: "WEP-002", price: 0, quantity: 1, status: "error", error: "商品名が空" },
   { row: 7, productName: "Bluetoothスピーカー", skuCode: "BTS-008", price: 7000, quantity: 4, status: "ok" },
+];
+
+type OrderImportHistory = {
+  id: number;
+  filename: string;
+  rows: number;
+  success: number;
+  warning: number;
+  error: number;
+  template: string;
+  user: string;
+  at: string;
+};
+
+const initialOrderHistory: OrderImportHistory[] = [
+  { id: 1, filename: "rakuten_orders_20260424.csv", rows: 187, success: 184, warning: 2, error: 1, template: "楽天CSV用", user: "佐藤 花子", at: "2026-04-24 18:05" },
+  { id: 2, filename: "amazon_orders_20260423.csv", rows: 92, success: 92, warning: 0, error: 0, template: "Amazon用", user: "田中 太郎", at: "2026-04-23 17:32" },
+  { id: 3, filename: "wholesale_a_april.xlsx", rows: 45, success: 43, warning: 1, error: 1, template: "卸先A用", user: "鈴木 一郎", at: "2026-04-22 11:18" },
 ];
 
 export default function ImportPage() {
@@ -144,7 +163,14 @@ export default function ImportPage() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold text-gray-800">受注一括登録</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-gray-800">受注一括登録</h1>
+        <HelpHint side="bottom">
+          外部CSV / Excel / JSONの受注データをマッピングしてシステムに取り込みます。{"\n"}
+          ①ファイルアップロード → ②CSV列とシステム項目のマッピング → ③バリデーション → ④プレビューの順で進めます。{"\n"}
+          マッピング設定はテンプレートとして保存でき、次回以降ワンクリックで再利用できます。
+        </HelpHint>
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {steps.map((s, i) => (
@@ -233,6 +259,10 @@ export default function ImportPage() {
               >
                 {templates.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
+              <HelpHint side="right">
+                マッピング設定の組み合わせを名前付きで保存・再利用できます。{"\n"}
+                取込元（楽天 / Amazon / 各卸先）ごとに作っておくと次回からワンクリックで切替可能です。
+              </HelpHint>
             </div>
             <SecondaryButton onClick={() => setSaveOpen(true)}>新規テンプレートとして保存</SecondaryButton>
           </div>
@@ -284,7 +314,13 @@ export default function ImportPage() {
 
       {step === 3 && (
         <GlassCard>
-          <h2 className="text-base font-semibold text-gray-800 mb-4">バリデーション結果</h2>
+          <div className="flex items-center gap-2 mb-4">
+            <h2 className="text-base font-semibold text-gray-800">バリデーション結果</h2>
+            <HelpHint>
+              マッピング後のデータを必須項目チェック・型チェックします。{"\n"}
+              エラー行は取込から自動的に除外されます。警告行は取り込まれますが、内容を確認してください。
+            </HelpHint>
+          </div>
           <div className="grid grid-cols-3 gap-4 mb-6">
             <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
               <div className="flex items-center gap-2"><Check className="h-5 w-5 text-emerald-600" /><span className="text-sm text-emerald-700">正常</span></div>
@@ -310,7 +346,13 @@ export default function ImportPage() {
       {step === 4 && (
         <GlassCard>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2"><Eye className="h-4 w-4 text-gray-400" />インポートプレビュー</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2"><Eye className="h-4 w-4 text-gray-400" />インポートプレビュー</h2>
+              <HelpHint>
+                取込確定後にシステムにどう反映されるかを行単位で確認できます。{"\n"}
+                警告タブで在庫不足など注意行を、エラータブで除外される行を絞り込み表示できます。
+              </HelpHint>
+            </div>
             <p className="text-xs text-gray-500">確定前にどのように反映されるかを確認できます</p>
           </div>
 
@@ -386,6 +428,63 @@ export default function ImportPage() {
           </div>
         </GlassCard>
       )}
+
+      <GlassCard>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-800">取込履歴</h2>
+            <HelpHint>
+              過去に実行された受注取込の一覧です。{"\n"}
+              「詳細」からエラー行の確認や同じテンプレートでの再実行が行えます。
+            </HelpHint>
+          </div>
+          <span className="text-xs text-gray-500">直近10件</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/60 text-gray-600 text-xs">
+                <th className="text-left py-2 px-2 font-medium">実行日時</th>
+                <th className="text-left py-2 px-2 font-medium">ファイル名</th>
+                <th className="text-left py-2 px-2 font-medium">テンプレート</th>
+                <th className="text-right py-2 px-2 font-medium">行数</th>
+                <th className="text-right py-2 px-2 font-medium">成功</th>
+                <th className="text-right py-2 px-2 font-medium">警告</th>
+                <th className="text-right py-2 px-2 font-medium">エラー</th>
+                <th className="text-left py-2 px-2 font-medium">実行者</th>
+                <th className="text-right py-2 px-2 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {initialOrderHistory.map((h) => (
+                <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
+                  <td className="py-2 px-2 text-gray-700">{h.at}</td>
+                  <td className="py-2 px-2 text-gray-800">
+                    <span className="inline-flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5 text-gray-400" />{h.filename}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 text-gray-700">{h.template}</td>
+                  <td className="py-2 px-2 text-right text-gray-700 tabular-nums">{h.rows}</td>
+                  <td className="py-2 px-2 text-right text-emerald-700 tabular-nums">{h.success}</td>
+                  <td className={cn("py-2 px-2 text-right tabular-nums", h.warning > 0 ? "text-yellow-700" : "text-gray-400")}>{h.warning}</td>
+                  <td className={cn("py-2 px-2 text-right tabular-nums", h.error > 0 ? "text-red-600" : "text-gray-400")}>{h.error}</td>
+                  <td className="py-2 px-2 text-gray-700">{h.user}</td>
+                  <td className="py-2 px-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => toast.show(`${h.filename} の詳細を表示`, "info")}
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      詳細
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
 
       <Modal
         open={saveOpen}
