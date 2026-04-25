@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
-import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
 import { cn } from "@/lib/utils";
 import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
 
@@ -16,7 +17,7 @@ const steps = [
 
 const initialTemplates = ["楽天CSV用", "Amazon用", "卸先A用"];
 
-const mappingRows = [
+const initialMappingRows: MappingRow[] = [
   { csv: "商品名", sample: "ワイヤレスイヤホン Pro", system: "商品名", matched: true },
   { csv: "商品コード", sample: "WEP-001", system: "商品コード(SKU)", matched: true },
   { csv: "単価(税込)", sample: "14,080", system: "販売価格", matched: true, transform: "税抜計算" },
@@ -93,9 +94,7 @@ export default function ImportPage() {
 
   const [templates, setTemplates] = useState<string[]>(initialTemplates);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
-
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [saveName, setSaveName] = useState("");
+  const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
 
   const counts = {
     all: previewData.length,
@@ -130,15 +129,15 @@ export default function ImportPage() {
     setStep(2);
   }
 
-  function saveTemplate() {
-    const name = saveName.trim();
-    if (!name) return toast.show("テンプレート名を入力してください", "error");
-    if (templates.includes(name)) return toast.show(`「${name}」は既に存在します`, "error");
+  function addTemplate(name: string) {
     setTemplates((prev) => [...prev, name]);
     setTemplateKey(name);
-    setSaveName("");
-    setSaveOpen(false);
-    toast.show(`テンプレート「${name}」を保存しました`);
+  }
+
+  function handleMappingChange(csv: string, system: string) {
+    setMappingRows((prev) =>
+      prev.map((r) => (r.csv === csv ? { ...r, system, matched: r.matched && system === r.system } : r))
+    );
   }
 
   function confirmImport() {
@@ -248,68 +247,20 @@ export default function ImportPage() {
       )}
 
       {step === 2 && (
-        <GlassCard>
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-700">テンプレート:</label>
-              <select
-                value={templateKey}
-                onChange={(e) => setTemplateKey(e.target.value)}
-                className="h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                {templates.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <HelpHint side="right">
-                マッピング設定の組み合わせを名前付きで保存・再利用できます。{"\n"}
-                取込元（楽天 / Amazon / 各卸先）ごとに作っておくと次回からワンクリックで切替可能です。
-              </HelpHint>
-            </div>
-            <SecondaryButton onClick={() => setSaveOpen(true)}>新規テンプレートとして保存</SecondaryButton>
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-white/50">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-white/50">
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">外部CSVの列名</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">サンプルデータ</th>
-                  <th className="w-10 px-2 py-3 text-center text-gray-400">→</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500">システム項目</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500">状態</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mappingRows.map((row) => (
-                  <tr key={row.csv} className={cn("border-t border-white/30 transition-colors", !row.matched && !row.system && "bg-yellow-500/5")}>
-                    <td className="px-4 py-3 font-medium text-gray-800">{row.csv}</td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">{row.sample}</td>
-                    <td className="px-2 py-3 text-center text-gray-300">→</td>
-                    <td className="px-4 py-3">
-                      <select defaultValue={row.system || ""} className="h-8 px-2 rounded-lg text-sm w-full bg-white/50 border border-white/50 focus:outline-none focus:ring-1 focus:ring-blue-500/20">
-                        <option value="">未選択</option>
-                        {systemFields.map((f) => <option key={f} value={f}>{f}</option>)}
-                      </select>
-                      {row.transform && <span className="inline-flex mt-1 px-1.5 py-0.5 rounded text-[10px] bg-purple-500/15 text-purple-700">⚙ {row.transform}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {row.matched ? <span className="inline-flex items-center gap-1 text-xs text-emerald-600"><Check className="h-3.5 w-3.5" />自動マッチ</span>
-                      : !row.system ? <span className="inline-flex items-center gap-1 text-xs text-yellow-600"><AlertCircle className="h-3.5 w-3.5" />未設定</span>
-                      : <span className="text-xs text-gray-400">スキップ</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex items-center justify-between mt-6">
-            <p className="text-sm text-gray-500"><FileSpreadsheet className="h-4 w-4 inline mr-1" />{fileName} — 123 件のデータを読み込み済み</p>
-            <div className="flex gap-2">
-              <SecondaryButton onClick={() => setStep(1)}>戻る</SecondaryButton>
-              <PrimaryButton onClick={() => setStep(3)}>次へ: バリデーション</PrimaryButton>
-            </div>
-          </div>
-        </GlassCard>
+        <ImportMappingStep
+          fileName={fileName ?? ""}
+          totalRows={123}
+          templates={templates}
+          templateKey={templateKey}
+          onTemplateChange={setTemplateKey}
+          onTemplateAdd={addTemplate}
+          systemFields={systemFields}
+          mappingRows={mappingRows}
+          onMappingChange={handleMappingChange}
+          onBack={() => setStep(1)}
+          onNext={() => setStep(3)}
+          helpText={"楽天/Amazon/各卸先からエクスポートしたCSVの列名を、システム受注の正規項目に紐付けます。\nテンプレート保存しておけば、次回同じ取込元のデータをワンクリックで再利用できます。"}
+        />
       )}
 
       {step === 3 && (
@@ -485,34 +436,6 @@ export default function ImportPage() {
           </table>
         </div>
       </GlassCard>
-
-      <Modal
-        open={saveOpen}
-        onClose={() => setSaveOpen(false)}
-        title="テンプレートとして保存"
-        size="sm"
-        footer={
-          <>
-            <SecondaryButton onClick={() => setSaveOpen(false)}>キャンセル</SecondaryButton>
-            <PrimaryButton onClick={saveTemplate}>保存</PrimaryButton>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <p className="text-sm text-gray-700">現在のマッピング設定を新規テンプレートとして保存します。</p>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">テンプレート名</label>
-            <input
-              type="text"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              placeholder="例: 楽天CSV 2026年版"
-              className="w-full px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
-              autoFocus
-            />
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }
