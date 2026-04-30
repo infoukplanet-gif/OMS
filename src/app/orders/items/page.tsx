@@ -115,12 +115,14 @@ export default function OrderItemsPage() {
         </Dropdown>
 
         <DatePicker
+          compact
           placeholder="開始日"
           value={from}
           onChange={(d) => { setFrom(d); setPage(1); }}
         />
         <span className="text-gray-400 text-sm">〜</span>
         <DatePicker
+          compact
           placeholder="終了日"
           value={to}
           onChange={(d) => { setTo(d); setPage(1); }}
