@@ -7,6 +7,11 @@ import { useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import {
+  type OrderStatus,
+  ORDER_STATUSES,
+  orderStatusBadge,
+} from "@/lib/state-machines/order";
+import {
   Search,
   Plus,
   Upload,
@@ -15,7 +20,6 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 
-type OrderStatus = "新規受付" | "確認待ち" | "出荷待ち" | "出荷済み" | "完了" | "キャンセル";
 type Order = {
   id: string;
   shop: string;
@@ -27,14 +31,7 @@ type Order = {
   date: string;
 };
 
-const statusBadge: Record<OrderStatus, string> = {
-  新規受付: "bg-blue-500/15 text-blue-700",
-  確認待ち: "bg-yellow-500/15 text-yellow-700",
-  出荷待ち: "bg-orange-500/15 text-orange-700",
-  出荷済み: "bg-emerald-500/15 text-emerald-700",
-  完了: "bg-gray-500/15 text-gray-600",
-  キャンセル: "bg-red-500/15 text-red-700",
-};
+const statusBadge = orderStatusBadge;
 
 const paymentBadge: Record<string, string> = {
   クレジットカード: "bg-purple-500/15 text-purple-700",
@@ -52,27 +49,22 @@ const shopColors: Record<string, string> = {
 
 const initial: Order[] = [
   { id: "ORD-2026-08851", shop: "楽天市場", customer: "山田 太郎", items: 3, amount: 32_400, payment: "クレジットカード", status: "新規受付", date: "2026/04/30 10:42" },
-  { id: "ORD-2026-08850", shop: "Amazon", customer: "佐藤 花子", items: 1, amount: 8_900, payment: "クレジットカード", status: "出荷待ち", date: "2026/04/30 10:35" },
+  { id: "ORD-2026-08850", shop: "Amazon", customer: "佐藤 花子", items: 1, amount: 8_900, payment: "クレジットカード", status: "印刷待ち", date: "2026/04/30 10:35" },
   { id: "ORD-2026-08849", shop: "Shopify", customer: "田中 一郎", items: 5, amount: 154_000, payment: "請求書払い", status: "確認待ち", date: "2026/04/30 10:22" },
   { id: "ORD-2026-08848", shop: "Yahoo!", customer: "鈴木 美咲", items: 2, amount: 5_600, payment: "銀行振込", status: "出荷済み", date: "2026/04/30 09:58" },
-  { id: "ORD-2026-08847", shop: "楽天市場", customer: "高橋 健", items: 1, amount: 22_800, payment: "代金引換", status: "完了", date: "2026/04/30 09:41" },
+  { id: "ORD-2026-08847", shop: "楽天市場", customer: "高橋 健", items: 1, amount: 22_800, payment: "代金引換", status: "印刷済み", date: "2026/04/30 09:41" },
   { id: "ORD-2026-08846", shop: "Amazon", customer: "渡辺 京子", items: 4, amount: 45_200, payment: "クレジットカード", status: "新規受付", date: "2026/04/30 09:30" },
-  { id: "ORD-2026-08845", shop: "Shopify", customer: "伊藤 大輔", items: 2, amount: 18_600, payment: "クレジットカード", status: "出荷待ち", date: "2026/04/30 09:15" },
+  { id: "ORD-2026-08845", shop: "Shopify", customer: "伊藤 大輔", items: 2, amount: 18_600, payment: "クレジットカード", status: "引当待ち", date: "2026/04/30 09:15" },
   { id: "ORD-2026-08844", shop: "Yahoo!", customer: "中村 あかり", items: 1, amount: 3_200, payment: "銀行振込", status: "出荷済み", date: "2026/04/29 18:55" },
-  { id: "ORD-2026-08843", shop: "楽天市場", customer: "小林 修", items: 3, amount: 67_500, payment: "クレジットカード", status: "完了", date: "2026/04/29 16:40" },
+  { id: "ORD-2026-08843", shop: "楽天市場", customer: "小林 修", items: 3, amount: 67_500, payment: "クレジットカード", status: "入金待ち", date: "2026/04/29 16:40" },
   { id: "ORD-2026-08842", shop: "Amazon", customer: "加藤 裕子", items: 2, amount: 12_400, payment: "代金引換", status: "キャンセル", date: "2026/04/29 14:22" },
-  { id: "ORD-2026-08841", shop: "楽天市場", customer: "吉田 あゆみ", items: 4, amount: 56_800, payment: "クレジットカード", status: "出荷待ち", date: "2026/04/29 11:10" },
-  { id: "ORD-2026-08840", shop: "Yahoo!", customer: "松本 愛", items: 2, amount: 15_800, payment: "クレジットカード", status: "完了", date: "2026/04/28 15:00" },
+  { id: "ORD-2026-08841", shop: "楽天市場", customer: "吉田 あゆみ", items: 4, amount: 56_800, payment: "クレジットカード", status: "発売日時待ち", date: "2026/04/29 11:10" },
+  { id: "ORD-2026-08840", shop: "Yahoo!", customer: "松本 愛", items: 2, amount: 15_800, payment: "クレジットカード", status: "印刷待ち", date: "2026/04/28 15:00" },
 ];
 
 const tabs: { label: string; value: "all" | OrderStatus }[] = [
   { label: "すべて", value: "all" },
-  { label: "新規受付", value: "新規受付" },
-  { label: "確認待ち", value: "確認待ち" },
-  { label: "出荷待ち", value: "出荷待ち" },
-  { label: "出荷済み", value: "出荷済み" },
-  { label: "完了", value: "完了" },
-  { label: "キャンセル", value: "キャンセル" },
+  ...ORDER_STATUSES.map((s) => ({ label: s, value: s as OrderStatus })),
 ];
 
 const shops = ["楽天市場", "Amazon", "Shopify", "Yahoo!"];
