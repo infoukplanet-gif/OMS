@@ -8,6 +8,13 @@ import { useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import {
+  SHIPMENT_STATUSES,
+  shipmentStatusBadge,
+  transitionShipment,
+  type ShipmentStatus,
+  type ShipmentState,
+} from "@/lib/state-machines/shipment";
+import {
   Search,
   ChevronLeft,
   ChevronRight,
@@ -17,39 +24,42 @@ import {
   CheckSquare,
 } from "lucide-react";
 
-type Shipment = {
+type Shipment = ShipmentState & {
   id: string;
   customer: string;
   items: number;
   amount: number;
   carrier: string;
-  tracking: string;
   shipDate: string;
-  status: "出荷待ち" | "出荷済み" | "配送中" | "配達完了";
   shop: string;
 };
 
-const initial: Shipment[] = [
-  { id: "ORD-2026-08851", customer: "山田 太郎", items: 3, amount: 32_400, carrier: "ヤマト運輸", tracking: "", shipDate: "2026/04/30", status: "出荷待ち", shop: "本店" },
-  { id: "ORD-2026-08850", customer: "佐藤 花子", items: 1, amount: 8_900, carrier: "佐川急便", tracking: "", shipDate: "2026/04/30", status: "出荷待ち", shop: "楽天店" },
-  { id: "ORD-2026-08849", customer: "田中 一郎", items: 5, amount: 154_000, carrier: "ヤマト運輸", tracking: "", shipDate: "2026/04/30", status: "出荷待ち", shop: "本店" },
-  { id: "ORD-2026-08848", customer: "渡辺 美咲", items: 2, amount: 24_800, carrier: "日本郵便", tracking: "", shipDate: "2026/05/01", status: "出荷待ち", shop: "Yahoo!店" },
-  { id: "ORD-2026-08847", customer: "木村 健", items: 1, amount: 6_200, carrier: "ヤマト運輸", tracking: "", shipDate: "2026/05/01", status: "出荷待ち", shop: "本店" },
-  { id: "ORD-2026-08845", customer: "伊藤 大輔", items: 2, amount: 18_600, carrier: "日本郵便", tracking: "JP1234567890", shipDate: "2026/04/29", status: "出荷済み", shop: "本店" },
-  { id: "ORD-2026-08844", customer: "中村 あかり", items: 1, amount: 3_200, carrier: "ヤマト運輸", tracking: "3456-7890-1234", shipDate: "2026/04/29", status: "配送中", shop: "Amazon店" },
-  { id: "ORD-2026-08843", customer: "小林 修", items: 3, amount: 67_500, carrier: "佐川急便", tracking: "5678-9012-3456", shipDate: "2026/04/28", status: "配送中", shop: "楽天店" },
-  { id: "ORD-2026-08842", customer: "高橋 涼", items: 4, amount: 88_400, carrier: "西濃運輸", tracking: "9012-3456-7890", shipDate: "2026/04/28", status: "配送中", shop: "本店" },
-  { id: "ORD-2026-08840", customer: "松本 愛", items: 2, amount: 15_800, carrier: "ヤマト運輸", tracking: "7890-1234-5678", shipDate: "2026/04/27", status: "配達完了", shop: "本店" },
-  { id: "ORD-2026-08839", customer: "木村 拓也", items: 1, amount: 4_200, carrier: "日本郵便", tracking: "JP9876543210", shipDate: "2026/04/27", status: "配達完了", shop: "Yahoo!店" },
-  { id: "ORD-2026-08838", customer: "吉田 あゆみ", items: 2, amount: 12_300, carrier: "佐川急便", tracking: "1357-2468-9876", shipDate: "2026/04/26", status: "配達完了", shop: "本店" },
-];
+const shipment = (
+  partial: Omit<Shipment, "orderIds"> & { orderIds?: string[] },
+): Shipment => ({
+  orderIds: partial.orderIds ?? [partial.id],
+  ...partial,
+});
 
-const statusBadge: Record<string, string> = {
-  出荷待ち: "bg-orange-500/15 text-orange-700",
-  出荷済み: "bg-blue-500/15 text-blue-700",
-  配送中: "bg-purple-500/15 text-purple-700",
-  配達完了: "bg-emerald-500/15 text-emerald-700",
-};
+const initial: Shipment[] = [
+  shipment({ id: "ORD-2026-08855", customer: "井上 智美", items: 2, amount: 14_200, carrier: "ヤマト運輸", shipDate: "2026/05/02", status: "出荷指示作成", shop: "本店" }),
+  shipment({ id: "ORD-2026-08854", customer: "斎藤 拓海", items: 1, amount: 5_900, carrier: "佐川急便", shipDate: "2026/05/02", status: "ピッキング待ち", shop: "楽天店" }),
+  shipment({ id: "ORD-2026-08853", customer: "森田 静香", items: 4, amount: 38_700, carrier: "ヤマト運輸", shipDate: "2026/05/02", status: "ピッキング待ち", shop: "本店" }),
+  shipment({ id: "ORD-2026-08852", customer: "石田 浩二", items: 3, amount: 21_600, carrier: "日本郵便", shipDate: "2026/05/01", status: "検品待ち", shop: "Amazon店" }),
+  shipment({ id: "ORD-2026-08851", customer: "山田 太郎", items: 3, amount: 32_400, carrier: "ヤマト運輸", shipDate: "2026/04/30", status: "出荷待ち", shop: "本店" }),
+  shipment({ id: "ORD-2026-08850", customer: "佐藤 花子", items: 1, amount: 8_900, carrier: "佐川急便", shipDate: "2026/04/30", status: "出荷待ち", shop: "楽天店" }),
+  shipment({ id: "ORD-2026-08849", customer: "田中 一郎", items: 5, amount: 154_000, carrier: "ヤマト運輸", shipDate: "2026/04/30", status: "出荷待ち", shop: "本店" }),
+  shipment({ id: "ORD-2026-08848", customer: "渡辺 美咲", items: 2, amount: 24_800, carrier: "日本郵便", shipDate: "2026/05/01", status: "出荷待ち", shop: "Yahoo!店" }),
+  shipment({ id: "ORD-2026-08847", customer: "木村 健", items: 1, amount: 6_200, carrier: "ヤマト運輸", shipDate: "2026/05/01", status: "出荷待ち", shop: "本店" }),
+  shipment({ id: "ORD-2026-08845", customer: "伊藤 大輔", items: 2, amount: 18_600, carrier: "日本郵便", trackingNumber: "JP1234567890", shipDate: "2026/04/29", status: "出荷済み", shop: "本店" }),
+  shipment({ id: "ORD-2026-08844", customer: "中村 あかり", items: 1, amount: 3_200, carrier: "ヤマト運輸", trackingNumber: "3456-7890-1234", shipDate: "2026/04/29", status: "配送中", shop: "Amazon店" }),
+  shipment({ id: "ORD-2026-08843", customer: "小林 修", items: 3, amount: 67_500, carrier: "佐川急便", trackingNumber: "5678-9012-3456", shipDate: "2026/04/28", status: "配送中", shop: "楽天店" }),
+  shipment({ id: "ORD-2026-08842", customer: "高橋 涼", items: 4, amount: 88_400, carrier: "西濃運輸", trackingNumber: "9012-3456-7890", shipDate: "2026/04/28", status: "配送中", shop: "本店" }),
+  shipment({ id: "ORD-2026-08840", customer: "松本 愛", items: 2, amount: 15_800, carrier: "ヤマト運輸", trackingNumber: "7890-1234-5678", shipDate: "2026/04/27", status: "配達完了", shop: "本店" }),
+  shipment({ id: "ORD-2026-08839", customer: "木村 拓也", items: 1, amount: 4_200, carrier: "日本郵便", trackingNumber: "JP9876543210", shipDate: "2026/04/27", status: "配達完了", shop: "Yahoo!店" }),
+  shipment({ id: "ORD-2026-08838", customer: "吉田 あゆみ", items: 2, amount: 12_300, carrier: "佐川急便", trackingNumber: "1357-2468-9876", shipDate: "2026/04/26", status: "配達完了", shop: "本店" }),
+  shipment({ id: "ORD-2026-08837", customer: "原田 明", items: 1, amount: 4_800, carrier: "ヤマト運輸", shipDate: "2026/04/26", status: "キャンセル", shop: "Yahoo!店" }),
+];
 
 const carrierIcon: Record<string, { color: string; label: string }> = {
   ヤマト運輸: { color: "bg-green-500", label: "ヤ" },
@@ -59,31 +69,23 @@ const carrierIcon: Record<string, { color: string; label: string }> = {
   福山通運: { color: "bg-indigo-500", label: "福" },
 };
 
-type TabValue = "pending" | "shipped" | "in_transit" | "delivered";
-
-const tabToStatus: Record<TabValue, Shipment["status"]> = {
-  pending: "出荷待ち",
-  shipped: "出荷済み",
-  in_transit: "配送中",
-  delivered: "配達完了",
-};
+type TabValue = "all" | ShipmentStatus;
 
 const carriers = ["ヤマト運輸", "佐川急便", "日本郵便", "西濃運輸", "福山通運"];
 
 export default function ShipmentsPage() {
   const toast = useToast();
   const [items, setItems] = useState(initial);
-  const [activeTab, setActiveTab] = useState<TabValue>("pending");
+  const [activeTab, setActiveTab] = useState<TabValue>("出荷待ち");
   const [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
   const [carrierFilter, setCarrierFilter] = useState("all");
   const [shipDateFilter, setShipDateFilter] = useState("");
 
   const filtered = useMemo(() => {
-    const targetStatus = tabToStatus[activeTab];
     const k = keyword.trim().toLowerCase();
     return items.filter((s) => {
-      if (s.status !== targetStatus) return false;
+      if (activeTab !== "all" && s.status !== activeTab) return false;
       if (k && !`${s.id} ${s.customer}`.toLowerCase().includes(k)) return false;
       if (carrierFilter !== "all" && s.carrier !== carrierFilter) return false;
       if (shipDateFilter && s.shipDate !== shipDateFilter) return false;
@@ -91,21 +93,20 @@ export default function ShipmentsPage() {
     });
   }, [items, activeTab, keyword, carrierFilter, shipDateFilter]);
 
-  const counts = useMemo(
-    () => ({
-      pending: items.filter((s) => s.status === "出荷待ち").length,
-      shipped: items.filter((s) => s.status === "出荷済み").length,
-      in_transit: items.filter((s) => s.status === "配送中").length,
-      delivered: items.filter((s) => s.status === "配達完了").length,
-    }),
-    [items]
-  );
+  const countByStatus = useMemo(() => {
+    const map = new Map<ShipmentStatus, number>();
+    for (const status of SHIPMENT_STATUSES) map.set(status, 0);
+    for (const s of items) map.set(s.status, (map.get(s.status) ?? 0) + 1);
+    return map;
+  }, [items]);
 
   const tabs: { label: string; value: TabValue; count: number }[] = [
-    { label: "出荷待ち", value: "pending", count: counts.pending },
-    { label: "出荷済み", value: "shipped", count: counts.shipped },
-    { label: "配送中", value: "in_transit", count: counts.in_transit },
-    { label: "配達完了", value: "delivered", count: counts.delivered },
+    { label: "すべて", value: "all", count: items.length },
+    ...SHIPMENT_STATUSES.map((s) => ({
+      label: s,
+      value: s as TabValue,
+      count: countByStatus.get(s) ?? 0,
+    })),
   ];
 
   const toggleSelect = (id: string) =>
@@ -113,16 +114,30 @@ export default function ShipmentsPage() {
   const toggleAll = () =>
     setSelected((prev) => (prev.length === filtered.length ? [] : filtered.map((s) => s.id)));
 
-  const updateTracking = (id: string, tracking: string) =>
-    setItems((prev) => prev.map((s) => (s.id === id ? { ...s, tracking } : s)));
+  const updateTracking = (id: string, trackingNumber: string) =>
+    setItems((prev) => prev.map((s) => (s.id === id ? { ...s, trackingNumber } : s)));
 
   const confirmShipping = () => {
     if (selected.length === 0) {
       toast.show("出荷確定する受注を選択してください", "error");
       return;
     }
-    setItems((prev) => prev.map((s) => (selected.includes(s.id) ? { ...s, status: "出荷済み" } : s)));
-    toast.show(`${selected.length} 件を出荷確定しました`, "success");
+    let succeeded = 0;
+    setItems((prev) =>
+      prev.map((s) => {
+        if (!selected.includes(s.id)) return s;
+        const next = transitionShipment(s, "confirmShipment", {
+          trackingNumber: s.trackingNumber,
+        });
+        if (next !== s) succeeded += 1;
+        return next;
+      }),
+    );
+    if (succeeded === 0) {
+      toast.show("選択した出荷は出荷待ち状態ではないため確定できません", "error");
+    } else {
+      toast.show(`${succeeded} 件を出荷確定しました`, "success");
+    }
     setSelected([]);
   };
 
@@ -265,11 +280,11 @@ export default function ShipmentsPage() {
                       </div>
                     </td>
                     <td className="px-3 py-3">
-                      {s.tracking ? (
-                        <span className="font-mono text-xs text-gray-600">{s.tracking}</span>
+                      {s.trackingNumber ? (
+                        <span className="font-mono text-xs text-gray-600">{s.trackingNumber}</span>
                       ) : (
                         <input
-                          value={s.tracking}
+                          value={s.trackingNumber ?? ""}
                           onChange={(e) => updateTracking(s.id, e.target.value)}
                           type="text"
                           placeholder="番号を入力..."
@@ -282,7 +297,7 @@ export default function ShipmentsPage() {
                     </td>
                     <td className="px-3 py-3 text-gray-500 text-xs">{s.shipDate}</td>
                     <td className="px-3 py-3 text-center">
-                      <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium", statusBadge[s.status])}>
+                      <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium", shipmentStatusBadge[s.status])}>
                         {s.status}
                       </span>
                     </td>
