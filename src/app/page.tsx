@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
@@ -21,7 +21,14 @@ import {
   ArrowRight,
   CheckCircle2,
   XCircle,
+  Zap,
 } from "lucide-react";
+import {
+  ORDER_STATUSES,
+  orderStatusBadge,
+  type OrderStatus,
+} from "@/lib/state-machines/order";
+import { mailQueue, type MailJob, type MailTriggerType } from "@/lib/mail/queue";
 
 type PeriodKey = "today" | "week" | "month" | "ytd";
 
@@ -131,13 +138,34 @@ const COLOR_MAP: Record<Kpi["color"], { bg: string; text: string }> = {
   amber: { bg: "bg-amber-500/10", text: "text-amber-600" },
 };
 
-const STATUS_DATA = [
-  { label: "新規受付", count: 12, color: "bg-blue-500", href: "/orders?status=new" },
-  { label: "確認待ち", count: 8, color: "bg-yellow-500", href: "/orders?status=pending" },
-  { label: "出荷待ち", count: 23, color: "bg-orange-500", href: "/shipments?status=pending" },
-  { label: "出荷済み", count: 156, color: "bg-emerald-500", href: "/shipments?status=shipped" },
-  { label: "完了", count: 1203, color: "bg-gray-400", href: "/orders?status=done" },
-];
+/**
+ * 受注ステータス分布（直近30日のスナップショット想定）。
+ * 状態定義は src/lib/state-machines/order.ts の ORDER_STATUSES に従う。
+ * 後でサーバ集計に置き換える際は ORDER_STATUSES の順を保証して送ってもらう前提。
+ */
+const ORDER_STATUS_COUNTS: Record<OrderStatus, number> = {
+  新規受付: 87,
+  確認待ち: 42,
+  発売日時待ち: 18,
+  入金待ち: 134,
+  引当待ち: 76,
+  印刷待ち: 58,
+  印刷済み: 31,
+  出荷済み: 740,
+  キャンセル: 48,
+};
+
+const TRIGGER_LABEL: Record<MailTriggerType, string> = {
+  thanks: "受注確認",
+  "ship-notify": "出荷通知",
+  "payment-confirmed": "入金確認",
+};
+
+const TRIGGER_BADGE: Record<MailTriggerType, string> = {
+  thanks: "bg-blue-500/15 text-blue-700",
+  "ship-notify": "bg-emerald-500/15 text-emerald-700",
+  "payment-confirmed": "bg-violet-500/15 text-violet-700",
+};
 
 const SALES_TREND_BY_PERIOD: Record<PeriodKey, { labels: string[]; values: number[] }> = {
   today: {
@@ -203,9 +231,27 @@ export default function Dashboard() {
 
   const trend = SALES_TREND_BY_PERIOD[period];
   const max = Math.max(...trend.values, 1);
-  const totalStatus = STATUS_DATA.reduce((s, d) => s + d.count, 0);
+  const totalStatus = useMemo(
+    () => ORDER_STATUSES.reduce((sum, s) => sum + ORDER_STATUS_COUNTS[s], 0),
+    [],
+  );
 
   const peakValue = useMemo(() => Math.max(...trend.values), [trend.values]);
+
+  // セッション内 mailQueue のライブスナップショット（初回マウントで取得）
+  const [liveMailJobs, setLiveMailJobs] = useState<MailJob[]>([]);
+  useEffect(() => {
+    setLiveMailJobs(mailQueue.snapshot());
+  }, []);
+  const liveMailByTrigger = useMemo(() => {
+    const map: Record<MailTriggerType, number> = {
+      thanks: 0,
+      "ship-notify": 0,
+      "payment-confirmed": 0,
+    };
+    for (const job of liveMailJobs) map[job.triggerType]++;
+    return map;
+  }, [liveMailJobs]);
 
   return (
     <div className="space-y-6">
@@ -277,6 +323,43 @@ export default function Dashboard() {
         </GlassCard>
       )}
 
+      {/* セッション内 自動メールキュー（state-machine handlers が enqueue した分） */}
+      <GlassCard>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-blue-500" />
+            <h2 className="text-base font-semibold text-gray-800">セッション内 自動メールキュー</h2>
+            <HelpHint>
+              受注/出荷/入金の state machine から handler.sendMail で自動 enqueue されたジョブの内訳。同一セッション内のみ保持されます。詳細は送信待ちキュー画面で確認できます。
+            </HelpHint>
+          </div>
+          <Link href="/mail/pending" className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-0.5">
+            送信待ちキューへ <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl p-3 bg-white/40 border border-white/50">
+            <div className="text-xs text-gray-500">合計 enqueue</div>
+            <div className="text-2xl font-bold text-gray-800 tabular-nums mt-1">{liveMailJobs.length}</div>
+          </div>
+          {(Object.keys(liveMailByTrigger) as MailTriggerType[]).map((triggerType) => (
+            <div key={triggerType} className="rounded-xl p-3 bg-white/40 border border-white/50">
+              <div>
+                <span className={cn("inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap", TRIGGER_BADGE[triggerType])}>
+                  {TRIGGER_LABEL[triggerType]}
+                </span>
+              </div>
+              <div className="text-2xl font-bold text-gray-800 tabular-nums mt-1">{liveMailByTrigger[triggerType]}</div>
+            </div>
+          ))}
+        </div>
+        {liveMailJobs.length === 0 && (
+          <p className="mt-3 text-xs text-gray-400">
+            まだ自動 enqueue されたメールはありません。受注一覧の一括「入金待ちへ / 出荷登録」や入金登録で自動的に積まれます。
+          </p>
+        )}
+      </GlassCard>
+
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {KPI_DATA.map((kpi) => {
@@ -330,33 +413,34 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-semibold text-gray-800">受注ステータス内訳</h2>
-              <HelpHint>各ステータスの受注件数。クリックで該当ステータスの一覧へ遷移します。</HelpHint>
+              <HelpHint>state-machines/order.ts の ORDER_STATUSES 全 9 状態の件数。クリックで該当ステータスの受注一覧へ遷移します。</HelpHint>
             </div>
             <span className="text-xs text-gray-500">合計 {totalStatus.toLocaleString()} 件</span>
           </div>
-          <div className="space-y-3">
-            {STATUS_DATA.map((s) => (
-              <Link
-                key={s.label}
-                href={s.href}
-                className="flex items-center gap-3 group hover:bg-white/40 rounded-lg -mx-1.5 px-1.5 py-0.5 transition-colors"
-              >
-                <span className="w-20 text-sm text-gray-600">{s.label}</span>
-                <div className="flex-1 h-7 rounded-lg bg-gray-100/60 overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-lg flex items-center pl-3 text-xs font-medium text-white transition-all group-hover:opacity-90",
-                      s.color
-                    )}
-                    style={{ width: `${Math.max((s.count / totalStatus) * 100, 8)}%` }}
-                  >
-                    {Math.round((s.count / totalStatus) * 100)}%
+          <div className="space-y-1.5">
+            {ORDER_STATUSES.map((status) => {
+              const count = ORDER_STATUS_COUNTS[status];
+              const ratio = totalStatus === 0 ? 0 : Math.round((count / totalStatus) * 100);
+              return (
+                <Link
+                  key={status}
+                  href={`/orders?status=${encodeURIComponent(status)}`}
+                  className="flex items-center gap-3 group hover:bg-white/40 rounded-lg -mx-1.5 px-1.5 py-1 transition-colors"
+                >
+                  <span className={cn("inline-flex w-24 justify-center px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap shrink-0", orderStatusBadge[status])}>
+                    {status}
+                  </span>
+                  <div className="flex-1 h-5 rounded-lg bg-gray-100/60 overflow-hidden">
+                    <div
+                      className="h-full rounded-lg bg-blue-500/40 group-hover:bg-blue-500/55 transition-colors"
+                      style={{ width: `${Math.max(ratio, 2)}%` }}
+                    />
                   </div>
-                </div>
-                <span className="w-16 text-right text-sm font-medium text-gray-700 tabular-nums">{s.count}件</span>
-                <ArrowRight className="h-3.5 w-3.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </Link>
-            ))}
+                  <span className="w-16 text-right text-sm font-medium text-gray-700 tabular-nums shrink-0">{count.toLocaleString()}件</span>
+                  <span className="w-9 text-right text-[10px] text-gray-400 tabular-nums shrink-0">{ratio}%</span>
+                </Link>
+              );
+            })}
           </div>
         </GlassCard>
 
