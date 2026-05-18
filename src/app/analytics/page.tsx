@@ -10,6 +10,11 @@ import {
   Receipt,
   Repeat,
 } from "lucide-react";
+import {
+  ORDER_STATUSES,
+  orderStatusBadge,
+  type OrderStatus,
+} from "@/lib/state-machines/order";
 
 const kpis = [
   { label: "月間売上", value: "¥12,450,000", change: "+15%", up: true, icon: DollarSign, color: "blue" },
@@ -70,6 +75,27 @@ const categories = [
 
 const periods = ["今日", "今週", "今月", "3ヶ月", "カスタム"];
 
+/**
+ * 受注ステータス分布（直近30日のスナップショット想定）
+ * 状態定義は src/lib/state-machines/order.ts の ORDER_STATUSES に従う。
+ * 後でサーバ側集計に置き換える際は ORDER_STATUSES の順を保証して送ってもらう前提。
+ */
+const orderStatusCounts: Record<OrderStatus, number> = {
+  新規受付: 87,
+  確認待ち: 42,
+  発売日時待ち: 18,
+  入金待ち: 134,
+  引当待ち: 76,
+  印刷待ち: 58,
+  印刷済み: 31,
+  出荷済み: 740,
+  キャンセル: 48,
+};
+const orderStatusTotal = ORDER_STATUSES.reduce(
+  (sum, s) => sum + orderStatusCounts[s],
+  0,
+);
+
 export default function AnalyticsPage() {
   return (
     <div className="space-y-5">
@@ -129,6 +155,37 @@ export default function AnalyticsPage() {
           );
         })}
       </div>
+
+      {/* 受注ステータス分布 — state-machines/order.ts と共有 */}
+      <GlassCard>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-gray-800">受注ステータス分布</h2>
+          <span className="text-xs text-gray-500">合計 {orderStatusTotal.toLocaleString()} 件 / 直近30日</span>
+        </div>
+        <div className="grid grid-cols-3 md:grid-cols-9 gap-2">
+          {ORDER_STATUSES.map((status) => {
+            const count = orderStatusCounts[status];
+            const ratio = orderStatusTotal === 0 ? 0 : Math.round((count / orderStatusTotal) * 100);
+            return (
+              <div
+                key={status}
+                className={cn(
+                  "rounded-xl px-3 py-2.5 border border-white/50 bg-white/40",
+                  "hover:bg-white/60 transition-colors",
+                )}
+              >
+                <span className={cn("inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap", orderStatusBadge[status])}>
+                  {status}
+                </span>
+                <div className="mt-1.5 text-xl font-bold text-gray-800 tabular-nums">
+                  {count.toLocaleString()}
+                </div>
+                <div className="text-[10px] text-gray-400 tabular-nums">{ratio}%</div>
+              </div>
+            );
+          })}
+        </div>
+      </GlassCard>
 
       {/* Charts row */}
       <div className="grid grid-cols-3 gap-4">

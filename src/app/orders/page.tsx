@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
@@ -8,9 +8,14 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import {
   type OrderStatus,
+  type OrderState,
+  type OrderAction,
   ORDER_STATUSES,
   orderStatusBadge,
+  transitionOrder,
 } from "@/lib/state-machines/order";
+import { onOrderTransitioned } from "@/lib/events/order-handlers";
+import { createMailQueue, type MailJob } from "@/lib/mail/queue";
 import {
   Search,
   Plus,
@@ -74,10 +79,12 @@ const fmtDate = (d: Date | undefined) =>
   d ? `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}` : "";
 
 export default function OrdersPage() {
-  const [items] = useState(initial);
+  const [items, setItems] = useState(initial);
   const [activeTab, setActiveTab] = useState<"all" | OrderStatus>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
+  // mail queue は session を跨いで dedupe させたいので useRef で保持
+  const mailQueueRef = useRef(createMailQueue());
   const [shopFilter, setShopFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -110,6 +117,55 @@ export default function OrdersPage() {
 
   const hasFilter = keyword || shopFilter !== "all" || paymentFilter !== "all" || dateFrom || dateTo;
   const toast = useToast();
+
+  /**
+   * 選択中の受注に対して一括で SM 遷移を試み、handler effects を mailQueue に流す。
+   * - ガード違反（遷移できない受注）はスキップしカウント
+   * - effects.sendMail を集約して queue.enqueueAll に投げ、結果を toast 表示
+   */
+  const applyBulkAction = (action: OrderAction, label: string) => {
+    if (selected.length === 0) return;
+
+    let applied = 0;
+    let skipped = 0;
+    const mailJobs: MailJob[] = [];
+
+    const nextItems = items.map((order) => {
+      if (!selected.includes(order.id)) return order;
+
+      const before: OrderState = { status: order.status };
+      const after = transitionOrder(before, action);
+      if (after === before) {
+        skipped++;
+        return order;
+      }
+
+      const effects = onOrderTransitioned(before, after, order.id);
+      if (effects.sendMail) mailJobs.push(effects.sendMail);
+      applied++;
+      return { ...order, status: after.status };
+    });
+
+    setItems(nextItems);
+    setSelected([]);
+
+    const mailResult = mailQueueRef.current.enqueueAll(mailJobs);
+    const mailLine =
+      mailResult.enqueued + mailResult.duplicateSkipped > 0
+        ? ` / メール ${mailResult.enqueued} 件enqueue${
+            mailResult.duplicateSkipped > 0 ? `・重複${mailResult.duplicateSkipped}件スキップ` : ""
+          }`
+        : "";
+
+    if (applied === 0) {
+      toast.show(`${label} を実行できる受注がありません（${skipped} 件スキップ）`, "info");
+    } else {
+      toast.show(
+        `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${mailLine}`,
+        "success",
+      );
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -254,8 +310,31 @@ export default function OrdersPage() {
             {selected.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm text-gray-600 font-medium">{selected.length} 件選択中</span>
-                <button onClick={() => toast.show(`${selected.length} 件のステータスを変更します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 transition-colors">ステータス変更</button>
-                <button onClick={() => toast.show(`${selected.length} 件の出荷指示を作成します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors">出荷指示</button>
+                <button
+                  onClick={() => applyBulkAction("requestPayment", "入金待ちへ進める")}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 transition-colors"
+                  title="確認待ち → 入金待ち（サンクスメール送信）"
+                >
+                  入金待ちへ
+                </button>
+                <button
+                  onClick={() => applyBulkAction("markPrinted", "印刷済みにする")}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/15 text-indigo-700 hover:bg-indigo-500/25 transition-colors"
+                >
+                  印刷済みにする
+                </button>
+                <button
+                  onClick={() => applyBulkAction("registerShipment", "出荷登録")}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors"
+                >
+                  出荷登録
+                </button>
+                <button
+                  onClick={() => applyBulkAction("cancel", "キャンセル")}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-700 hover:bg-rose-500/25 transition-colors"
+                >
+                  キャンセル
+                </button>
                 <button onClick={() => toast.show(`${selected.length} 件をエクスポートしました`, "success")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-500/15 text-gray-600 hover:bg-gray-500/25 transition-colors">エクスポート</button>
               </div>
             )}
