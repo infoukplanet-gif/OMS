@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import {
+  getAutoMailEnabled,
+  setAutoMailEnabled,
+  resetAutoMailEnabled,
+} from "@/lib/mail/auto-settings";
+import type { MailTriggerType } from "@/lib/mail/queue";
 
 type Trigger = {
   id: string;
@@ -16,11 +22,14 @@ type Trigger = {
   retryMax: number;
   cc?: string;
   bcc?: string;
+  /** v1 mail queue にマップされるトリガー種別（未設定なら queue とは無関係。v2 で実装予定） */
+  queueTrigger?: MailTriggerType;
 };
 
 const initial: Trigger[] = [
-  { id: "thanks", name: "受注確認（サンクスメール）", desc: "受注ステータスが「受付完了」になった直後に自動送信", enabled: true, template: "サンクスメール（自動）", delay: "受注確認後 即時", retryMax: 3, bcc: "log@example.com" },
-  { id: "ship", name: "出荷完了通知", desc: "出荷ステータスが「出荷済」になった直後に自動送信", enabled: true, template: "出荷通知メール（自動）", delay: "出荷登録後 即時", retryMax: 3 },
+  { id: "thanks", queueTrigger: "thanks", name: "受注確認（サンクスメール）", desc: "受注ステータスが「受付完了」になった直後に自動送信", enabled: true, template: "サンクスメール（自動）", delay: "受注確認後 即時", retryMax: 3, bcc: "log@example.com" },
+  { id: "ship", queueTrigger: "ship-notify", name: "出荷完了通知", desc: "出荷ステータスが「出荷済」になった直後に自動送信", enabled: true, template: "出荷通知メール（自動）", delay: "出荷登録後 即時", retryMax: 3 },
+  { id: "payment-confirmed", queueTrigger: "payment-confirmed", name: "入金確認メール", desc: "入金が確認できた直後に「ご入金ありがとうございます」を送信", enabled: true, template: "入金確認メール（自動）", delay: "入金記録後 即時", retryMax: 3 },
   { id: "payment3", name: "入金催促（3日経過）", desc: "代引き／銀振の入金待ちが3日経過した受注へ自動送信", enabled: true, template: "入金確認メール（自動）", delay: "入金待ち3日後 09:00", retryMax: 2 },
   { id: "payment7", name: "入金催促（7日経過・最終通告）", desc: "入金待ちが7日経過した受注へ送信。送信後は要オペレーター確認", enabled: false, template: "入金催促（最終通告）", delay: "入金待ち7日後 09:00", retryMax: 2, cc: "ops@example.com" },
   { id: "follow", name: "フォローアップ（発送後3日）", desc: "商品到着確認・レビュー誘導のフォローメール", enabled: true, template: "フォローアップメール", delay: "発送後3日後 10:00", retryMax: 1 },
@@ -40,12 +49,42 @@ const templateOptions = [
   "レビュー依頼",
 ];
 
+/** queueTrigger を持つ初期アイテムの enabled を auto-settings に同期。マウント時に1回呼ぶ。 */
+function syncQueueEnabledFromItems(items: Trigger[]) {
+  const patch: Partial<Record<MailTriggerType, boolean>> = {};
+  for (const item of items) {
+    if (item.queueTrigger) patch[item.queueTrigger] = item.enabled;
+  }
+  setAutoMailEnabled(patch);
+}
+
 export default function MailAutoPage() {
   const toast = useToast();
   const [items, setItems] = useState(initial);
 
+  // ページ表示時にローカル state を auto-settings の現在値で復元しておく
+  // （他ページからの遷移で settings が書き換わっていてもズレないように）
+  useEffect(() => {
+    const enabled = getAutoMailEnabled();
+    setItems((prev) =>
+      prev.map((it) =>
+        it.queueTrigger ? { ...it, enabled: enabled[it.queueTrigger] } : it,
+      ),
+    );
+  }, []);
+
   const updateItem = (id: string, patch: Partial<Trigger>) =>
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.id !== id) return it;
+        const next = { ...it, ...patch };
+        // queueTrigger を持つトリガーの enabled 変化は即 auto-settings に書く
+        if (next.queueTrigger && patch.enabled !== undefined) {
+          setAutoMailEnabled({ [next.queueTrigger]: patch.enabled });
+        }
+        return next;
+      }),
+    );
 
   return (
     <div className="space-y-5">
@@ -58,8 +97,23 @@ export default function MailAutoPage() {
           <p className="text-sm text-gray-500 mt-1">受注確認・出荷通知・入金催促などのトリガーを管理します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => setItems(initial)}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("自動送信設定を保存しました", "success")}>保存</PrimaryButton>
+          <SecondaryButton
+            onClick={() => {
+              setItems(initial);
+              resetAutoMailEnabled();
+              toast.show("初期値に戻しました（v1 トリガーは全 ON）", "info");
+            }}
+          >
+            初期値に戻す
+          </SecondaryButton>
+          <PrimaryButton
+            onClick={() => {
+              syncQueueEnabledFromItems(items);
+              toast.show("自動送信設定を保存しました（v1 トリガーは即時反映）", "success");
+            }}
+          >
+            保存
+          </PrimaryButton>
         </div>
       </div>
 

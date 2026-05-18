@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
@@ -15,7 +15,8 @@ import {
   transitionOrder,
 } from "@/lib/state-machines/order";
 import { onOrderTransitioned } from "@/lib/events/order-handlers";
-import { createMailQueue, type MailJob } from "@/lib/mail/queue";
+import { mailQueue, type MailJob } from "@/lib/mail/queue";
+import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import {
   Search,
   Plus,
@@ -83,8 +84,6 @@ export default function OrdersPage() {
   const [activeTab, setActiveTab] = useState<"all" | OrderStatus>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
-  // mail queue は session を跨いで dedupe させたいので useRef で保持
-  const mailQueueRef = useRef(createMailQueue());
   const [shopFilter, setShopFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
@@ -149,13 +148,15 @@ export default function OrdersPage() {
     setItems(nextItems);
     setSelected([]);
 
-    const mailResult = mailQueueRef.current.enqueueAll(mailJobs);
-    const mailLine =
-      mailResult.enqueued + mailResult.duplicateSkipped > 0
-        ? ` / メール ${mailResult.enqueued} 件enqueue${
-            mailResult.duplicateSkipped > 0 ? `・重複${mailResult.duplicateSkipped}件スキップ` : ""
-          }`
-        : "";
+    const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
+    const detail = [
+      mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
+      mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
+      mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const mailLine = detail ? ` / メール ${detail}` : "";
 
     if (applied === 0) {
       toast.show(`${label} を実行できる受注がありません（${skipped} 件スキップ）`, "info");

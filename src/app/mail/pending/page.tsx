@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Edit, Pause, Search, Send, Trash2 } from "lucide-react";
+import { Edit, Pause, Search, Send, Trash2, Zap } from "lucide-react";
+import { mailQueue, type MailJob, type MailTriggerType } from "@/lib/mail/queue";
 
 const data = [
   { id: "Q-20260430-0042", to: "tanaka@example.com", customer: "田中 太郎", subject: "【発送完了】ORD-2026-08423", template: "発送通知", scheduled: "2026/04/30 15:00", priority: "通常", trigger: "出荷完了", retryAt: "—" },
@@ -26,12 +27,32 @@ const pb: Record<string, string> = {
   低: "bg-gray-400/10 text-gray-500",
 };
 
+const triggerLabel: Record<MailTriggerType, string> = {
+  thanks: "受注確認（サンクス）",
+  "ship-notify": "出荷完了通知",
+  "payment-confirmed": "入金確認",
+};
+
+const triggerBadge: Record<MailTriggerType, string> = {
+  thanks: "bg-blue-500/15 text-blue-700",
+  "ship-notify": "bg-emerald-500/15 text-emerald-700",
+  "payment-confirmed": "bg-violet-500/15 text-violet-700",
+};
+
 export default function MailPendingPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [templateFilter, setTemplateFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+
+  // 同一セッション中に handler.sendMail 経由で enqueue されたジョブをスナップショット表示
+  // mailQueue は singleton。ページ再訪時に最新を読みに行く（hydration ズレ回避のため effect で取る）。
+  const [liveJobs, setLiveJobs] = useState<MailJob[]>([]);
+  useEffect(() => {
+    setLiveJobs(mailQueue.snapshot());
+  }, []);
+  const refreshLiveJobs = () => setLiveJobs(mailQueue.snapshot());
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -123,6 +144,58 @@ export default function MailPendingPage() {
             クリア
           </SecondaryButton>
         </div>
+      </GlassCard>
+
+      {/* セッション内ライブキュー — state-machine handler の sendMail effect が直接 enqueue したジョブ */}
+      <GlassCard className="p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/40 bg-blue-500/5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-semibold text-gray-800">セッション内 自動キュー</span>
+            <HelpHint>
+              受注/出荷/入金の state machine から handler.sendMail で自動 enqueue された分。同一セッション内のみ保持され、リロードで消えます。永続化は v2 で server action + DB に置き換え予定。
+            </HelpHint>
+            <span className="text-xs text-gray-500">{liveJobs.length} 件</span>
+          </div>
+          <SecondaryButton onClick={refreshLiveJobs}>更新</SecondaryButton>
+        </div>
+        {liveJobs.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-400">
+            まだ自動 enqueue されたメールはありません。受注一覧で一括「入金待ちへ / 出荷登録」を実行するか、入金登録すると自動でここに積まれます。
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-white/40 border-b border-white/40">
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">dedupeKey</th>
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">受注ID</th>
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">トリガー</th>
+                <th className="px-3 py-2.5 text-center text-xs font-medium text-gray-500">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {liveJobs.map((j) => (
+                <tr key={j.dedupeKey} className="border-t border-white/30 hover:bg-white/40">
+                  <td className="px-3 py-2.5 text-xs text-gray-500 font-mono">{j.dedupeKey}</td>
+                  <td className="px-3 py-2.5 text-gray-700 text-xs font-medium">{j.orderId}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", triggerBadge[j.triggerType])}>
+                      {triggerLabel[j.triggerType]}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <button
+                      onClick={() => toast.show(`${j.dedupeKey} を即時送信しました`, "success")}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 text-xs font-medium"
+                    >
+                      <Send className="h-3 w-3" /> 送信
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </GlassCard>
 
       <GlassCard className="p-0 overflow-hidden">
