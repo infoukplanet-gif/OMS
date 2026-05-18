@@ -16,6 +16,8 @@ export interface ShipmentTransitionEffects {
   cascadeOrderAction?: { orderId: string; action: "registerShipment" | "cancel" };
   /** Shipment キャンセル時の在庫戻し記述子（v1 では実動作なし） */
   releaseInventory?: { orderId: string; reason: "shipment-cancelled" };
+  /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
+  sendMail?: { orderId: string; triggerType: "ship-notify"; dedupeKey: string };
 }
 
 interface Options {
@@ -43,12 +45,17 @@ export function onShipmentTransitioned(
 ): ShipmentTransitionEffects {
   const effects: ShipmentTransitionEffects = {};
 
-  // 出荷済み到達 → Order に registerShipment を波及
+  // 出荷済み到達 → Order に registerShipment を波及 + 出荷完了通知メール
   if (before.status !== "出荷済み" && after.status === "出荷済み") {
     // v1 は orderIds.length === 1 を想定（PRD §2）。先頭1件で連鎖を組む。
     const orderId = after.orderIds[0];
     if (orderId !== undefined) {
       effects.cascadeOrderAction = { orderId, action: "registerShipment" };
+      effects.sendMail = {
+        orderId,
+        triggerType: "ship-notify",
+        dedupeKey: `${orderId}:ship-notify`,
+      };
     }
   }
 

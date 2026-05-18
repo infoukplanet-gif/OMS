@@ -102,6 +102,52 @@ describe("onOrderTransitioned — inventory release on cancellation", () => {
   });
 });
 
+describe("onOrderTransitioned — thanks mail trigger (受注確定)", () => {
+  const orderConfirmedTargets = ["入金待ち", "引当待ち", "発売日時待ち"] as const;
+  const newOrderSources = ["新規受付", "確認待ち"] as const;
+
+  for (const before_ of newOrderSources) {
+    for (const after_ of orderConfirmedTargets) {
+      it(`returns sendMail(thanks) when transitioning ${before_} → ${after_}`, () => {
+        const effects = onOrderTransitioned(
+          order({ status: before_ }),
+          order({ status: after_ }),
+          "ORD-001",
+        );
+        expect(effects.sendMail).toEqual({
+          orderId: "ORD-001",
+          triggerType: "thanks",
+          dedupeKey: "ORD-001:thanks",
+        });
+      });
+    }
+  }
+
+  it("does NOT return sendMail when re-transitioning between order-confirmed statuses", () => {
+    const effects = onOrderTransitioned(
+      order({ status: "入金待ち" }),
+      order({ status: "引当待ち" }),
+      "ORD-001",
+    );
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail when going to キャンセル", () => {
+    const effects = onOrderTransitioned(
+      order({ status: "新規受付" }),
+      order({ status: "キャンセル" }),
+      "ORD-001",
+    );
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail when status stays the same", () => {
+    const same = order({ status: "新規受付" });
+    const effects = onOrderTransitioned(same, same, "ORD-001");
+    expect(effects.sendMail).toBeUndefined();
+  });
+});
+
 describe("onOrderTransitioned — purity and other transitions", () => {
   it("returns an empty effects object for transitions that have no cross-domain consequences", () => {
     const effects = onOrderTransitioned(

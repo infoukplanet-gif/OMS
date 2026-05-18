@@ -107,6 +107,47 @@ describe("onShipmentTransitioned — cancellation cascade", () => {
   });
 });
 
+describe("onShipmentTransitioned — ship-notify mail trigger", () => {
+  it("returns sendMail(ship-notify) when entering 出荷済み", () => {
+    const before = shipment({ status: "出荷待ち" });
+    const after = shipment({ status: "出荷済み" });
+
+    const effects = onShipmentTransitioned(before, after);
+
+    expect(effects.sendMail).toEqual({
+      orderId: "ORD-001",
+      triggerType: "ship-notify",
+      dedupeKey: "ORD-001:ship-notify",
+    });
+  });
+
+  it("does NOT return sendMail when already 出荷済み (no change)", () => {
+    const same = shipment({ status: "出荷済み" });
+    const effects = onShipmentTransitioned(same, same);
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail when transitioning to キャンセル", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷待ち" }),
+      shipment({ status: "キャンセル" }),
+      { orderStatusAtCancel: "印刷待ち" },
+    );
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail when shipment has no orderId", () => {
+    const before = shipment({ status: "出荷待ち", orderIds: [] });
+    const after = shipment({ status: "出荷済み", orderIds: [] });
+
+    const effects = onShipmentTransitioned(before, after);
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+});
+
 describe("onShipmentTransitioned — purity and other transitions", () => {
   it("returns an empty effects object for transitions without cross-domain consequences", () => {
     const effects = onShipmentTransitioned(

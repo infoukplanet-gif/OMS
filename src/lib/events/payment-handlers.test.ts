@@ -93,6 +93,50 @@ describe("onPaymentTransitioned — 入金済みからの巻き戻り", () => {
   });
 });
 
+describe("onPaymentTransitioned — payment-confirmed mail trigger", () => {
+  it("returns sendMail(payment-confirmed) when payment reaches 入金済み from 未入金", () => {
+    const before = payment({ status: "未入金" });
+    const after = payment({ status: "入金済み", paidAmount: 10000 });
+
+    const effects = onPaymentTransitioned(before, after, "ORD-1");
+
+    expect(effects.sendMail).toEqual({
+      orderId: "ORD-1",
+      triggerType: "payment-confirmed",
+      dedupeKey: "ORD-1:payment-confirmed",
+    });
+  });
+
+  it("returns sendMail when payment reaches 入金済み from 一部入金", () => {
+    const before = payment({ status: "一部入金", paidAmount: 4000 });
+    const after = payment({ status: "入金済み", paidAmount: 10000 });
+
+    const effects = onPaymentTransitioned(before, after, "ORD-2");
+
+    expect(effects.sendMail?.triggerType).toBe("payment-confirmed");
+  });
+
+  it("does NOT return sendMail when payment was already 入金済み (overpayment etc.)", () => {
+    const before = payment({ status: "入金済み", paidAmount: 10000 });
+    const after = payment({ status: "入金済み", paidAmount: 12000, overpaid: true });
+
+    const effects = onPaymentTransitioned(before, after, "ORD-3");
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail on revert away from 入金済み", () => {
+    const before = payment({ status: "入金済み", paidAmount: 10000 });
+    const after = payment({ status: "一部入金", paidAmount: 6000 });
+
+    const effects = onPaymentTransitioned(before, after, "ORD-4", {
+      orderStatus: "引当待ち",
+    });
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+});
+
 describe("onPaymentTransitioned — 変化なし", () => {
   it("returns no effects when status does not change", () => {
     const before = payment({ status: "一部入金", paidAmount: 3000 });

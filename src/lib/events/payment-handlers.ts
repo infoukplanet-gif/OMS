@@ -21,6 +21,8 @@ export interface PaymentTransitionEffects {
     orderId: string;
     action: "confirmPayment" | "revertToPaymentWait";
   };
+  /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
+  sendMail?: { orderId: string; triggerType: "payment-confirmed"; dedupeKey: string };
 }
 
 interface Options {
@@ -39,9 +41,14 @@ export function onPaymentTransitioned(
 ): PaymentTransitionEffects {
   const effects: PaymentTransitionEffects = {};
 
-  // 入金済み到達 → 受注を引当待ちへ進める
+  // 入金済み到達 → 受注を引当待ちへ進める + 入金確認メール
   if (before.status !== "入金済み" && after.status === "入金済み") {
     effects.cascadeOrderAction = { orderId, action: "confirmPayment" };
+    effects.sendMail = {
+      orderId,
+      triggerType: "payment-confirmed",
+      dedupeKey: `${orderId}:payment-confirmed`,
+    };
   }
 
   // 入金済みから巻き戻り → 受注がまだ引当待ちにいる時だけ入金待ちへ戻す

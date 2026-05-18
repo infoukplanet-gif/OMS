@@ -15,7 +15,19 @@ export interface OrderTransitionEffects {
   createShipment?: { orderId: string };
   /** Order がキャンセルされた時の在庫戻し記述子（v1 では実動作なし） */
   releaseInventory?: { orderId: string; reason: "order-cancelled" };
+  /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
+  sendMail?: { orderId: string; triggerType: "thanks"; dedupeKey: string };
 }
+
+const NEW_ORDER_SOURCE_STATUSES: ReadonlySet<OrderStatus> = new Set<OrderStatus>([
+  "新規受付",
+  "確認待ち",
+]);
+const ORDER_CONFIRMED_TARGET_STATUSES: ReadonlySet<OrderStatus> = new Set<OrderStatus>([
+  "入金待ち",
+  "引当待ち",
+  "発売日時待ち",
+]);
 
 interface Options {
   /** true の時は Shipment 自動生成をスキップする（運用画面からの手動オーバーライド用） */
@@ -56,6 +68,18 @@ export function onOrderTransitioned(
     ALLOCATED_STATUSES.has(before.status)
   ) {
     effects.releaseInventory = { orderId, reason: "order-cancelled" };
+  }
+
+  // 受注確定（新規受付/確認待ち → 入金待ち/引当待ち/発売日時待ち） → サンクスメール
+  if (
+    NEW_ORDER_SOURCE_STATUSES.has(before.status) &&
+    ORDER_CONFIRMED_TARGET_STATUSES.has(after.status)
+  ) {
+    effects.sendMail = {
+      orderId,
+      triggerType: "thanks",
+      dedupeKey: `${orderId}:thanks`,
+    };
   }
 
   return effects;
