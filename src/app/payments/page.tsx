@@ -139,17 +139,26 @@ export default function PaymentsPage() {
   }
 
   // ---- 入金取消（状態機械経由 + handler effects） -------------------------------
-  function handleCancelPayment(id: string, amount: number): void {
+  /**
+   * cancelPayment + onPaymentTransitioned で得られた cascadeOrderAction の数を返す。
+   * v1 では受注ストアが共有されていないので実 cascade は流れないが、件数だけ toast で見える化する。
+   * 受注ストア接続後（B フェーズ）は applyOrderTransition("revertToPaymentWait") を実行する。
+   */
+  function handleCancelPayment(id: string, amount: number): { cascade: number } {
+    let cascade = 0;
     setPayments((prev) =>
       prev.map((p) => {
         if (p.id !== id) return p;
         const next = cancelPayment(p, amount);
-        // 取消は payment-confirmed メールを誘発しないため effects.sendMail は基本来ない。
-        // cascadeOrderAction(revertToPaymentWait) は受注ストア統合まで no-op。
-        onPaymentTransitioned(p, next, p.order);
+        // 引当待ち想定で revertToPaymentWait が来るかを観測（実カスケードは B 以降）
+        const effects = onPaymentTransitioned(p, next, p.order, {
+          orderStatus: "引当待ち",
+        });
+        if (effects.cascadeOrderAction) cascade += 1;
         return { ...p, ...next };
       }),
     );
+    return { cascade };
   }
 
   // ---- 操作ボタン処理（モック） -----------------------------------------------
@@ -177,8 +186,9 @@ export default function PaymentsPage() {
       toast.show(`${p.order} には取消できる入金がありません`);
       return;
     }
-    handleCancelPayment(p.id, p.paidAmount);
-    toast.show(`${p.order}: 入金 ${fmt(p.paidAmount)} を全取消しました`);
+    const { cascade } = handleCancelPayment(p.id, p.paidAmount);
+    const tail = cascade > 0 ? ` / 受注「引当待ち→入金待ち」連鎖 ${cascade}件` : "";
+    toast.show(`${p.order}: 入金 ${fmt(p.paidAmount)} を全取消しました${tail}`, "info");
   }
 
   // ---- バッジ表示（overpaid 行は特別扱い） ------------------------------------
