@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
@@ -8,15 +8,13 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import {
   type OrderStatus,
-  type OrderState,
   type OrderAction,
   ORDER_STATUSES,
   orderStatusBadge,
-  transitionOrder,
 } from "@/lib/state-machines/order";
-import { onOrderTransitioned } from "@/lib/events/order-handlers";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
 import {
   Search,
   Plus,
@@ -26,14 +24,12 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 
-type Order = {
-  id: string;
+type Order = OrderRecord & {
   shop: string;
   customer: string;
   items: number;
   amount: number;
   payment: string;
-  status: OrderStatus;
   date: string;
 };
 
@@ -80,7 +76,21 @@ const fmtDate = (d: Date | undefined) =>
   d ? `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}` : "";
 
 export default function OrdersPage() {
-  const [items, setItems] = useState(initial);
+  // 共有 orderStore に subscribe して画面横断の状態を読む。
+  // 初回 mount で seed 投入（store が空なら）→ 他ページから cascade されると subscribe 経由で再描画。
+  useEffect(() => {
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(initial);
+    }
+  }, []);
+  const storeItems = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => initial,
+  );
+  // 表示用の Order 型にキャスト（store には付加プロパティが any として乗っている）
+  const items = storeItems as ReadonlyArray<Order>;
+
   const [activeTab, setActiveTab] = useState<"all" | OrderStatus>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");
@@ -129,23 +139,16 @@ export default function OrdersPage() {
     let skipped = 0;
     const mailJobs: MailJob[] = [];
 
-    const nextItems = items.map((order) => {
-      if (!selected.includes(order.id)) return order;
-
-      const before: OrderState = { status: order.status };
-      const after = transitionOrder(before, action);
-      if (after === before) {
+    for (const id of selected) {
+      const result = orderStore.applyTransition(id, action);
+      if (!result.applied) {
         skipped++;
-        return order;
+        continue;
       }
-
-      const effects = onOrderTransitioned(before, after, order.id);
-      if (effects.sendMail) mailJobs.push(effects.sendMail);
+      if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
       applied++;
-      return { ...order, status: after.status };
-    });
+    }
 
-    setItems(nextItems);
     setSelected([]);
 
     const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
