@@ -76,6 +76,30 @@ describe("transitionOrder — happy paths", () => {
   });
 });
 
+describe("transitionOrder — revertToPaymentWait", () => {
+  it("reverts 引当待ち → 入金待ち when payment is cancelled", () => {
+    const after = transitionOrder(order({ status: "引当待ち" }), "revertToPaymentWait");
+
+    expect(after.status).toBe("入金待ち");
+  });
+
+  it("clears inventoryShortage when reverting", () => {
+    const before = order({ status: "引当待ち", inventoryShortage: true });
+    const after = transitionOrder(before, "revertToPaymentWait");
+
+    expect(after.status).toBe("入金待ち");
+    expect(after.inventoryShortage).toBeUndefined();
+  });
+
+  it("is a no-op from any status other than 引当待ち", () => {
+    for (const status of ORDER_STATUSES) {
+      if (status === "引当待ち") continue;
+      const before = order({ status });
+      expect(transitionOrder(before, "revertToPaymentWait")).toBe(before);
+    }
+  });
+});
+
 describe("transitionOrder — inventory shortage", () => {
   it("flips inventoryShortage on without changing status", () => {
     const before = order({ status: "引当待ち" });
@@ -124,6 +148,7 @@ describe("transitionOrder — idempotency / guard violations", () => {
       "markPrinted",
       "registerShipment",
       "cancel",
+      "revertToPaymentWait",
     ];
 
     for (const status of ORDER_STATUSES) {

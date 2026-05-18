@@ -45,6 +45,7 @@ export type OrderAction =
   | "retryAllocation" // 引当待ち（errorBadge）→ 引当待ち（再試行）
   | "markPrinted" // 印刷待ち → 印刷済み（manual）
   | "registerShipment" // 印刷済み → 出荷済み（manual）
+  | "revertToPaymentWait" // 引当待ち → 入金待ち（manual: 入金取消の連鎖）
   | "cancel"; // 任意の状態（出荷済み除く）→ キャンセル（manual）
 
 /**
@@ -92,6 +93,7 @@ const TRANSITION_GUARDS: Record<OrderAction, ReadonlyArray<OrderStatus>> = {
   retryAllocation: ["引当待ち"],
   markPrinted: ["印刷待ち"],
   registerShipment: ["印刷済み"],
+  revertToPaymentWait: ["引当待ち"],
   cancel: [
     "新規受付",
     "確認待ち",
@@ -162,6 +164,10 @@ export function transitionOrder<T extends OrderState>(
 
     case "registerShipment":
       return { ...order, status: "出荷済み" };
+
+    case "revertToPaymentWait":
+      // 入金取消の連鎖。引当待ちを抜けるので在庫不足バッジは無意味になる
+      return { ...order, status: "入金待ち", inventoryShortage: undefined };
 
     case "cancel":
       return { ...order, status: "キャンセル", inventoryShortage: false };
