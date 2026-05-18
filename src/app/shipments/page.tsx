@@ -17,6 +17,7 @@ import {
 import { onShipmentTransitioned } from "@/lib/events/shipment-handlers";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { orderStore } from "@/lib/stores/orders";
 import {
   Search,
   ChevronLeft,
@@ -120,12 +121,78 @@ export default function ShipmentsPage() {
   const updateTracking = (id: string, trackingNumber: string) =>
     setItems((prev) => prev.map((s) => (s.id === id ? { ...s, trackingNumber } : s)));
 
+  /**
+   * 選択中の出荷を一括キャンセル。
+   * - shipment SM の cancel ガード (出荷済み/キャンセル を除く) で skipped をカウント
+   * - onShipmentTransitioned の cascadeOrderAction (cancel) / releaseInventory を集計し toast 表示
+   * - orderStatusAtCancel は v1 では Shipment 側に保持していないため undefined（cascadeOrderAction は基本来ない想定）
+   *   実 cascade は B フェーズの shared store 統合後に有効化
+   */
+  const cancelShipping = () => {
+    if (selected.length === 0) {
+      toast.show("キャンセルする出荷を選択してください", "error");
+      return;
+    }
+    let cancelled = 0;
+    let cascadeApplied = 0;
+    let cascadeSkipped = 0;
+    let releaseCount = 0;
+
+    setItems((prev) =>
+      prev.map((s) => {
+        if (!selected.includes(s.id)) return s;
+        const next = transitionShipment(s, "cancel");
+        if (next === s) return s;
+
+        // shared orderStore に Order がいれば、その時点の status を渡してカスケード判定
+        const sharedOrder = orderStore
+          .getState()
+          .find((o) => o.id === next.orderIds[0]);
+        const effects = onShipmentTransitioned(s, next, {
+          orderStatusAtCancel: sharedOrder?.status,
+        });
+
+        if (effects.cascadeOrderAction && sharedOrder) {
+          const r = orderStore.applyTransition(
+            effects.cascadeOrderAction.orderId,
+            effects.cascadeOrderAction.action,
+          );
+          if (r.applied) cascadeApplied += 1;
+          else cascadeSkipped += 1;
+        }
+        if (effects.releaseInventory) releaseCount += 1;
+        cancelled += 1;
+        return next;
+      }),
+    );
+
+    if (cancelled === 0) {
+      toast.show("選択した出荷は出荷済み/キャンセル済みのためキャンセルできません", "error");
+      setSelected([]);
+      return;
+    }
+
+    const detail = [
+      cascadeApplied > 0 ? `受注キャンセル連鎖 ${cascadeApplied}件` : "",
+      cascadeSkipped > 0 ? `カスケード ${cascadeSkipped}件スキップ` : "",
+      releaseCount > 0 ? `在庫戻し ${releaseCount}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const tail = detail ? ` / ${detail}` : "";
+
+    toast.show(`${cancelled} 件の出荷をキャンセルしました${tail}`, "success");
+    setSelected([]);
+  };
+
   const confirmShipping = () => {
     if (selected.length === 0) {
       toast.show("出荷確定する受注を選択してください", "error");
       return;
     }
     let succeeded = 0;
+    let cascadeApplied = 0;
+    let cascadeSkipped = 0;
     const mailJobs: MailJob[] = [];
 
     setItems((prev) =>
@@ -138,6 +205,16 @@ export default function ShipmentsPage() {
 
         const effects = onShipmentTransitioned(s, next);
         if (effects.sendMail) mailJobs.push(effects.sendMail);
+
+        // cascadeOrderAction (registerShipment) を shared orderStore に流す
+        if (effects.cascadeOrderAction) {
+          const r = orderStore.applyTransition(
+            effects.cascadeOrderAction.orderId,
+            effects.cascadeOrderAction.action,
+          );
+          if (r.applied) cascadeApplied += 1;
+          else cascadeSkipped += 1;
+        }
         succeeded += 1;
         return next;
       }),
@@ -150,16 +227,21 @@ export default function ShipmentsPage() {
     }
 
     const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
-    const detail = [
+    const mailDetail = [
       mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
       mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
       mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
     ]
       .filter(Boolean)
       .join("・");
-    const mailLine = detail ? ` / 出荷通知メール ${detail}` : "";
+    const mailLine = mailDetail ? ` / 出荷通知メール ${mailDetail}` : "";
 
-    toast.show(`${succeeded} 件を出荷確定しました${mailLine}`, "success");
+    const cascadeLine =
+      cascadeApplied + cascadeSkipped > 0
+        ? ` / 受注連鎖 ${cascadeApplied}件適用${cascadeSkipped > 0 ? `・${cascadeSkipped}件スキップ` : ""}`
+        : "";
+
+    toast.show(`${succeeded} 件を出荷確定しました${cascadeLine}${mailLine}`, "success");
     setSelected([]);
   };
 
@@ -353,6 +435,13 @@ export default function ShipmentsPage() {
                 </button>
                 <button onClick={() => toast.show(`${selected.length} 件の出荷指示書を発行します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors">
                   出荷指示書
+                </button>
+                <button
+                  onClick={cancelShipping}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-700 hover:bg-rose-500/25 transition-colors"
+                  title="shipment SM の cancel ガードに従って一括キャンセル"
+                >
+                  キャンセル
                 </button>
               </div>
             )}
