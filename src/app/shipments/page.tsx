@@ -14,6 +14,9 @@ import {
   type ShipmentStatus,
   type ShipmentState,
 } from "@/lib/state-machines/shipment";
+import { onShipmentTransitioned } from "@/lib/events/shipment-handlers";
+import { mailQueue, type MailJob } from "@/lib/mail/queue";
+import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import {
   Search,
   ChevronLeft,
@@ -123,21 +126,40 @@ export default function ShipmentsPage() {
       return;
     }
     let succeeded = 0;
+    const mailJobs: MailJob[] = [];
+
     setItems((prev) =>
       prev.map((s) => {
         if (!selected.includes(s.id)) return s;
         const next = transitionShipment(s, "confirmShipment", {
           trackingNumber: s.trackingNumber,
         });
-        if (next !== s) succeeded += 1;
+        if (next === s) return s;
+
+        const effects = onShipmentTransitioned(s, next);
+        if (effects.sendMail) mailJobs.push(effects.sendMail);
+        succeeded += 1;
         return next;
       }),
     );
+
     if (succeeded === 0) {
       toast.show("選択した出荷は出荷待ち状態ではないため確定できません", "error");
-    } else {
-      toast.show(`${succeeded} 件を出荷確定しました`, "success");
+      setSelected([]);
+      return;
     }
+
+    const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
+    const detail = [
+      mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
+      mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
+      mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const mailLine = detail ? ` / 出荷通知メール ${detail}` : "";
+
+    toast.show(`${succeeded} 件を出荷確定しました${mailLine}`, "success");
     setSelected([]);
   };
 
