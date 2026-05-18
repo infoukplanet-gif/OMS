@@ -15,6 +15,9 @@ import {
   recordPayment,
   cancelPayment,
 } from "@/lib/state-machines/payment";
+import { onPaymentTransitioned } from "@/lib/events/payment-handlers";
+import { mailQueue, type MailJob } from "@/lib/mail/queue";
+import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import {
   Search,
   Plus,
@@ -113,23 +116,37 @@ export default function PaymentsPage() {
       .reduce((s, p) => s + (p.orderTotal - p.paidAmount), 0),
   }), [payments]);
 
-  // ---- 入金登録（状態機械経由） -----------------------------------------------
-  function handleRecordPayment(id: string, amount: number) {
+  // ---- 入金登録（状態機械経由 + handler effects） -------------------------------
+  // 入金確認メール（payment-confirmed）を mailQueue に enqueue。
+  // cascadeOrderAction（confirmPayment / revertToPaymentWait）は v1 では受注ストアが
+  // 共有されていないので mailQueue 件数だけ返す。
+  function handleRecordPayment(id: string, amount: number): {
+    enqueued: number;
+    duplicateSkipped: number;
+    disabledSkipped: number;
+  } {
+    const mailJobs: MailJob[] = [];
     setPayments((prev) =>
       prev.map((p) => {
         if (p.id !== id) return p;
         const next = recordPayment(p, amount);
+        const effects = onPaymentTransitioned(p, next, p.order);
+        if (effects.sendMail) mailJobs.push(effects.sendMail);
         return { ...p, ...next };
       }),
     );
+    return mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
   }
 
-  // ---- 入金取消（状態機械経由） -----------------------------------------------
-  function handleCancelPayment(id: string, amount: number) {
+  // ---- 入金取消（状態機械経由 + handler effects） -------------------------------
+  function handleCancelPayment(id: string, amount: number): void {
     setPayments((prev) =>
       prev.map((p) => {
         if (p.id !== id) return p;
         const next = cancelPayment(p, amount);
+        // 取消は payment-confirmed メールを誘発しないため effects.sendMail は基本来ない。
+        // cascadeOrderAction(revertToPaymentWait) は受注ストア統合まで no-op。
+        onPaymentTransitioned(p, next, p.order);
         return { ...p, ...next };
       }),
     );
@@ -143,8 +160,16 @@ export default function PaymentsPage() {
       toast.show(`${p.order} はすでに全額入金済みです`);
       return;
     }
-    handleRecordPayment(p.id, remaining);
-    toast.show(`${p.order}: ${fmt(remaining)} を入金登録しました`);
+    const mailResult = handleRecordPayment(p.id, remaining);
+    const detail = [
+      mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
+      mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
+      mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const mailLine = detail ? ` / 入金確認メール ${detail}` : "";
+    toast.show(`${p.order}: ${fmt(remaining)} を入金登録しました${mailLine}`, "success");
   }
 
   function onClickCancel(p: PayRecord) {
