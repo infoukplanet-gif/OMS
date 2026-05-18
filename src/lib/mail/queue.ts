@@ -68,3 +68,14 @@ export function createMailQueue(): MailQueue {
     },
   };
 }
+
+/**
+ * クライアントセッション内で共有される単一の MailQueue インスタンス。
+ *
+ * v1 はブラウザの module 評価スコープで保持される（リロードで消える）ので
+ * 「同一セッション中の自動 enqueue が mail/pending から覗ける」という UX のみ提供する。
+ * 永続化・サーバ集約は v2 で server action + DB に置き換える。
+ *
+ * テストは createMailQueue() を直接使う想定（singleton は global state なので test 用ではない）。
+ */
+export const mailQueue: MailQueue = createMailQueue();
