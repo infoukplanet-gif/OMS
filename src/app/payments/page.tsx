@@ -21,6 +21,10 @@ import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
+  scheduleOverdueReminders,
+  type OverduePayment,
+} from "@/lib/mail/payment-scheduler";
+import {
   Search,
   Plus,
   CheckCircle2,
@@ -308,6 +312,42 @@ export default function PaymentsPage() {
     );
   }
 
+  /**
+   * 期日超過の未入金/一部入金に対し、scheduleOverdueReminders で
+   * payment-reminder-3d / payment-final-call-7d を生成し mailQueue に enqueue。
+   * dedupeKey で同一トリガの重複送信は抑止される。
+   */
+  function sendOverdueReminders(): void {
+    const overdue: OverduePayment[] = payments.map((p) => ({
+      paymentId: p.id,
+      orderId: p.orderId,
+      due: p.due,
+      paidAmount: p.paidAmount,
+      orderTotal: p.orderTotal,
+    }));
+    const jobs = scheduleOverdueReminders(overdue, new Date());
+
+    if (jobs.length === 0) {
+      toast.show("期日超過の催促対象はありません", "info");
+      return;
+    }
+
+    const result = mailQueue.enqueueAll(jobs, getAutoMailEnabled());
+    const tail = [
+      result.enqueued > 0 ? `送信 ${result.enqueued}件` : "",
+      result.duplicateSkipped > 0 ? `重複 ${result.duplicateSkipped}件` : "",
+      result.disabledSkipped > 0 ? `無効化 ${result.disabledSkipped}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    toast.show(
+      result.enqueued > 0
+        ? `催促メール ${tail}`
+        : `催促対象はありますが ${tail}（送信なし）`,
+      result.enqueued > 0 ? "success" : "info",
+    );
+  }
+
   function onClickCancel(p: PayRecord) {
     if (p.paidAmount <= 0) {
       toast.show(`${p.order} には取消できる入金がありません`);
@@ -550,10 +590,9 @@ export default function PaymentsPage() {
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           <button
-            onClick={() =>
-              toast.show("期日超過の未入金顧客に催促メールを送信します（モック）")
-            }
+            onClick={sendOverdueReminders}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80"
+            title="3日超過は催促メール / 7日超過は最終催告を mailQueue に enqueue"
           >
             <Mail className="h-4 w-4" />催促メール一括送信
           </button>
