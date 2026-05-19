@@ -16,6 +16,8 @@ export const DEFAULT_AUTO_MAIL_ENABLED: AutoMailEnabled = {
   thanks: true,
   "ship-notify": true,
   "payment-confirmed": true,
+  "payment-reminder-3d": true,
+  "payment-final-call-7d": true,
 };
 
 let enabled: Record<MailTriggerType, boolean> = { ...DEFAULT_AUTO_MAIL_ENABLED };

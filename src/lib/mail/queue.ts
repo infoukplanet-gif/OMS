@@ -9,7 +9,12 @@
  * - v2 で実送信・retry・persistence を担うジョブワーカに置き換え
  */
 
-export type MailTriggerType = "thanks" | "ship-notify" | "payment-confirmed";
+export type MailTriggerType =
+  | "thanks"
+  | "ship-notify"
+  | "payment-confirmed"
+  | "payment-reminder-3d"
+  | "payment-final-call-7d";
 
 export interface MailJob {
   orderId: string;
@@ -35,6 +40,8 @@ const DEFAULT_ENABLED: AutoMailEnabled = {
   thanks: true,
   "ship-notify": true,
   "payment-confirmed": true,
+  "payment-reminder-3d": true,
+  "payment-final-call-7d": true,
 };
 
 export function createMailQueue(): MailQueue {

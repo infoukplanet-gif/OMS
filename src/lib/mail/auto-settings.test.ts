@@ -21,6 +21,8 @@ describe("auto-settings — module-level enabled map", () => {
       thanks: true,
       "ship-notify": true,
       "payment-confirmed": false,
+      "payment-reminder-3d": true,
+      "payment-final-call-7d": true,
     });
   });
 
@@ -31,6 +33,8 @@ describe("auto-settings — module-level enabled map", () => {
       thanks: false,
       "ship-notify": false,
       "payment-confirmed": true,
+      "payment-reminder-3d": true,
+      "payment-final-call-7d": true,
     });
   });
 
