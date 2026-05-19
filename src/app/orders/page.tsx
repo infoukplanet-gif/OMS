@@ -16,6 +16,7 @@ import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import {
@@ -135,6 +136,7 @@ export default function OrdersPage() {
     let released = 0;
     let allocateFailed = 0;
     let shortageMarked = 0;
+    let shipmentsCreated = 0;
     const mailJobs: MailJob[] = [];
 
     for (const id of selected) {
@@ -145,6 +147,17 @@ export default function OrdersPage() {
         continue;
       }
       if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
+
+      // 出荷指示の自動作成 cascade
+      if (result.effects.createShipment && before) {
+        const created = shipmentStore.createForOrder(result.effects.createShipment.orderId, {
+          customer: before.customer,
+          shop: before.shop,
+          items: before.items,
+          amount: before.amount,
+        });
+        if (created.created) shipmentsCreated++;
+      }
 
       // 在庫 cascade: 当該 Order の allocation lines を読み、inventoryStore に流す
       if (result.effects.allocateInventory && before?.allocation) {
@@ -189,11 +202,13 @@ export default function OrdersPage() {
       .join("・");
     const invLine = invDetail ? ` / 在庫 ${invDetail}` : "";
 
+    const shipLine = shipmentsCreated > 0 ? ` / 出荷指示 ${shipmentsCreated}件作成` : "";
+
     if (applied === 0) {
       toast.show(`${label} を実行できる受注がありません（${skipped} 件スキップ）`, "info");
     } else {
       toast.show(
-        `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${mailLine}`,
+        `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${shipLine}${mailLine}`,
         allocateFailed > 0 || shortageMarked > 0 ? "info" : "success",
       );
     }

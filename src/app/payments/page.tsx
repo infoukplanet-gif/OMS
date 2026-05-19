@@ -17,6 +17,7 @@ import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { paymentStore, type PaymentRecord } from "@/lib/stores/payment";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
@@ -150,12 +151,14 @@ export default function PaymentsPage() {
     cascadeApplied: number;
     allocated: number;
     shortageMarked: number;
+    shipmentsCreated: number;
   } {
     const result = paymentStore.applyRecord(id, amount);
     const mailJobs: MailJob[] = [];
     let cascadeApplied = 0;
     let allocated = 0;
     let shortageMarked = 0;
+    let shipmentsCreated = 0;
 
     if (!result.applied) {
       return {
@@ -163,6 +166,7 @@ export default function PaymentsPage() {
         cascadeApplied,
         allocated,
         shortageMarked,
+        shipmentsCreated,
       };
     }
 
@@ -176,6 +180,24 @@ export default function PaymentsPage() {
       if (orderRes.applied) {
         cascadeApplied += 1;
         if (orderRes.effects.sendMail) mailJobs.push(orderRes.effects.sendMail);
+
+        // 出荷指示の自動作成 cascade
+        if (orderRes.effects.createShipment) {
+          const sharedOrder = orderStore
+            .getState()
+            .find((o) => o.id === orderRes.effects.createShipment!.orderId);
+          const created = shipmentStore.createForOrder(
+            orderRes.effects.createShipment.orderId,
+            {
+              customer: sharedOrder?.customer as string | undefined,
+              shop: sharedOrder?.shop as string | undefined,
+              items: sharedOrder?.items as number | undefined,
+              amount: sharedOrder?.amount as number | undefined,
+            },
+          );
+          if (created.created) shipmentsCreated += 1;
+        }
+
         // confirmPayment cascade で order が引当待ちに到達 → allocateInventory を流す
         if (orderRes.effects.allocateInventory) {
           const sharedOrder = orderStore
@@ -203,6 +225,7 @@ export default function PaymentsPage() {
       cascadeApplied,
       allocated,
       shortageMarked,
+      shipmentsCreated,
     };
   }
 
@@ -271,6 +294,7 @@ export default function PaymentsPage() {
     const mailLine = mailDetail ? ` / メール ${mailDetail}` : "";
     const cascadeDetail = [
       result.cascadeApplied > 0 ? `受注確定 ${result.cascadeApplied}件` : "",
+      result.shipmentsCreated > 0 ? `出荷指示 ${result.shipmentsCreated}件作成` : "",
       result.allocated > 0 ? `引当 ${result.allocated}SKU` : "",
       result.shortageMarked > 0 ? `在庫不足マーク ${result.shortageMarked}件` : "",
     ]
