@@ -45,6 +45,45 @@ describe("onOrderTransitioned — Shipment auto-creation on 引当待ち arrival
   });
 });
 
+describe("onOrderTransitioned — inventory allocation on 引当待ち arrival", () => {
+  it("returns allocateInventory when transitioning into 引当待ち", () => {
+    const effects = onOrderTransitioned(
+      order({ status: "入金待ち" }),
+      order({ status: "引当待ち" }),
+      "ORD-001",
+    );
+    expect(effects.allocateInventory).toEqual({
+      orderId: "ORD-001",
+      reason: "order-confirmed",
+    });
+  });
+
+  it("does NOT return allocateInventory when already at 引当待ち", () => {
+    const same = order({ status: "引当待ち" });
+    const effects = onOrderTransitioned(same, same, "ORD-001");
+    expect(effects.allocateInventory).toBeUndefined();
+  });
+
+  it("does NOT return allocateInventory when leaving 引当待ち", () => {
+    const effects = onOrderTransitioned(
+      order({ status: "引当待ち" }),
+      order({ status: "印刷待ち" }),
+      "ORD-001",
+    );
+    expect(effects.allocateInventory).toBeUndefined();
+  });
+
+  it("is emitted alongside createShipment on the same transition", () => {
+    const effects = onOrderTransitioned(
+      order({ status: "入金待ち" }),
+      order({ status: "引当待ち" }),
+      "ORD-001",
+    );
+    expect(effects.createShipment).toBeDefined();
+    expect(effects.allocateInventory).toBeDefined();
+  });
+});
+
 describe("onOrderTransitioned — inventory release on cancellation", () => {
   it("returns releaseInventory when cancelling from 引当待ち", () => {
     const before = order({ status: "引当待ち" });

@@ -107,6 +107,51 @@ describe("onShipmentTransitioned — cancellation cascade", () => {
   });
 });
 
+describe("onShipmentTransitioned — inventory consumption on confirmation", () => {
+  it("returns consumeInventory when entering 出荷済み", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷待ち" }),
+      shipment({ status: "出荷済み" }),
+    );
+    expect(effects.consumeInventory).toEqual({
+      orderId: "ORD-001",
+      reason: "shipment-confirmed",
+    });
+  });
+
+  it("does NOT return consumeInventory when already 出荷済み", () => {
+    const same = shipment({ status: "出荷済み" });
+    const effects = onShipmentTransitioned(same, same);
+    expect(effects.consumeInventory).toBeUndefined();
+  });
+
+  it("does NOT return consumeInventory when transitioning to キャンセル", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷待ち" }),
+      shipment({ status: "キャンセル" }),
+      { orderStatusAtCancel: "印刷待ち" },
+    );
+    expect(effects.consumeInventory).toBeUndefined();
+  });
+
+  it("is emitted alongside cascadeOrderAction registerShipment and sendMail(ship-notify)", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷待ち" }),
+      shipment({ status: "出荷済み" }),
+    );
+    expect(effects.cascadeOrderAction).toBeDefined();
+    expect(effects.consumeInventory).toBeDefined();
+    expect(effects.sendMail).toBeDefined();
+  });
+
+  it("does NOT return consumeInventory when shipment has no orderId", () => {
+    const before = shipment({ status: "出荷待ち", orderIds: [] });
+    const after = shipment({ status: "出荷済み", orderIds: [] });
+    const effects = onShipmentTransitioned(before, after);
+    expect(effects.consumeInventory).toBeUndefined();
+  });
+});
+
 describe("onShipmentTransitioned — ship-notify mail trigger", () => {
   it("returns sendMail(ship-notify) when entering 出荷済み", () => {
     const before = shipment({ status: "出荷待ち" });

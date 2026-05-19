@@ -13,7 +13,9 @@ import type { OrderState, OrderStatus } from "../state-machines/order";
 export interface OrderTransitionEffects {
   /** Order が引当待ちに到達した時に Shipment を新規作成する記述子 */
   createShipment?: { orderId: string };
-  /** Order がキャンセルされた時の在庫戻し記述子（v1 では実動作なし） */
+  /** Order が引当待ちに到達した時の在庫引当記述子 */
+  allocateInventory?: { orderId: string; reason: "order-confirmed" };
+  /** Order がキャンセルされた時の在庫戻し記述子 */
   releaseInventory?: { orderId: string; reason: "order-cancelled" };
   /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
   sendMail?: { orderId: string; triggerType: "thanks"; dedupeKey: string };
@@ -52,13 +54,12 @@ export function onOrderTransitioned(
 ): OrderTransitionEffects {
   const effects: OrderTransitionEffects = {};
 
-  // 引当待ち到達 → Shipment 自動生成
-  if (
-    before.status !== "引当待ち" &&
-    after.status === "引当待ち" &&
-    !options.disableShipmentAutoCreate
-  ) {
-    effects.createShipment = { orderId };
+  // 引当待ち到達 → Shipment 自動生成 + 在庫引当
+  if (before.status !== "引当待ち" && after.status === "引当待ち") {
+    if (!options.disableShipmentAutoCreate) {
+      effects.createShipment = { orderId };
+    }
+    effects.allocateInventory = { orderId, reason: "order-confirmed" };
   }
 
   // 引当済み状態からキャンセル → 在庫戻し記述子

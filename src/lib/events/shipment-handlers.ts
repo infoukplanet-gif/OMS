@@ -14,7 +14,9 @@ import type { OrderStatus } from "../state-machines/order";
 export interface ShipmentTransitionEffects {
   /** Shipment の遷移を Order に波及させる記述子 */
   cascadeOrderAction?: { orderId: string; action: "registerShipment" | "cancel" };
-  /** Shipment キャンセル時の在庫戻し記述子（v1 では実動作なし） */
+  /** Shipment 確定時の在庫消費記述子（onHand と allocated を同時に減らす） */
+  consumeInventory?: { orderId: string; reason: "shipment-confirmed" };
+  /** Shipment キャンセル時の在庫戻し記述子 */
   releaseInventory?: { orderId: string; reason: "shipment-cancelled" };
   /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
   sendMail?: { orderId: string; triggerType: "ship-notify"; dedupeKey: string };
@@ -45,12 +47,13 @@ export function onShipmentTransitioned(
 ): ShipmentTransitionEffects {
   const effects: ShipmentTransitionEffects = {};
 
-  // 出荷済み到達 → Order に registerShipment を波及 + 出荷完了通知メール
+  // 出荷済み到達 → Order に registerShipment を波及 + 在庫消費 + 出荷完了通知メール
   if (before.status !== "出荷済み" && after.status === "出荷済み") {
     // v1 は orderIds.length === 1 を想定（PRD §2）。先頭1件で連鎖を組む。
     const orderId = after.orderIds[0];
     if (orderId !== undefined) {
       effects.cascadeOrderAction = { orderId, action: "registerShipment" };
+      effects.consumeInventory = { orderId, reason: "shipment-confirmed" };
       effects.sendMail = {
         orderId,
         triggerType: "ship-notify",
