@@ -98,3 +98,14 @@ export function consume(record: InventoryRecord, qty: number): InventoryRecord {
     allocated: record.allocated - qty,
   };
 }
+
+/**
+ * 発注入荷で物理在庫を加算する。allocated は触らない。
+ * qty が非正の場合は no-op（参照同一性保持）。
+ *
+ * purchase-handlers の receiveInventory 記述子を InventoryRecord に適用するときに使う。
+ */
+export function receiveStock(record: InventoryRecord, qty: number): InventoryRecord {
+  if (qty <= 0) return record;
+  return { ...record, onHand: record.onHand + qty };
+}

@@ -3,6 +3,7 @@ import {
   allocate,
   release,
   consume,
+  receiveStock,
   freeStock,
   inventoryHealth,
   type InventoryRecord,
@@ -144,6 +145,35 @@ describe("consume", () => {
     const before = record({ onHand: 30, allocated: 5 });
     expect(consume(before, 0)).toBe(before);
     expect(consume(before, -2)).toBe(before);
+  });
+});
+
+describe("receiveStock", () => {
+  it("increases onHand by qty without touching allocated", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    const after = receiveStock(before, 10);
+    expect(after.onHand).toBe(40);
+    expect(after.allocated).toBe(5);
+  });
+
+  it("returns the same reference when qty is zero or negative (guard: no-op)", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    expect(receiveStock(before, 0)).toBe(before);
+    expect(receiveStock(before, -3)).toBe(before);
+  });
+
+  it("does not mutate the input on success", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    const snapshot = { ...before };
+    receiveStock(before, 10);
+    expect(before).toEqual(snapshot);
+  });
+
+  it("can lift onHand back above zero from a 在庫切れ state", () => {
+    const before = record({ onHand: 0, allocated: 0 });
+    const after = receiveStock(before, 12);
+    expect(after.onHand).toBe(12);
+    expect(inventoryHealth(after)).not.toBe("在庫切れ");
   });
 });
 
