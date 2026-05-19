@@ -145,6 +145,145 @@ describe("createInventoryStore — subscribe / unsubscribe", () => {
   });
 });
 
+describe("createInventoryStore — applyAllocate (order confirmPayment cascade)", () => {
+  let store: InventoryStore;
+  beforeEach(() => {
+    store = createInventoryStore([
+      rec({ sku: "A", warehouse: "東京", onHand: 10, allocated: 0 }),
+      rec({ sku: "B", warehouse: "東京", onHand: 3, allocated: 2 }),
+    ]);
+  });
+
+  it("allocates qty against matching (sku, warehouse) and increases allocated", () => {
+    const result = store.applyAllocate([
+      { sku: "A", warehouse: "東京", qty: 4 },
+    ]);
+    expect(result.applied).toBe(true);
+    expect(result.appliedCount).toBe(1);
+    const a = store.getState().find((r) => r.sku === "A" && r.warehouse === "東京");
+    expect(a?.allocated).toBe(4);
+    expect(a?.onHand).toBe(10);
+  });
+
+  it("returns failedLines when free stock is insufficient (SM guard rejection)", () => {
+    const result = store.applyAllocate([
+      { sku: "B", warehouse: "東京", qty: 5 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.appliedCount).toBe(0);
+    expect(result.failedLines).toEqual([
+      { sku: "B", warehouse: "東京", qty: 5 },
+    ]);
+    expect(store.getState().find((r) => r.sku === "B")?.allocated).toBe(2);
+  });
+
+  it("returns unknownLines for SKUs not in the store", () => {
+    const result = store.applyAllocate([
+      { sku: "MISSING", warehouse: "東京", qty: 3 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.unknownLines).toEqual([
+      { sku: "MISSING", warehouse: "東京", qty: 3 },
+    ]);
+  });
+
+  it("aggregates lines for the same key into a single allocate", () => {
+    const result = store.applyAllocate([
+      { sku: "A", warehouse: "東京", qty: 3 },
+      { sku: "A", warehouse: "東京", qty: 4 },
+    ]);
+    expect(result.applied).toBe(true);
+    expect(store.getState().find((r) => r.sku === "A")?.allocated).toBe(7);
+  });
+
+  it("ignores qty <= 0 lines", () => {
+    const result = store.applyAllocate([
+      { sku: "A", warehouse: "東京", qty: 0 },
+      { sku: "A", warehouse: "東京", qty: -2 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(store.getState().find((r) => r.sku === "A")?.allocated).toBe(0);
+  });
+});
+
+describe("createInventoryStore — applyRelease (order/shipment cancel cascade)", () => {
+  let store: InventoryStore;
+  beforeEach(() => {
+    store = createInventoryStore([
+      rec({ sku: "A", warehouse: "東京", onHand: 10, allocated: 5 }),
+      rec({ sku: "B", warehouse: "東京", onHand: 5, allocated: 1 }),
+    ]);
+  });
+
+  it("decreases allocated by qty when allocated is sufficient", () => {
+    const result = store.applyRelease([
+      { sku: "A", warehouse: "東京", qty: 3 },
+    ]);
+    expect(result.applied).toBe(true);
+    expect(result.appliedCount).toBe(1);
+    const a = store.getState().find((r) => r.sku === "A");
+    expect(a?.allocated).toBe(2);
+    expect(a?.onHand).toBe(10);
+  });
+
+  it("returns failedLines when allocated is insufficient", () => {
+    const result = store.applyRelease([
+      { sku: "B", warehouse: "東京", qty: 3 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.failedLines).toEqual([
+      { sku: "B", warehouse: "東京", qty: 3 },
+    ]);
+  });
+
+  it("returns unknownLines for SKUs not in the store", () => {
+    const result = store.applyRelease([
+      { sku: "MISSING", warehouse: "東京", qty: 1 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.unknownLines).toHaveLength(1);
+  });
+});
+
+describe("createInventoryStore — applyConsume (shipment confirm cascade)", () => {
+  let store: InventoryStore;
+  beforeEach(() => {
+    store = createInventoryStore([
+      rec({ sku: "A", warehouse: "東京", onHand: 10, allocated: 5 }),
+      rec({ sku: "B", warehouse: "東京", onHand: 2, allocated: 3 }),
+    ]);
+  });
+
+  it("decreases onHand and allocated together when both are sufficient", () => {
+    const result = store.applyConsume([
+      { sku: "A", warehouse: "東京", qty: 4 },
+    ]);
+    expect(result.applied).toBe(true);
+    expect(result.appliedCount).toBe(1);
+    const a = store.getState().find((r) => r.sku === "A");
+    expect(a?.onHand).toBe(6);
+    expect(a?.allocated).toBe(1);
+  });
+
+  it("returns failedLines when onHand or allocated is insufficient (over-allocation)", () => {
+    const result = store.applyConsume([
+      { sku: "B", warehouse: "東京", qty: 3 },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.failedLines).toHaveLength(1);
+  });
+
+  it("notifies subscribers only when at least one line was applied", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    store.applyConsume([
+      { sku: "A", warehouse: "東京", qty: 4 },
+      { sku: "MISSING", warehouse: "東京", qty: 1 },
+    ]);
+    expect(calls).toBe(1);
+  });
+});
+
 describe("createInventoryStore — immutability", () => {
   it("getState returns a stable reference until a mutation occurs", () => {
     const store = createInventoryStore([rec()]);
