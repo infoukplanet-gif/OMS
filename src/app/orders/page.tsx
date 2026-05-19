@@ -25,6 +25,8 @@ import {
   ChevronLeft,
   ChevronRight,
   MoreHorizontal,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 
 type Order = OrderRecord & {
@@ -151,8 +153,9 @@ export default function OrdersPage() {
    * - ガード違反（遷移できない受注）はスキップしカウント
    * - effects.sendMail → mailQueue.enqueueAll
    * - effects.allocateInventory → 当該受注の allocation を inventoryStore.applyAllocate
+   *   引当失敗（appliedCount===0 && failed>0）なら markInventoryShortage を自動連鎖
+   *   → inventoryShortage バッジが立ち、行ごとの「引当再試行」ボタンが現れる。
    * - effects.releaseInventory → 当該受注の allocation を inventoryStore.applyRelease
-   * - 引当不足（free 在庫不足）は failedLines として toast に出す。状態遷移は止めない。
    */
   const applyBulkAction = (action: OrderAction, label: string) => {
     if (selected.length === 0) return;
@@ -162,6 +165,7 @@ export default function OrdersPage() {
     let allocated = 0;
     let released = 0;
     let allocateFailed = 0;
+    let shortageMarked = 0;
     const mailJobs: MailJob[] = [];
 
     for (const id of selected) {
@@ -177,7 +181,14 @@ export default function OrdersPage() {
       if (result.effects.allocateInventory && before?.allocation) {
         const cascade = inventoryStore.applyAllocate(before.allocation);
         allocated += cascade.appliedCount;
-        allocateFailed += cascade.failedLines.length + cascade.unknownLines.length;
+        const failedCount = cascade.failedLines.length + cascade.unknownLines.length;
+        allocateFailed += failedCount;
+
+        // 引当失敗（全 line が失敗）→ markInventoryShortage で在庫不足バッジを立てる
+        if (failedCount > 0 && cascade.appliedCount === 0) {
+          const shortageRes = orderStore.applyTransition(id, "markInventoryShortage");
+          if (shortageRes.applied) shortageMarked++;
+        }
       }
       if (result.effects.releaseInventory && before?.allocation) {
         const cascade = inventoryStore.applyRelease(before.allocation);
@@ -202,7 +213,8 @@ export default function OrdersPage() {
     const invDetail = [
       allocated > 0 ? `引当 ${allocated}件` : "",
       released > 0 ? `引当戻し ${released}件` : "",
-      allocateFailed > 0 ? `引当失敗 ${allocateFailed}件` : "",
+      shortageMarked > 0 ? `在庫不足マーク ${shortageMarked}件` : "",
+      allocateFailed > 0 && shortageMarked === 0 ? `引当失敗 ${allocateFailed}件` : "",
     ]
       .filter(Boolean)
       .join("・");
@@ -213,9 +225,30 @@ export default function OrdersPage() {
     } else {
       toast.show(
         `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${mailLine}`,
-        allocateFailed > 0 ? "info" : "success",
+        allocateFailed > 0 || shortageMarked > 0 ? "info" : "success",
       );
     }
+  };
+
+  /**
+   * 在庫不足マーク中の受注を行ごとに引当再試行する。
+   * - inventoryStore.applyAllocate → 成功時は SM allocateInventory を打って印刷待ちへ
+   * - 失敗時は引き続き在庫不足バッジを維持
+   */
+  const retryAllocate = (order: Order) => {
+    const cascade = inventoryStore.applyAllocate(order.allocation);
+    if (cascade.appliedCount === 0) {
+      toast.show(`${order.id}: 在庫が依然として不足しています`, "info");
+      return;
+    }
+    const smResult = orderStore.applyTransition(order.id, "allocateInventory");
+    if (!smResult.applied) {
+      // 万一の不整合（引当待ち以外で再試行された等）。inventory は加算済なので戻す。
+      inventoryStore.applyRelease(order.allocation);
+      toast.show(`${order.id}: 引当再試行に失敗しました`, "error");
+      return;
+    }
+    toast.show(`${order.id} を印刷待ちに進めました（在庫引当成功）`, "success");
   };
 
   return (
@@ -337,13 +370,31 @@ export default function OrdersPage() {
                     <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap", paymentBadge[order.payment])}>{order.payment}</span>
                   </td>
                   <td className="px-3 py-3 text-center">
-                    <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap", statusBadge[order.status])}>{order.status}</span>
+                    <div className="inline-flex flex-col items-center gap-1">
+                      <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap", statusBadge[order.status])}>{order.status}</span>
+                      {order.inventoryShortage && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/15 text-red-700 whitespace-nowrap">
+                          <AlertTriangle className="h-3 w-3" />在庫不足
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{order.date}</td>
                   <td className="px-3 py-3">
-                    <Link href={`/orders/${order.id}/edit`} className="inline-flex p-1 rounded-lg hover:bg-white/60 text-gray-400 hover:text-blue-600 transition-colors" title="編集">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Link>
+                    <div className="flex items-center gap-1">
+                      {order.inventoryShortage && (
+                        <button
+                          onClick={() => retryAllocate(order)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 transition-colors"
+                          title="在庫引当を再試行"
+                        >
+                          <RefreshCw className="h-3 w-3" />引当再試行
+                        </button>
+                      )}
+                      <Link href={`/orders/${order.id}/edit`} className="inline-flex p-1 rounded-lg hover:bg-white/60 text-gray-400 hover:text-blue-600 transition-colors" title="編集">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -367,6 +418,13 @@ export default function OrdersPage() {
                   title="確認待ち → 入金待ち（サンクスメール送信）"
                 >
                   入金待ちへ
+                </button>
+                <button
+                  onClick={() => applyBulkAction("confirmPayment", "入金確認")}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 transition-colors"
+                  title="入金待ち → 引当待ち（在庫引当を自動連鎖、失敗時は在庫不足バッジ）"
+                >
+                  入金確認
                 </button>
                 <button
                   onClick={() => applyBulkAction("markPrinted", "印刷済みにする")}
