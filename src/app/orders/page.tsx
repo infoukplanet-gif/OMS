@@ -19,6 +19,7 @@ import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
+import { restoreOrders, snapshotOrders } from "./actions";
 import {
   Search,
   Plus,
@@ -63,15 +64,44 @@ const fmtDate = (d: Date | undefined) =>
 
 export default function OrdersPage() {
   // 共有 orderStore に subscribe して画面横断の状態を読む。
-  // 初回 mount で seed 投入（store が空なら）→ 他ページから cascade されると subscribe 経由で再描画。
-  // inventoryStore も同じく初期シードする（cascade allocate/release/consume で使う）。
+  // 初回 mount:
+  //   1) 永続化されたスナップショットがあれば server action から取得して setItems
+  //   2) なければ INITIAL_ORDERS を seed
+  // 以降の orderStore 変更を 500ms debounce でサーバに snapshot する。
+  // DATABASE_URL 未設定時は restoreOrders=null / snapshotOrders=no-db で
+  // フォールバックして in-memory のみで動く（dev / e2e 継続性を維持）。
   useEffect(() => {
-    if (orderStore.getState().length === 0) {
-      orderStore.setItems(initial);
-    }
+    let cancelled = false;
+    void (async () => {
+      const restored = await restoreOrders();
+      if (cancelled) return;
+      if (restored && restored.length > 0) {
+        orderStore.setItems(restored);
+      } else if (orderStore.getState().length === 0) {
+        orderStore.setItems(initial);
+      }
+    })();
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // orderStore の変更を server action で永続化（debounce 500ms）。
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = orderStore.subscribe(() => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void snapshotOrders(orderStore.getState() as ReadonlyArray<OrderSeed>);
+      }, 500);
+    });
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      unsub();
+    };
   }, []);
   const storeItems = useSyncExternalStore(
     (cb) => orderStore.subscribe(cb),
