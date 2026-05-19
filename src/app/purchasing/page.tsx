@@ -1,19 +1,23 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import {
   type PurchaseOrderStatus,
   PURCHASE_ORDER_STATUSES,
   purchaseStatusBadge,
-  issue,
-  receivePurchaseOrder,
-  cancel,
-  type PurchaseOrderState,
+  type PurchaseOrderLine,
 } from "@/lib/state-machines/purchase";
+import {
+  purchaseStore,
+  type PurchaseOrderRecord,
+} from "@/lib/stores/purchase";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import {
   Search,
   Plus,
@@ -27,114 +31,19 @@ import {
   X,
 } from "lucide-react";
 
-type PurchaseOrder = {
-  id: string;
+/**
+ * 画面表示で使う発注書レコード。state-machine の (status, lines) に加えて
+ * 一覧表示で使う非SM フィールド（仕入先・金額・予定日など）を持つ。
+ * purchaseStore は extra: unknown で受けるためここで具体型を再宣言する。
+ */
+type PurchaseOrder = PurchaseOrderRecord & {
   supplier: string;
   items: number;
   amount: number;
-  status: PurchaseOrderStatus;
   date: string;
   expected: string;
   daysToArrive: number;
-  /** 状態機械の集約（アクション実行時に使用） */
-  state: PurchaseOrderState;
 };
-
-const SAMPLE_LINES = [
-  { sku: "SKU-001", warehouse: "東京倉庫", orderedQty: 10, receivedQty: 0 },
-];
-
-const INITIAL_ORDERS: PurchaseOrder[] = [
-  {
-    id: "PO-2026-0049",
-    supplier: "フジタ資材株式会社",
-    items: 3,
-    amount: 67000,
-    status: "条件未達成",
-    date: "2026-05-10",
-    expected: "—",
-    daysToArrive: 0,
-    state: { status: "条件未達成", lines: SAMPLE_LINES },
-  },
-  {
-    id: "PO-2026-0048",
-    supplier: "東亜電機株式会社",
-    items: 6,
-    amount: 198000,
-    status: "未発行",
-    date: "2026-05-08",
-    expected: "—",
-    daysToArrive: 0,
-    state: { status: "未発行", lines: SAMPLE_LINES },
-  },
-  {
-    id: "PO-2026-0047",
-    supplier: "株式会社ABC電子",
-    items: 5,
-    amount: 245000,
-    status: "発行済",
-    date: "2026-04-25",
-    expected: "2026-05-17",
-    daysToArrive: 2,
-    state: {
-      status: "発行済",
-      lines: [{ sku: "SKU-002", warehouse: "大阪倉庫", orderedQty: 5, receivedQty: 0 }],
-    },
-  },
-  {
-    id: "PO-2026-0046",
-    supplier: "グローバルパーツ合同会社",
-    items: 3,
-    amount: 128000,
-    status: "注残あり",
-    date: "2026-04-23",
-    expected: "2026-05-18",
-    daysToArrive: 3,
-    state: {
-      status: "注残あり",
-      lines: [{ sku: "SKU-003", warehouse: "東京倉庫", orderedQty: 6, receivedQty: 2 }],
-    },
-  },
-  {
-    id: "PO-2026-0045",
-    supplier: "株式会社ケーブルワークス",
-    items: 8,
-    amount: 56000,
-    status: "仕入完了",
-    date: "2026-04-21",
-    expected: "2026-04-25",
-    daysToArrive: 0,
-    state: {
-      status: "仕入完了",
-      lines: [{ sku: "SKU-004", warehouse: "東京倉庫", orderedQty: 8, receivedQty: 8 }],
-    },
-  },
-  {
-    id: "PO-2026-0044",
-    supplier: "株式会社ABC電子",
-    items: 2,
-    amount: 89000,
-    status: "仕入完了",
-    date: "2026-04-19",
-    expected: "2026-04-23",
-    daysToArrive: 0,
-    state: {
-      status: "仕入完了",
-      lines: [{ sku: "SKU-005", warehouse: "大阪倉庫", orderedQty: 2, receivedQty: 2 }],
-    },
-  },
-  {
-    id: "PO-2026-0043",
-    supplier: "アジアサプライ株式会社",
-    items: 10,
-    amount: 342000,
-    status: "キャンセル",
-    date: "2026-04-17",
-    expected: "—",
-    daysToArrive: 0,
-    state: { status: "キャンセル", lines: SAMPLE_LINES },
-  },
-];
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
@@ -152,11 +61,117 @@ const suppliers = [
   "東亜電機株式会社",
 ];
 
+const line = (sku: string, warehouse: string, ordered: number, received = 0): PurchaseOrderLine => ({
+  sku,
+  warehouse,
+  orderedQty: ordered,
+  receivedQty: received,
+});
+
+// INITIAL_INVENTORY と同じ SKU を使うことで、入荷登録時の cascade が
+// inventoryStore.onHand に確実に反映される。
+const INITIAL_ORDERS: PurchaseOrder[] = [
+  {
+    id: "PO-2026-0049",
+    supplier: "フジタ資材株式会社",
+    items: 3,
+    amount: 67000,
+    status: "条件未達成",
+    lines: [line("UCB-002", "大阪倉庫", 20)],
+    date: "2026-05-10",
+    expected: "—",
+    daysToArrive: 0,
+  },
+  {
+    id: "PO-2026-0048",
+    supplier: "東亜電機株式会社",
+    items: 6,
+    amount: 198000,
+    status: "未発行",
+    lines: [line("CHG-007", "東京本社倉庫", 30)],
+    date: "2026-05-08",
+    expected: "—",
+    daysToArrive: 0,
+  },
+  {
+    id: "PO-2026-0047",
+    supplier: "株式会社ABC電子",
+    items: 5,
+    amount: 245000,
+    status: "発行済",
+    lines: [line("MBT-004", "東京本社倉庫", 30)],
+    date: "2026-04-25",
+    expected: "2026-05-21",
+    daysToArrive: 2,
+  },
+  {
+    id: "PO-2026-0046",
+    supplier: "グローバルパーツ合同会社",
+    items: 3,
+    amount: 128000,
+    status: "注残あり",
+    lines: [line("TWS-006-BK", "九州物流センター", 20, 6)],
+    date: "2026-04-23",
+    expected: "2026-05-22",
+    daysToArrive: 3,
+  },
+  {
+    id: "PO-2026-0045",
+    supplier: "株式会社ケーブルワークス",
+    items: 8,
+    amount: 56000,
+    status: "仕入完了",
+    lines: [line("WEP-001-BK", "東京本社倉庫", 10, 10)],
+    date: "2026-04-21",
+    expected: "2026-04-25",
+    daysToArrive: 0,
+  },
+  {
+    id: "PO-2026-0044",
+    supplier: "株式会社ABC電子",
+    items: 2,
+    amount: 89000,
+    status: "仕入完了",
+    lines: [line("JK-NV-L", "大阪倉庫", 25, 25)],
+    date: "2026-04-19",
+    expected: "2026-04-23",
+    daysToArrive: 0,
+  },
+  {
+    id: "PO-2026-0043",
+    supplier: "アジアサプライ株式会社",
+    items: 10,
+    amount: 342000,
+    status: "キャンセル",
+    lines: [line("PFS-005", "東京本社倉庫", 100)],
+    date: "2026-04-17",
+    expected: "—",
+    daysToArrive: 0,
+  },
+];
+
 export default function PurchasingPage() {
-  const [orders, setOrders] = useState<PurchaseOrder[]>(INITIAL_ORDERS);
+  // shared store seeding（最初にマウントされた画面が空ストアを埋める）。
+  useEffect(() => {
+    if (purchaseStore.getState().length === 0) {
+      purchaseStore.setItems(INITIAL_ORDERS);
+    }
+    if (inventoryStore.getState().length === 0) {
+      inventoryStore.setItems(INITIAL_INVENTORY);
+    }
+  }, []);
+
+  const storeItems = useSyncExternalStore(
+    (cb) => purchaseStore.subscribe(cb),
+    () => purchaseStore.getState(),
+    () => INITIAL_ORDERS,
+  );
+  const orders = storeItems as ReadonlyArray<PurchaseOrder>;
+
   const [activeTab, setActiveTab] = useState<"all" | PurchaseOrderStatus>("all");
   const [keyword, setKeyword] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("すべて");
+  const toast = useToast();
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -175,48 +190,78 @@ export default function PurchasingPage() {
   }, [orders]);
 
   const stats = useMemo(() => ({
-    /** 進行中 = 発行済 + 注残あり */
     inProgress: orders.filter((o) => o.status === "発行済" || o.status === "注残あり").length,
-    /** 3日以内入荷予定（発行済のみ） */
-    arriving: orders.filter((o) => (o.status === "発行済" || o.status === "注残あり") && o.daysToArrive > 0 && o.daysToArrive <= 3).length,
-    /** 発注残額（発行済 + 注残あり） */
+    arriving: orders.filter(
+      (o) => (o.status === "発行済" || o.status === "注残あり") && o.daysToArrive > 0 && o.daysToArrive <= 3,
+    ).length,
     pendingAmount: orders
       .filter((o) => o.status === "発行済" || o.status === "注残あり")
       .reduce((s, o) => s + o.amount, 0),
-    /** 今月仕入完了件数 */
     completed: orders.filter((o) => o.status === "仕入完了").length,
   }), [orders]);
 
-  /** 状態機械プリミティブを使って注文を更新する共通関数 */
-  function updateOrderState(id: string, nextState: PurchaseOrderState) {
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === id
-          ? { ...o, status: nextState.status, state: nextState }
-          : o
-      )
-    );
-  }
-
   function handleIssue(o: PurchaseOrder) {
-    const next = issue(o.state);
-    updateOrderState(o.id, next);
+    const result = purchaseStore.applyIssue(o.id);
+    if (!result.applied) {
+      toast.show(`${o.id} は発行できません`, "info");
+      return;
+    }
+    toast.show(`${o.id} を発行済にしました`, "success");
   }
 
+  /**
+   * モック受領: 全明細を残数（orderedQty - receivedQty）で受領し、
+   * purchase SM 経由で状態を更新 → effects.receiveInventory を inventoryStore に流して
+   * onHand を加算する。実プロジェクトでは受領数量入力モーダルに置き換える。
+   */
   function handleReceive(o: PurchaseOrder) {
-    // モック受領: 全明細を発注数分で完了させる
-    const receipts = o.state.lines.map((l) => ({
-      sku: l.sku,
-      warehouse: l.warehouse,
-      qty: l.orderedQty - l.receivedQty,
-    }));
-    const next = receivePurchaseOrder(o.state, receipts);
-    updateOrderState(o.id, next);
+    const receipts = o.lines
+      .map((l) => ({
+        sku: l.sku,
+        warehouse: l.warehouse,
+        qty: l.orderedQty - l.receivedQty,
+      }))
+      .filter((r) => r.qty > 0);
+
+    if (receipts.length === 0) {
+      toast.show(`${o.id} は受領残がありません`, "info");
+      return;
+    }
+
+    const result = purchaseStore.applyReceive(o.id, receipts);
+    if (!result.applied) {
+      toast.show(`${o.id} は入荷登録できません`, "info");
+      return;
+    }
+
+    let stockAdded = 0;
+    let unknownCount = 0;
+    if (result.effects.receiveInventory) {
+      const cascade = inventoryStore.applyReceive(result.effects.receiveInventory.lines);
+      stockAdded = cascade.appliedCount;
+      unknownCount = cascade.unknownReceipts.length;
+    }
+
+    const totalQty = receipts.reduce((s, r) => s + r.qty, 0);
+    const detail = [
+      `${totalQty}個受領`,
+      `在庫加算 ${stockAdded}SKU`,
+      unknownCount > 0 ? `未登録SKU ${unknownCount}件` : "",
+      result.after?.status === "仕入完了" ? "→ 仕入完了" : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+
+    toast.show(`${o.id}: ${detail}`, unknownCount > 0 ? "info" : "success");
   }
 
   function handleCancel(o: PurchaseOrder) {
-    const next = cancel(o.state);
-    updateOrderState(o.id, next);
+    const result = purchaseStore.applyCancel(o.id);
+    if (!result.applied) {
+      toast.show(`${o.id} は取消できません`, "info");
+      return;
+    }
+    toast.show(`${o.id} を取消しました`, "success");
   }
 
   return (
@@ -228,7 +273,7 @@ export default function PurchasingPage() {
             <h1 className="text-2xl font-bold text-gray-800">発注・仕入管理</h1>
             <HelpHint>
               発注伝票・仕入伝票を一元管理します。{"\n"}
-              発注計算と連携し、入荷予定・支払期日も追跡できます。
+              入荷登録すると発注書の状態が更新され、対応する SKU の在庫（onHand）が自動加算されます。
             </HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">

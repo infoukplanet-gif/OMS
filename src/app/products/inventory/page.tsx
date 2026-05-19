@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
@@ -29,34 +29,8 @@ import {
   type ReorderSuggestion,
 } from "@/lib/calculations/reorder-calculation";
 import { type PurchaseOrderLine, type PurchaseOrderState } from "@/lib/state-machines/purchase";
-
-// -----------------------------------------------------------------------
-// サンプルデータ（InventoryRecord 準拠）
-// -----------------------------------------------------------------------
-const INVENTORY_RECORDS: InventoryRecord[] = [
-  { sku: "WEP-001-BK", warehouse: "東京本社倉庫",  onHand: 30,  allocated: 5,  constant: 10, reorder: 15, lot: 10 },
-  { sku: "WEP-001-WH", warehouse: "東京本社倉庫",  onHand: 15,  allocated: 3,  constant: 10, reorder: 15, lot: 10 },
-  { sku: "UCB-002",    warehouse: "大阪倉庫",       onHand: 8,   allocated: 2,  constant: 20, reorder: 25, lot: 50 },
-  { sku: "MBT-004",    warehouse: "東京本社倉庫",  onHand: 2,   allocated: 1,  constant: 15, reorder: 20, lot: 30 },
-  { sku: "TWS-006-BK", warehouse: "九州物流センター", onHand: 0, allocated: 0,  constant: 10, reorder: 10, lot: 20 },
-  { sku: "CHG-007",    warehouse: "東京本社倉庫",  onHand: 67,  allocated: 8,  constant: 30, reorder: 40, lot: 50 },
-  { sku: "PFS-005",    warehouse: "東京本社倉庫",  onHand: 482, allocated: 12, constant: 50, reorder: 80, lot: 100 },
-  { sku: "TS-WH-M",   warehouse: "九州物流センター", onHand: 30, allocated: 4,  constant: 20, reorder: 30, lot: 50 },
-  { sku: "JK-NV-L",   warehouse: "大阪倉庫",       onHand: 5,   allocated: 1,  constant: 15, reorder: 20, lot: 25 },
-];
-
-/** 表示用の商品名テーブル（InventoryRecord に商品名フィールドは持たないため UI 層で補完） */
-const SKU_NAMES: Record<string, string> = {
-  "WEP-001-BK": "ワイヤレスイヤホン Pro / ブラック",
-  "WEP-001-WH": "ワイヤレスイヤホン Pro / ホワイト",
-  "UCB-002":    "USB-Cケーブル 2m",
-  "MBT-004":    "モバイルバッテリー 20000mAh",
-  "TWS-006-BK": "完全ワイヤレスイヤホン / ブラック",
-  "CHG-007":    "急速充電器 65W",
-  "PFS-005":    "保護フィルム セット",
-  "TS-WH-M":   "Tシャツ ホワイト M",
-  "JK-NV-L":   "ジャケット ネイビー L",
-};
+import { inventoryStore } from "@/lib/stores/inventory";
+import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 
 // -----------------------------------------------------------------------
 // デザイントークン
@@ -74,6 +48,19 @@ const STATUS_BADGE: Record<InventoryHealth, string> = {
 export default function InventoryPage() {
   const toast = useToast();
 
+  // shared inventoryStore に subscribe して画面横断の在庫変更を読む。
+  // 発注ページからの入荷登録（applyReceive cascade）が onHand に反映されるとここに即時反映される。
+  useEffect(() => {
+    if (inventoryStore.getState().length === 0) {
+      inventoryStore.setItems(INITIAL_INVENTORY);
+    }
+  }, []);
+  const records = useSyncExternalStore(
+    (cb) => inventoryStore.subscribe(cb),
+    () => inventoryStore.getState(),
+    () => INITIAL_INVENTORY as readonly InventoryRecord[],
+  );
+
   // フィルタ状態
   const [keyword, setKeyword]             = useState("");
   const [statusFilter, setStatusFilter]   = useState("すべて");
@@ -87,13 +74,13 @@ export default function InventoryPage() {
   // -----------------------------------------------------------------------
   const enriched = useMemo(
     () =>
-      INVENTORY_RECORDS.map((r) => ({
+      records.map((r) => ({
         record: r,
         name:   SKU_NAMES[r.sku] ?? r.sku,
         health: inventoryHealth(r),
         free:   freeStock(r),
       })),
-    [],
+    [records],
   );
 
   const filtered = useMemo(() => {
@@ -110,18 +97,18 @@ export default function InventoryPage() {
   const stats = useMemo(() => {
     const healths = enriched.map((e) => e.health);
     return {
-      total:      INVENTORY_RECORDS.length,
+      total:      records.length,
       proper:     healths.filter((h) => h === "適正").length,
       needOrder:  healths.filter((h) => h === "発注対象").length,
       outOfStock: healths.filter((h) => h === "在庫切れ").length,
       overStock:  healths.filter((h) => h === "過剰").length,
     };
-  }, [enriched]);
+  }, [enriched, records.length]);
 
-  // 発注推奨一覧（reorderSuggestions を実利用）
+  // 発注推奨一覧（reorderSuggestions を実利用、最新ストア値を反映）
   const suggestions: ReorderSuggestion[] = useMemo(
-    () => reorderSuggestions(INVENTORY_RECORDS),
-    [],
+    () => reorderSuggestions([...records]),
+    [records],
   );
 
   // -----------------------------------------------------------------------
@@ -182,7 +169,7 @@ export default function InventoryPage() {
             </HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">
-            {INVENTORY_RECORDS.length} SKU中 <span className="font-semibold">{filtered.length}</span> 件表示
+            {records.length} SKU中 <span className="font-semibold">{filtered.length}</span> 件表示
           </p>
         </div>
         <div className="flex gap-2">
@@ -404,7 +391,7 @@ export default function InventoryPage() {
               </thead>
               <tbody>
                 {suggestions.map((s) => {
-                  const rec = INVENTORY_RECORDS.find(
+                  const rec = records.find(
                     (r) => r.sku === s.sku && r.warehouse === s.warehouse,
                   );
                   const health = rec ? inventoryHealth(rec) : "発注対象";
