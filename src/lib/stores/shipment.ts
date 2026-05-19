@@ -15,6 +15,7 @@
  */
 
 import {
+  createShipmentForOrder,
   transitionShipment,
   type ShipmentAction,
   type ShipmentState,
@@ -48,6 +49,22 @@ export interface ApplyShipmentResult {
   effects: ShipmentTransitionEffects;
 }
 
+export interface CreateForOrderResult {
+  /** 既存 Shipment があった場合は false（重複作成しない冪等性保持） */
+  created: boolean;
+  record?: ShipmentRecord;
+}
+
+export interface CreateForOrderExtras {
+  customer?: string;
+  carrier?: string;
+  shop?: string;
+  shipDate?: string;
+  amount?: number;
+  items?: number;
+  [extra: string]: unknown;
+}
+
 export interface ShipmentStore {
   getState(): readonly ShipmentRecord[];
   setItems(next: ReadonlyArray<ShipmentRecord>): void;
@@ -56,6 +73,12 @@ export interface ShipmentStore {
     action: ShipmentAction,
     options?: ApplyShipmentOptions,
   ): ApplyShipmentResult;
+  /**
+   * orderId に紐付く Shipment を新規作成（出荷指示作成 状態）。
+   * id は SHP-YYYY-NNNNN 形式で自動採番（既存最大 + 1）。
+   * 既に同じ orderId の Shipment がいれば created=false で no-op。
+   */
+  createForOrder(orderId: string, extras?: CreateForOrderExtras): CreateForOrderResult;
   subscribe(listener: () => void): () => void;
 }
 
@@ -104,6 +127,29 @@ export function createShipmentStore(
       items = [...items.slice(0, idx), after, ...items.slice(idx + 1)];
       notify();
       return { applied: true, before, after, effects };
+    },
+
+    createForOrder(orderId, extras = {}) {
+      const dup = items.find((s) => s.orderIds.includes(orderId));
+      if (dup !== undefined) {
+        return { created: false, record: dup };
+      }
+
+      const year = new Date().getFullYear();
+      const nums = items
+        .map((s) => {
+          const m = new RegExp(`^SHP-\\d{4}-(\\d{5})$`).exec(s.id);
+          return m ? parseInt(m[1], 10) : 0;
+        })
+        .filter((n) => n > 0);
+      const next = (nums.length === 0 ? 0 : Math.max(...nums)) + 1;
+      const id = `SHP-${year}-${String(next).padStart(5, "0")}`;
+
+      const smState = createShipmentForOrder(orderId);
+      const record: ShipmentRecord = { ...extras, ...smState, id };
+      items = [...items, record];
+      notify();
+      return { created: true, record };
     },
 
     subscribe(listener) {

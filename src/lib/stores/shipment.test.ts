@@ -121,6 +121,60 @@ describe("createShipmentStore — subscribe", () => {
   });
 });
 
+describe("createShipmentStore — createForOrder (auto shipment from order cascade)", () => {
+  let store: ShipmentStore;
+  beforeEach(() => {
+    store = createShipmentStore([
+      ship({ id: "SHP-2026-00001", orderIds: ["ORD-A"], status: "出荷指示作成" }),
+    ]);
+  });
+
+  it("appends a new ShipmentRecord in 出荷指示作成 for the given orderId", () => {
+    const result = store.createForOrder("ORD-B");
+    expect(result.created).toBe(true);
+    expect(result.record?.status).toBe("出荷指示作成");
+    expect(result.record?.orderIds).toEqual(["ORD-B"]);
+    expect(store.getState()).toHaveLength(2);
+  });
+
+  it("auto-generates an id matching the SHP-YYYY-NNNNN scheme based on max existing", () => {
+    const result = store.createForOrder("ORD-B");
+    expect(result.record?.id).toMatch(/^SHP-\d{4}-\d{5}$/);
+    const num = parseInt(result.record!.id.slice(-5), 10);
+    expect(num).toBeGreaterThan(1);
+  });
+
+  it("starts ids at 00001 when store is empty", () => {
+    const empty = createShipmentStore();
+    const result = empty.createForOrder("ORD-B");
+    expect(result.record?.id).toMatch(/00001$/);
+  });
+
+  it("attaches optional metadata (carrier / customer / shop) to the new record", () => {
+    const result = store.createForOrder("ORD-B", {
+      customer: "山田 太郎",
+      carrier: "ヤマト運輸",
+      shop: "本店",
+    });
+    expect(result.record?.customer).toBe("山田 太郎");
+    expect(result.record?.carrier).toBe("ヤマト運輸");
+    expect(result.record?.shop).toBe("本店");
+  });
+
+  it("returns created=false if a shipment already exists for the same orderId (dedupe)", () => {
+    const result = store.createForOrder("ORD-A");
+    expect(result.created).toBe(false);
+    expect(store.getState()).toHaveLength(1);
+  });
+
+  it("notifies subscribers on creation", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    store.createForOrder("ORD-B");
+    expect(calls).toBe(1);
+  });
+});
+
 describe("createShipmentStore — immutability", () => {
   it("getState returns a stable reference until mutation", () => {
     const store = createShipmentStore([ship()]);
