@@ -19,6 +19,7 @@ import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
   scheduleOverdueReminders,
@@ -72,13 +73,22 @@ function makeRecord(
   };
 }
 
+// orderId は INITIAL_ORDERS と一致させる（cascade 連動のため必須）。
+// INITIAL_ORDERS の「入金待ち / 確認待ち」のうち代表的なものに対して
+// 未入金 / 一部入金 / 完済 / 過剰入金 の各種 PaymentState を作る。
 const INITIAL_PAYMENTS: PayRecord[] = [
-  makeRecord("P001", "ORD-2026-00849", "田中一郎",   154000,     0, "銀行振込",   "2026-04-30", 0),
-  makeRecord("P002", "ORD-2026-00844", "中村あかり",   3200,     0, "銀行振込",   "2026-04-25", 3),
-  makeRecord("P003", "ORD-2026-00838", "井上智",      28500, 25000, "銀行振込",   "2026-04-20", 8),
-  makeRecord("P004", "ORD-2026-00835", "木下真由",    45000,     0, "請求書払い", "2026-05-31", 0),
-  makeRecord("P005", "ORD-2026-00830", "山田太郎",    18200, 18200, "銀行振込",   "2026-04-08", 0),
-  makeRecord("P006", "ORD-2026-00820", "佐藤花子",    12400, 12800, "クレカ",     "2026-04-15", 0),
+  // 入金待ち（未入金）— ここから入金確認すると全 cascade が走る
+  makeRecord("P001", "ORD-2026-08843", "小林 修",    67500,     0, "銀行振込",   "2026-04-30", 0),
+  // 確認待ち（未入金、期日超過 3 日 → 催促メール対象）
+  makeRecord("P002", "ORD-2026-08849", "田中 一郎",  154000,    0, "請求書払い", "2026-04-25", 3),
+  // 一部入金（期日超過 8 日 → 最終催告対象）
+  makeRecord("P003", "ORD-2026-08841", "吉田 あゆみ", 56800, 30000, "銀行振込",   "2026-04-20", 8),
+  // 未入金（期日先）
+  makeRecord("P004", "ORD-2026-08851", "山田 太郎",  32400,     0, "クレジットカード", "2026-05-31", 0),
+  // 完済済み
+  makeRecord("P005", "ORD-2026-08845", "伊藤 大輔",  18600, 18600, "クレジットカード", "2026-04-08", 0),
+  // 過剰入金（請求 12400 / 入金 12800）
+  makeRecord("P006", "ORD-2026-08842", "加藤 裕子",  12400, 12800, "代金引換",   "2026-04-15", 0),
 ];
 
 /** タブ定義: "all" | "overpaid" | PaymentStatus */
@@ -95,12 +105,17 @@ export default function PaymentsPage() {
 
   // shared paymentStore を購読。実 cascade（confirmPayment / revertToPaymentWait）と
   // 在庫引当を画面横断で反映するためにシードする。
+  // orderStore も seed しないと、payments 画面から先に入った場合の cascade で
+  // 対象 order が見つからず silently no-op する（E2E で検出）。
   useEffect(() => {
     if (paymentStore.getState().length === 0) {
       paymentStore.setItems(INITIAL_PAYMENTS);
     }
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
+    }
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(INITIAL_ORDERS);
     }
   }, []);
   const storeItems = useSyncExternalStore(

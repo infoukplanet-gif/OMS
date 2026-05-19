@@ -17,6 +17,8 @@ import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore, type ShipmentRecord } from "@/lib/stores/shipment";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
   Search,
@@ -84,9 +86,16 @@ export default function ShipmentsPage() {
 
   // shipmentStore に subscribe して画面横断の状態を読む。
   // 初回 mount で seed 投入。確定/キャンセル/トラッキング編集は store 経由。
+  // 他ドメインも一緒に seed（shipments から先に入った場合に cascade が動かない問題を回避）。
   useEffect(() => {
     if (shipmentStore.getState().length === 0) {
       shipmentStore.setItems(initial);
+    }
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(INITIAL_ORDERS);
+    }
+    if (inventoryStore.getState().length === 0) {
+      inventoryStore.setItems(INITIAL_INVENTORY);
     }
   }, []);
   const storeItems = useSyncExternalStore(
