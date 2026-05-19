@@ -263,10 +263,18 @@ export default function ProductsPage() {
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-500 whitespace-nowrap">{filtered.length} 件 / 全 {items.length} 件</span>
             <div className="flex gap-1">
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400">
+              <button
+                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                aria-label="前のページ"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 transition-colors"
+              >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400">
+              <button
+                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                aria-label="次のページ"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 transition-colors"
+              >
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>

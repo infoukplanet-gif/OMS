@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -78,6 +79,7 @@ const recentOrders = [
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function CustomersPage() {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<CustomerKind>("general");
   const [keyword, setKeyword] = useState("");
   const [rank, setRank] = useState<(typeof RANK_OPTIONS)[number]>("すべて");
@@ -431,10 +433,18 @@ export default function CustomersPage() {
               {filtered.length === 0 ? "0" : `1-${filtered.length}`} / {filtered.length} 件
             </span>
             <div className="flex gap-1">
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400">
+              <button
+                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                aria-label="前のページ"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 transition-colors"
+              >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 transition-colors">
+              <button
+                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                aria-label="次のページ"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 transition-colors"
+              >
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
