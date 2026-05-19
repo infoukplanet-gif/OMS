@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
@@ -8,16 +8,17 @@ import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import {
   type PaymentStatus,
-  type PaymentState,
   PAYMENT_STATUSES,
   paymentStatusBadge,
   paymentStatusOf,
-  recordPayment,
-  cancelPayment,
 } from "@/lib/state-machines/payment";
-import { onPaymentTransitioned } from "@/lib/events/payment-handlers";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { paymentStore, type PaymentRecord } from "@/lib/stores/payment";
+import { orderStore } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
+import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
   Search,
   Plus,
@@ -29,9 +30,8 @@ import {
   Mail,
 } from "lucide-react";
 
-/** ページ内で扱う入金レコード型。PaymentState に表示用フィールドを追加。 */
-type PayRecord = PaymentState & {
-  id: string;
+/** ページ内で扱う入金レコード型。共有 PaymentRecord に表示用フィールドを追加。 */
+type PayRecord = PaymentRecord & {
   order: string;
   customer: string;
   method: string;
@@ -54,6 +54,7 @@ function makeRecord(
 ): PayRecord {
   return {
     id,
+    orderId: order,
     order,
     customer,
     method,
@@ -86,7 +87,24 @@ const TABS: { label: string; value: TabValue }[] = [
 
 export default function PaymentsPage() {
   const toast = useToast();
-  const [payments, setPayments] = useState<PayRecord[]>(INITIAL_PAYMENTS);
+
+  // shared paymentStore を購読。実 cascade（confirmPayment / revertToPaymentWait）と
+  // 在庫引当を画面横断で反映するためにシードする。
+  useEffect(() => {
+    if (paymentStore.getState().length === 0) {
+      paymentStore.setItems(INITIAL_PAYMENTS);
+    }
+    if (inventoryStore.getState().length === 0) {
+      inventoryStore.setItems(INITIAL_INVENTORY);
+    }
+  }, []);
+  const storeItems = useSyncExternalStore(
+    (cb) => paymentStore.subscribe(cb),
+    () => paymentStore.getState(),
+    () => INITIAL_PAYMENTS,
+  );
+  const payments = storeItems as ReadonlyArray<PayRecord>;
+
   const [activeTab, setActiveTab] = useState<TabValue>("all");
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState("すべて");
@@ -116,49 +134,122 @@ export default function PaymentsPage() {
       .reduce((s, p) => s + (p.orderTotal - p.paidAmount), 0),
   }), [payments]);
 
-  // ---- 入金登録（状態機械経由 + handler effects） -------------------------------
-  // 入金確認メール（payment-confirmed）を mailQueue に enqueue。
-  // cascadeOrderAction（confirmPayment / revertToPaymentWait）は v1 では受注ストアが
-  // 共有されていないので mailQueue 件数だけ返す。
+  // ---- 入金登録（paymentStore + 実 cascade） ----------------------------------
+  /**
+   * paymentStore.applyRecord で SM 遷移 + handler effects を一気に取得。
+   * - effects.sendMail → mailQueue.enqueueAll
+   * - effects.cascadeOrderAction (confirmPayment) → orderStore に流す。
+   *   これにより受注が 入金待ち → 引当待ち に進み、allocateInventory が
+   *   emit される。当該受注の allocation を inventoryStore.applyAllocate に流す。
+   * - 引当失敗時は markInventoryShortage を自動連鎖。
+   */
   function handleRecordPayment(id: string, amount: number): {
     enqueued: number;
     duplicateSkipped: number;
     disabledSkipped: number;
+    cascadeApplied: number;
+    allocated: number;
+    shortageMarked: number;
   } {
+    const result = paymentStore.applyRecord(id, amount);
     const mailJobs: MailJob[] = [];
-    setPayments((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p;
-        const next = recordPayment(p, amount);
-        const effects = onPaymentTransitioned(p, next, p.order);
-        if (effects.sendMail) mailJobs.push(effects.sendMail);
-        return { ...p, ...next };
-      }),
-    );
-    return mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
+    let cascadeApplied = 0;
+    let allocated = 0;
+    let shortageMarked = 0;
+
+    if (!result.applied) {
+      return {
+        ...mailQueue.enqueueAll([], getAutoMailEnabled()),
+        cascadeApplied,
+        allocated,
+        shortageMarked,
+      };
+    }
+
+    if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
+
+    if (result.effects.cascadeOrderAction) {
+      const orderRes = orderStore.applyTransition(
+        result.effects.cascadeOrderAction.orderId,
+        result.effects.cascadeOrderAction.action,
+      );
+      if (orderRes.applied) {
+        cascadeApplied += 1;
+        if (orderRes.effects.sendMail) mailJobs.push(orderRes.effects.sendMail);
+        // confirmPayment cascade で order が引当待ちに到達 → allocateInventory を流す
+        if (orderRes.effects.allocateInventory) {
+          const sharedOrder = orderStore
+            .getState()
+            .find((o) => o.id === orderRes.effects.allocateInventory!.orderId);
+          const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
+          if (allocation && allocation.length > 0) {
+            const cascade = inventoryStore.applyAllocate(allocation);
+            allocated += cascade.appliedCount;
+            const failed = cascade.failedLines.length + cascade.unknownLines.length;
+            if (failed > 0 && cascade.appliedCount === 0) {
+              const shortageRes = orderStore.applyTransition(
+                sharedOrder!.id,
+                "markInventoryShortage",
+              );
+              if (shortageRes.applied) shortageMarked += 1;
+            }
+          }
+        }
+      }
+    }
+
+    return {
+      ...mailQueue.enqueueAll(mailJobs, getAutoMailEnabled()),
+      cascadeApplied,
+      allocated,
+      shortageMarked,
+    };
   }
 
-  // ---- 入金取消（状態機械経由 + handler effects） -------------------------------
+  // ---- 入金取消（paymentStore + 実 cascade） -----------------------------------
   /**
-   * cancelPayment + onPaymentTransitioned で得られた cascadeOrderAction の数を返す。
-   * v1 では受注ストアが共有されていないので実 cascade は流れないが、件数だけ toast で見える化する。
-   * 受注ストア接続後（B フェーズ）は applyOrderTransition("revertToPaymentWait") を実行する。
+   * paymentStore.applyCancel で SM 遷移 + handler effects を取得。
+   * 当該受注の現在ステータスを orderStore から引いて revert 判定に渡す。
+   * 巻き戻しが走った場合、order-handlers が releaseInventory を emit するので
+   * inventoryStore.applyRelease に流して引当を解放する。
    */
-  function handleCancelPayment(id: string, amount: number): { cascade: number } {
-    let cascade = 0;
-    setPayments((prev) =>
-      prev.map((p) => {
-        if (p.id !== id) return p;
-        const next = cancelPayment(p, amount);
-        // 引当待ち想定で revertToPaymentWait が来るかを観測（実カスケードは B 以降）
-        const effects = onPaymentTransitioned(p, next, p.order, {
-          orderStatus: "引当待ち",
-        });
-        if (effects.cascadeOrderAction) cascade += 1;
-        return { ...p, ...next };
-      }),
-    );
-    return { cascade };
+  function handleCancelPayment(id: string, amount: number): {
+    cascadeApplied: number;
+    released: number;
+  } {
+    const payment = paymentStore.getState().find((p) => p.id === id);
+    const orderStatus = payment
+      ? orderStore.getState().find((o) => o.id === payment.orderId)?.status
+      : undefined;
+
+    const result = paymentStore.applyCancel(id, amount, { orderStatus });
+    let cascadeApplied = 0;
+    let released = 0;
+
+    if (!result.applied) return { cascadeApplied, released };
+
+    if (result.effects.cascadeOrderAction) {
+      const orderRes = orderStore.applyTransition(
+        result.effects.cascadeOrderAction.orderId,
+        result.effects.cascadeOrderAction.action,
+      );
+      if (orderRes.applied) cascadeApplied += 1;
+      // revertToPaymentWait で order が引当待ち→入金待ちに戻ると inventoryShortage が
+      // クリアされるが、現状 SM は releaseInventory を emit しない設計（引当はそのまま）。
+      // ここでは念のため effects.releaseInventory をチェックして在庫を戻す。
+      if (orderRes.effects.releaseInventory) {
+        const sharedOrder = orderStore
+          .getState()
+          .find((o) => o.id === orderRes.effects.releaseInventory!.orderId);
+        const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
+        if (allocation && allocation.length > 0) {
+          const cascade = inventoryStore.applyRelease(allocation);
+          released += cascade.appliedCount;
+        }
+      }
+    }
+
+    return { cascadeApplied, released };
   }
 
   // ---- 操作ボタン処理（モック） -----------------------------------------------
@@ -169,16 +260,28 @@ export default function PaymentsPage() {
       toast.show(`${p.order} はすでに全額入金済みです`);
       return;
     }
-    const mailResult = handleRecordPayment(p.id, remaining);
-    const detail = [
-      mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
-      mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
-      mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
+    const result = handleRecordPayment(p.id, remaining);
+    const mailDetail = [
+      result.enqueued > 0 ? `enqueue ${result.enqueued}件` : "",
+      result.duplicateSkipped > 0 ? `重複 ${result.duplicateSkipped}件` : "",
+      result.disabledSkipped > 0 ? `無効化 ${result.disabledSkipped}件` : "",
     ]
       .filter(Boolean)
       .join("・");
-    const mailLine = detail ? ` / 入金確認メール ${detail}` : "";
-    toast.show(`${p.order}: ${fmt(remaining)} を入金登録しました${mailLine}`, "success");
+    const mailLine = mailDetail ? ` / メール ${mailDetail}` : "";
+    const cascadeDetail = [
+      result.cascadeApplied > 0 ? `受注確定 ${result.cascadeApplied}件` : "",
+      result.allocated > 0 ? `引当 ${result.allocated}SKU` : "",
+      result.shortageMarked > 0 ? `在庫不足マーク ${result.shortageMarked}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const cascadeLine = cascadeDetail ? ` / ${cascadeDetail}` : "";
+
+    toast.show(
+      `${p.order}: ${fmt(remaining)} を入金登録しました${cascadeLine}${mailLine}`,
+      result.shortageMarked > 0 ? "info" : "success",
+    );
   }
 
   function onClickCancel(p: PayRecord) {
@@ -186,9 +289,15 @@ export default function PaymentsPage() {
       toast.show(`${p.order} には取消できる入金がありません`);
       return;
     }
-    const { cascade } = handleCancelPayment(p.id, p.paidAmount);
-    const tail = cascade > 0 ? ` / 受注「引当待ち→入金待ち」連鎖 ${cascade}件` : "";
-    toast.show(`${p.order}: 入金 ${fmt(p.paidAmount)} を全取消しました${tail}`, "info");
+    const { cascadeApplied, released } = handleCancelPayment(p.id, p.paidAmount);
+    const tail = [
+      cascadeApplied > 0 ? `受注「引当待ち→入金待ち」連鎖 ${cascadeApplied}件` : "",
+      released > 0 ? `引当戻し ${released}SKU` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const line = tail ? ` / ${tail}` : "";
+    toast.show(`${p.order}: 入金 ${fmt(p.paidAmount)} を全取消しました${line}`, "info");
   }
 
   // ---- バッジ表示（overpaid 行は特別扱い） ------------------------------------
