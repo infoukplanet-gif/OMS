@@ -18,6 +18,8 @@ import { onShipmentTransitioned } from "@/lib/events/shipment-handlers";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
   Search,
   ChevronLeft,
@@ -124,9 +126,11 @@ export default function ShipmentsPage() {
   /**
    * 選択中の出荷を一括キャンセル。
    * - shipment SM の cancel ガード (出荷済み/キャンセル を除く) で skipped をカウント
-   * - onShipmentTransitioned の cascadeOrderAction (cancel) / releaseInventory を集計し toast 表示
-   * - orderStatusAtCancel は v1 では Shipment 側に保持していないため undefined（cascadeOrderAction は基本来ない想定）
-   *   実 cascade は B フェーズの shared store 統合後に有効化
+   * - effects.cascadeOrderAction (cancel) を shared orderStore に流す
+   * - effects.releaseInventory が立った Shipment は、対応する Order の allocation を
+   *   inventoryStore.applyRelease に流す。
+   *   ⚠️ cascade で order.cancel が走ると order-handlers も releaseInventory を emit するが、
+   *   それは無視する（shipment 側で既に release 済み・冪等性のため）。
    */
   const cancelShipping = () => {
     if (selected.length === 0) {
@@ -136,7 +140,7 @@ export default function ShipmentsPage() {
     let cancelled = 0;
     let cascadeApplied = 0;
     let cascadeSkipped = 0;
-    let releaseCount = 0;
+    let released = 0;
 
     setItems((prev) =>
       prev.map((s) => {
@@ -152,6 +156,16 @@ export default function ShipmentsPage() {
           orderStatusAtCancel: sharedOrder?.status,
         });
 
+        // 在庫戻し: Shipment の cancel が常時 emit。対応する Order の allocation を解放。
+        if (effects.releaseInventory && sharedOrder) {
+          const allocation = sharedOrder.allocation as AllocationLine[] | undefined;
+          if (allocation && allocation.length > 0) {
+            const cascade = inventoryStore.applyRelease(allocation);
+            released += cascade.appliedCount;
+          }
+        }
+
+        // Order 側の cancel カスケード（return effects は無視 = release 二重実行回避）
         if (effects.cascadeOrderAction && sharedOrder) {
           const r = orderStore.applyTransition(
             effects.cascadeOrderAction.orderId,
@@ -160,7 +174,7 @@ export default function ShipmentsPage() {
           if (r.applied) cascadeApplied += 1;
           else cascadeSkipped += 1;
         }
-        if (effects.releaseInventory) releaseCount += 1;
+
         cancelled += 1;
         return next;
       }),
@@ -175,7 +189,7 @@ export default function ShipmentsPage() {
     const detail = [
       cascadeApplied > 0 ? `受注キャンセル連鎖 ${cascadeApplied}件` : "",
       cascadeSkipped > 0 ? `カスケード ${cascadeSkipped}件スキップ` : "",
-      releaseCount > 0 ? `在庫戻し ${releaseCount}件` : "",
+      released > 0 ? `在庫戻し ${released}SKU` : "",
     ]
       .filter(Boolean)
       .join("・");
@@ -193,6 +207,8 @@ export default function ShipmentsPage() {
     let succeeded = 0;
     let cascadeApplied = 0;
     let cascadeSkipped = 0;
+    let consumed = 0;
+    let consumeFailed = 0;
     const mailJobs: MailJob[] = [];
 
     setItems((prev) =>
@@ -215,6 +231,20 @@ export default function ShipmentsPage() {
           if (r.applied) cascadeApplied += 1;
           else cascadeSkipped += 1;
         }
+
+        // 在庫消費: 対応する Order の allocation を onHand + allocated 同時減算で確定
+        if (effects.consumeInventory) {
+          const sharedOrder = orderStore
+            .getState()
+            .find((o) => o.id === effects.consumeInventory!.orderId);
+          const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
+          if (allocation && allocation.length > 0) {
+            const cascade = inventoryStore.applyConsume(allocation);
+            consumed += cascade.appliedCount;
+            consumeFailed += cascade.failedLines.length;
+          }
+        }
+
         succeeded += 1;
         return next;
       }),
@@ -241,7 +271,18 @@ export default function ShipmentsPage() {
         ? ` / 受注連鎖 ${cascadeApplied}件適用${cascadeSkipped > 0 ? `・${cascadeSkipped}件スキップ` : ""}`
         : "";
 
-    toast.show(`${succeeded} 件を出荷確定しました${cascadeLine}${mailLine}`, "success");
+    const invDetail = [
+      consumed > 0 ? `在庫消費 ${consumed}SKU` : "",
+      consumeFailed > 0 ? `消費失敗 ${consumeFailed}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const invLine = invDetail ? ` / ${invDetail}` : "";
+
+    toast.show(
+      `${succeeded} 件を出荷確定しました${cascadeLine}${invLine}${mailLine}`,
+      consumeFailed > 0 ? "info" : "success",
+    );
     setSelected([]);
   };
 
