@@ -11,14 +11,17 @@ import {
   type OrderAction,
   ORDER_STATUSES,
   orderStatusBadge,
+  isCancellable,
 } from "@/lib/state-machines/order";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore } from "@/lib/stores/shipment";
+import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
+import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
 import { restoreOrders, snapshotOrders } from "./actions";
 import {
   Search,
@@ -84,6 +87,10 @@ export default function OrdersPage() {
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }
+    // 返金 cascade のため paymentStore も seed（受注画面から先に入った場合に備える）。
+    if (paymentStore.getState().length === 0) {
+      paymentStore.setItems(INITIAL_PAYMENTS);
+    }
     return () => {
       cancelled = true;
     };
@@ -118,6 +125,29 @@ export default function OrdersPage() {
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [cancelConfirm, setCancelConfirm] = useState(false);
+
+  /**
+   * 選択中の受注のキャンセル概要を算出する（確認ダイアログ表示用）。
+   * キャンセル可能な受注数と、入金済み/一部入金分の返金見込み（件数・合計額）を返す。
+   */
+  const cancelSummary = () => {
+    const orders = orderStore.getState() as ReadonlyArray<Order>;
+    const pays = paymentStore.getState();
+    const cancellable = selected
+      .map((id) => orders.find((o) => o.id === id))
+      .filter((o): o is Order => !!o && isCancellable(o.status));
+    let refundCount = 0;
+    let refundAmount = 0;
+    for (const o of cancellable) {
+      const p = pays.find((x) => x.orderId === o.id);
+      if (p && p.paidAmount > 0) {
+        refundCount++;
+        refundAmount += p.paidAmount;
+      }
+    }
+    return { cancellable: cancellable.length, refundCount, refundAmount };
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -167,6 +197,8 @@ export default function OrdersPage() {
     let allocateFailed = 0;
     let shortageMarked = 0;
     let shipmentsCreated = 0;
+    let refunded = 0;
+    let refundedAmount = 0;
     const mailJobs: MailJob[] = [];
 
     for (const id of selected) {
@@ -207,6 +239,21 @@ export default function OrdersPage() {
         released += cascade.appliedCount;
       }
 
+      // 返金 cascade: キャンセル到達かつ入金あり（paidAmount > 0）なら全額返金。
+      // payment の effects は消費しない（受注は別途キャンセル遷移済みのため revert 不要）。
+      if (result.effects.refundPayment) {
+        const pay = paymentStore.getState().find((p) => p.orderId === id);
+        if (pay && pay.paidAmount > 0) {
+          const refundRes = paymentStore.applyCancel(pay.id, pay.paidAmount, {
+            orderStatus: "キャンセル",
+          });
+          if (refundRes.applied) {
+            refunded++;
+            refundedAmount += pay.paidAmount;
+          }
+        }
+      }
+
       applied++;
     }
 
@@ -233,12 +280,13 @@ export default function OrdersPage() {
     const invLine = invDetail ? ` / 在庫 ${invDetail}` : "";
 
     const shipLine = shipmentsCreated > 0 ? ` / 出荷指示 ${shipmentsCreated}件作成` : "";
+    const refundLine = refunded > 0 ? ` / 返金 ${refunded}件（¥${refundedAmount.toLocaleString()}）` : "";
 
     if (applied === 0) {
       toast.show(`${label} を実行できる受注がありません（${skipped} 件スキップ）`, "info");
     } else {
       toast.show(
-        `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${shipLine}${mailLine}`,
+        `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${refundLine}${shipLine}${mailLine}`,
         allocateFailed > 0 || shortageMarked > 0 ? "info" : "success",
       );
     }
@@ -265,8 +313,66 @@ export default function OrdersPage() {
     toast.show(`${order.id} を印刷待ちに進めました（在庫引当成功）`, "success");
   };
 
+  const summary = cancelConfirm ? cancelSummary() : null;
+
   return (
     <div className="space-y-5">
+      {/* キャンセル確認ダイアログ（返金が絡むため必ず確認を挟む） */}
+      {cancelConfirm && summary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-6">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-rose-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <h2 className="text-base font-semibold text-gray-800">受注をキャンセルしますか？</h2>
+                {summary.cancellable === 0 ? (
+                  <p className="text-sm text-gray-600 mt-2">
+                    選択中の {selected.length} 件にキャンセル可能な受注はありません（出荷済みは返品フロー）。
+                  </p>
+                ) : (
+                  <div className="text-sm text-gray-700 mt-2 space-y-2">
+                    <p>
+                      キャンセル可能 <span className="font-semibold text-gray-900">{summary.cancellable}</span> 件を処理します。引当済みの在庫は解放されます。
+                    </p>
+                    {summary.refundCount > 0 ? (
+                      <div className="rounded-xl bg-rose-500/5 border border-rose-500/20 p-3">
+                        <p className="text-rose-700 font-medium">
+                          返金 {summary.refundCount} 件・合計 ¥{summary.refundAmount.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-1">
+                          入金済み・一部入金の受注は、入金額を全額返金として記録します（入金ステータスは未入金に戻ります）。
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-500">入金のある受注がないため、返金は発生しません。</p>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 mt-4 justify-end">
+                  <button
+                    onClick={() => setCancelConfirm(false)}
+                    className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+                  >
+                    閉じる
+                  </button>
+                  {summary.cancellable > 0 && (
+                    <button
+                      onClick={() => {
+                        applyBulkAction("cancel", "キャンセル");
+                        setCancelConfirm(false);
+                      }}
+                      className="px-4 py-2 rounded-xl text-sm font-medium bg-rose-500/80 border border-rose-400/50 text-white hover:bg-rose-500/90"
+                    >
+                      キャンセルを実行
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-800">受注一覧</h1>
         <div className="flex items-center gap-2 flex-wrap">
@@ -453,7 +559,7 @@ export default function OrdersPage() {
                   出荷登録
                 </button>
                 <button
-                  onClick={() => applyBulkAction("cancel", "キャンセル")}
+                  onClick={() => setCancelConfirm(true)}
                   className="px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/15 text-rose-700 hover:bg-rose-500/25 transition-colors"
                 >
                   キャンセル

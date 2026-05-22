@@ -10,16 +10,16 @@ import {
   type PaymentStatus,
   PAYMENT_STATUSES,
   paymentStatusBadge,
-  paymentStatusOf,
 } from "@/lib/state-machines/payment";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
-import { paymentStore, type PaymentRecord } from "@/lib/stores/payment";
+import { paymentStore } from "@/lib/stores/payment";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore } from "@/lib/stores/shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { INITIAL_PAYMENTS, type SeededPayment } from "@/lib/seeds/payments";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 import {
   scheduleOverdueReminders,
@@ -36,60 +36,10 @@ import {
   Mail,
 } from "lucide-react";
 
-/** ページ内で扱う入金レコード型。共有 PaymentRecord に表示用フィールドを追加。 */
-type PayRecord = PaymentRecord & {
-  order: string;
-  customer: string;
-  method: string;
-  due: string;
-  daysOverdue: number;
-};
+/** ページ内で扱う入金レコード型（共有シードの型を再利用）。 */
+type PayRecord = SeededPayment;
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
-
-/** サンプルデータ。status / overpaid は paymentStatusOf から派生させる。 */
-function makeRecord(
-  id: string,
-  order: string,
-  customer: string,
-  orderTotal: number,
-  paidAmount: number,
-  method: string,
-  due: string,
-  daysOverdue: number,
-): PayRecord {
-  return {
-    id,
-    orderId: order,
-    order,
-    customer,
-    method,
-    due,
-    daysOverdue,
-    orderTotal,
-    paidAmount,
-    status: paymentStatusOf(orderTotal, paidAmount),
-    overpaid: paidAmount > orderTotal,
-  };
-}
-
-// orderId は INITIAL_ORDERS と一致させる（cascade 連動のため必須）。
-// INITIAL_ORDERS の「入金待ち / 確認待ち」のうち代表的なものに対して
-// 未入金 / 一部入金 / 完済 / 過剰入金 の各種 PaymentState を作る。
-const INITIAL_PAYMENTS: PayRecord[] = [
-  // 入金待ち（未入金）— ここから入金確認すると全 cascade が走る
-  makeRecord("P001", "ORD-2026-08843", "小林 修",    67500,     0, "銀行振込",   "2026-04-30", 0),
-  // 確認待ち（未入金、期日超過 3 日 → 催促メール対象）
-  makeRecord("P002", "ORD-2026-08849", "田中 一郎",  154000,    0, "請求書払い", "2026-04-25", 3),
-  // 一部入金（期日超過 8 日 → 最終催告対象）
-  makeRecord("P003", "ORD-2026-08841", "吉田 あゆみ", 56800, 30000, "銀行振込",   "2026-04-20", 8),
-  // 未入金（期日先）
-  makeRecord("P004", "ORD-2026-08851", "山田 太郎",  32400,     0, "クレジットカード", "2026-05-31", 0),
-  // 完済済み
-  makeRecord("P005", "ORD-2026-08845", "伊藤 大輔",  18600, 18600, "クレジットカード", "2026-04-08", 0),
-  // 過剰入金（請求 12400 / 入金 12800）
-  makeRecord("P006", "ORD-2026-08842", "加藤 裕子",  12400, 12800, "代金引換",   "2026-04-15", 0),
-];
 
 /** タブ定義: "all" | "overpaid" | PaymentStatus */
 type TabValue = "all" | "overpaid" | PaymentStatus;

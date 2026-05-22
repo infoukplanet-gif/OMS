@@ -141,6 +141,32 @@ describe("onOrderTransitioned — inventory release on cancellation", () => {
   });
 });
 
+describe("onOrderTransitioned — refund on cancellation", () => {
+  it("returns refundPayment when cancelling from any non-cancel status", () => {
+    const sources = ["新規受付", "確認待ち", "入金待ち", "引当待ち", "印刷待ち", "印刷済み", "発売日時待ち"] as const;
+    for (const status of sources) {
+      const effects = onOrderTransitioned(order({ status }), order({ status: "キャンセル" }), "ORD-001");
+      expect(effects.refundPayment).toEqual({ orderId: "ORD-001", reason: "order-cancelled" });
+    }
+  });
+
+  it("emits refundPayment even before allocation (入金は引当と独立)", () => {
+    const effects = onOrderTransitioned(order({ status: "入金待ち" }), order({ status: "キャンセル" }), "ORD-001");
+    expect(effects.refundPayment).toBeDefined();
+    expect(effects.releaseInventory).toBeUndefined();
+  });
+
+  it("does NOT return refundPayment when not transitioning to キャンセル", () => {
+    const effects = onOrderTransitioned(order({ status: "新規受付" }), order({ status: "入金待ち" }), "ORD-001");
+    expect(effects.refundPayment).toBeUndefined();
+  });
+
+  it("does NOT return refundPayment when already at キャンセル (冪等)", () => {
+    const same = order({ status: "キャンセル" });
+    expect(onOrderTransitioned(same, same, "ORD-001").refundPayment).toBeUndefined();
+  });
+});
+
 describe("onOrderTransitioned — thanks mail trigger (受注確定)", () => {
   const orderConfirmedTargets = ["入金待ち", "引当待ち", "発売日時待ち"] as const;
   const newOrderSources = ["新規受付", "確認待ち"] as const;

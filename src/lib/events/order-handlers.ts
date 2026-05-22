@@ -17,6 +17,12 @@ export interface OrderTransitionEffects {
   allocateInventory?: { orderId: string; reason: "order-confirmed" };
   /** Order がキャンセルされた時の在庫戻し記述子 */
   releaseInventory?: { orderId: string; reason: "order-cancelled" };
+  /**
+   * Order がキャンセルされた時の返金記述子。
+   * 入金（paidAmount）の有無は payment ドメイン側で判定するため、
+   * ここでは引当状態に関係なくキャンセル到達で常に emit する。
+   */
+  refundPayment?: { orderId: string; reason: "order-cancelled" };
   /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
   sendMail?: { orderId: string; triggerType: "thanks"; dedupeKey: string };
 }
@@ -62,13 +68,14 @@ export function onOrderTransitioned(
     effects.allocateInventory = { orderId, reason: "order-confirmed" };
   }
 
-  // 引当済み状態からキャンセル → 在庫戻し記述子
-  if (
-    before.status !== "キャンセル" &&
-    after.status === "キャンセル" &&
-    ALLOCATED_STATUSES.has(before.status)
-  ) {
-    effects.releaseInventory = { orderId, reason: "order-cancelled" };
+  // キャンセル到達（任意の状態 → キャンセル）
+  if (before.status !== "キャンセル" && after.status === "キャンセル") {
+    // 返金記述子は入金の有無に関係なく emit（paidAmount 判定は payment 側）
+    effects.refundPayment = { orderId, reason: "order-cancelled" };
+    // 在庫戻しは引当済み状態からのみ
+    if (ALLOCATED_STATUSES.has(before.status)) {
+      effects.releaseInventory = { orderId, reason: "order-cancelled" };
+    }
   }
 
   // 受注確定（新規受付/確認待ち → 入金待ち/引当待ち/発売日時待ち） → サンクスメール
