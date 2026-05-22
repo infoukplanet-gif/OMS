@@ -36,3 +36,33 @@ export const SKU_NAMES: Record<string, string> = {
   "TS-WH-M":    "Tシャツ ホワイト M",
   "JK-NV-L":    "ジャケット ネイビー L",
 };
+
+/**
+ * SKU → 仕入先マスタ。発注計算で推奨発注を仕入先ごとの発注書へ集約する際に使う。
+ */
+export const SKU_SUPPLIER: Record<string, string> = {
+  "WEP-001-BK": "株式会社ABC電子",
+  "WEP-001-WH": "株式会社ABC電子",
+  "UCB-002":    "株式会社ケーブルワークス",
+  "MBT-004":    "グローバルパーツ合同会社",
+  "TWS-006-BK": "株式会社ABC電子",
+  "CHG-007":    "東亜電機株式会社",
+  "PFS-005":    "アジアサプライ株式会社",
+  "TS-WH-M":    "フジタ資材株式会社",
+  "JK-NV-L":    "株式会社ABC電子",
+};
+
+/**
+ * SKU → 仕入原価マスタ（円）。発注書の金額算定（数量 × 原価）に使う。
+ */
+export const SKU_UNIT_COST: Record<string, number> = {
+  "WEP-001-BK": 4900,
+  "WEP-001-WH": 4900,
+  "UCB-002":    700,
+  "MBT-004":    2980,
+  "TWS-006-BK": 6400,
+  "CHG-007":    3300,
+  "PFS-005":    420,
+  "TS-WH-M":    1200,
+  "JK-NV-L":    4450,
+};

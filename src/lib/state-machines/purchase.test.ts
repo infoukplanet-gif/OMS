@@ -4,6 +4,7 @@ import {
   markConditionsUnmet,
   issue,
   receivePurchaseOrder,
+  setLineExpectedDate,
   cancel,
   totalOrdered,
   totalReceived,
@@ -236,5 +237,61 @@ describe("derived helpers", () => {
       line({ sku: "A", orderedQty: 10, receivedQty: 10 }),
       line({ sku: "B", orderedQty: 5, receivedQty: 3 }),
     ] }))).toBe(false);
+  });
+});
+
+describe("setLineExpectedDate", () => {
+  it("発行済の対象明細にのみ予定納期を設定する", () => {
+    const subject = po({
+      status: "発行済",
+      lines: [
+        line({ sku: "A", warehouse: "本店" }),
+        line({ sku: "B", warehouse: "本店" }),
+      ],
+    });
+    const after = setLineExpectedDate(subject, "A", "本店", "2026/05/30");
+    expect(after.lines[0].expectedDate).toBe("2026/05/30");
+    expect(after.lines[1].expectedDate).toBeUndefined();
+  });
+
+  it("注残あり でも予定納期を設定できる", () => {
+    const subject = po({ status: "注残あり", lines: [line({ sku: "A", warehouse: "本店" })] });
+    const after = setLineExpectedDate(subject, "A", "本店", "2026/06/01");
+    expect(after.lines[0].expectedDate).toBe("2026/06/01");
+  });
+
+  it("未発行・条件未達成・仕入完了・キャンセルでは no-op（参照同一）", () => {
+    for (const status of ["条件未達成", "未発行", "仕入完了", "キャンセル"] as const) {
+      const subject = po({ status, lines: [line({ sku: "A", warehouse: "本店" })] });
+      expect(setLineExpectedDate(subject, "A", "本店", "2026/05/30")).toBe(subject);
+    }
+  });
+
+  it("マッチする明細がない場合は no-op（参照同一）", () => {
+    const subject = po({ status: "発行済", lines: [line({ sku: "A", warehouse: "本店" })] });
+    expect(setLineExpectedDate(subject, "Z", "本店", "2026/05/30")).toBe(subject);
+  });
+
+  it("同じ予定納期を再設定しても no-op（参照同一）", () => {
+    const subject = po({
+      status: "発行済",
+      lines: [line({ sku: "A", warehouse: "本店", expectedDate: "2026/05/30" })],
+    });
+    expect(setLineExpectedDate(subject, "A", "本店", "2026/05/30")).toBe(subject);
+  });
+
+  it("空文字で予定納期をクリアできる", () => {
+    const subject = po({
+      status: "発行済",
+      lines: [line({ sku: "A", warehouse: "本店", expectedDate: "2026/05/30" })],
+    });
+    const after = setLineExpectedDate(subject, "A", "本店", "");
+    expect(after.lines[0].expectedDate).toBe("");
+  });
+
+  it("元の state を破壊しない（不変）", () => {
+    const subject = po({ status: "発行済", lines: [line({ sku: "A", warehouse: "本店" })] });
+    setLineExpectedDate(subject, "A", "本店", "2026/05/30");
+    expect(subject.lines[0].expectedDate).toBeUndefined();
   });
 });

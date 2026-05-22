@@ -170,6 +170,47 @@ describe("createPurchaseStore — applyCancel", () => {
   });
 });
 
+describe("createPurchaseStore — applySetExpectedDate", () => {
+  let store: PurchaseStore;
+  beforeEach(() => {
+    store = createPurchaseStore([
+      rec({ id: "PO-A", status: "発行済", lines: [{ sku: "SKU-1", warehouse: "本店", orderedQty: 10, receivedQty: 0 }] }),
+      rec({ id: "PO-B", status: "未発行", lines: [{ sku: "SKU-2", warehouse: "本店", orderedQty: 5, receivedQty: 0 }] }),
+    ]);
+  });
+
+  it("発行済POの明細に予定納期を設定し subscriber に通知する", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    const result = store.applySetExpectedDate("PO-A", "SKU-1", "本店", "2026/05/30");
+    expect(result.applied).toBe(true);
+    expect(result.after?.lines[0].expectedDate).toBe("2026/05/30");
+    expect(calls).toBe(1);
+  });
+
+  it("未発行POでは no-op（適用されず通知しない）", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    const result = store.applySetExpectedDate("PO-B", "SKU-2", "本店", "2026/05/30");
+    expect(result.applied).toBe(false);
+    expect(calls).toBe(0);
+  });
+
+  it("存在しないPO idでは no-op", () => {
+    const result = store.applySetExpectedDate("PO-X", "SKU-1", "本店", "2026/05/30");
+    expect(result.applied).toBe(false);
+  });
+
+  it("同値を再設定しても no-op", () => {
+    store.applySetExpectedDate("PO-A", "SKU-1", "本店", "2026/05/30");
+    let calls = 0;
+    store.subscribe(() => calls++);
+    const result = store.applySetExpectedDate("PO-A", "SKU-1", "本店", "2026/05/30");
+    expect(result.applied).toBe(false);
+    expect(calls).toBe(0);
+  });
+});
+
 describe("createPurchaseStore — immutability", () => {
   it("getState returns a stable reference until a mutation occurs", () => {
     const store = createPurchaseStore([rec()]);

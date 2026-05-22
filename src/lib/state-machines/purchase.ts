@@ -34,6 +34,8 @@ export interface PurchaseOrderLine {
   orderedQty: number;
   /** 累計受領数（部分入荷の累積） */
   receivedQty: number;
+  /** 予定納期（入荷予定日, YYYY/MM/DD）。発行済/注残あり で手動登録する。 */
+  expectedDate?: string;
 }
 
 export interface PurchaseOrderState {
@@ -131,6 +133,36 @@ export function receivePurchaseOrder(
   if (!changed) return po;
 
   return { ...po, lines: nextLines, status: deriveReceivingStatus(nextLines) };
+}
+
+/**
+ * 予定納期（入荷予定日）の登録。
+ *
+ * 仕様: 予定納期は明細ごとに手動入力する。発行済 / 注残あり の発注伝票にのみ設定可能。
+ *
+ * - status が 発行済 / 注残あり 以外なら no-op（参照同一）
+ * - (sku, warehouse) が一致する line が無ければ no-op
+ * - 既存の予定納期と同値なら no-op
+ * - 空文字を渡すと予定納期をクリアする
+ */
+export function setLineExpectedDate(
+  po: PurchaseOrderState,
+  sku: string,
+  warehouse: string,
+  expectedDate: string,
+): PurchaseOrderState {
+  if (po.status !== "発行済" && po.status !== "注残あり") return po;
+
+  let changed = false;
+  const nextLines = po.lines.map((l) => {
+    if (l.sku !== sku || l.warehouse !== warehouse) return l;
+    if (l.expectedDate === expectedDate) return l;
+    changed = true;
+    return { ...l, expectedDate };
+  });
+
+  if (!changed) return po;
+  return { ...po, lines: nextLines };
 }
 
 /**

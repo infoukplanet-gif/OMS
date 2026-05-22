@@ -128,6 +128,7 @@ const menuItems: MenuItem[] = [
     children: [
       { label: "発注伝票", href: "/purchasing" },
       { label: "発注計算", href: "/purchasing/calculate" },
+      { label: "入荷予定", href: "/purchasing/receiving" },
       { label: "仕入先マスタ", href: "/purchasing/suppliers" },
       { label: "返品管理", href: "/purchasing/returns" },
     ],

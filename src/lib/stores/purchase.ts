@@ -17,6 +17,7 @@ import {
   cancel,
   issue,
   receivePurchaseOrder,
+  setLineExpectedDate,
   type PurchaseOrderState,
   type ReceiptLine,
 } from "../state-machines/purchase";
@@ -47,6 +48,12 @@ export interface PurchaseStore {
   applyIssue(orderId: string): ApplyPurchaseResult;
   applyReceive(orderId: string, receipts: ReadonlyArray<ReceiptLine>): ApplyPurchaseResult;
   applyCancel(orderId: string): ApplyPurchaseResult;
+  applySetExpectedDate(
+    orderId: string,
+    sku: string,
+    warehouse: string,
+    expectedDate: string,
+  ): ApplyPurchaseResult;
   subscribe(listener: () => void): () => void;
 }
 
@@ -105,6 +112,14 @@ export function createPurchaseStore(
 
     applyCancel(orderId) {
       return applyPrimitive(orderId, cancel);
+    },
+
+    applySetExpectedDate(orderId, sku, warehouse, expectedDate) {
+      // 予定納期の更新は状態遷移ではないため受領 effects は発生しない
+      // （onPurchaseTransitioned は受領数の delta が無ければ {} を返す）。
+      return applyPrimitive(orderId, (state) =>
+        setLineExpectedDate(state, sku, warehouse, expectedDate),
+      );
     },
 
     subscribe(listener) {
