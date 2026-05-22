@@ -300,3 +300,54 @@ describe("createInventoryStore — immutability", () => {
     expect(first).not.toBe(second);
   });
 });
+
+describe("createInventoryStore — applyAdjust (棚卸差異の確定)", () => {
+  let store: InventoryStore;
+  beforeEach(() => {
+    store = createInventoryStore([
+      rec({ sku: "A", warehouse: "東京", onHand: 30, allocated: 5 }),
+      rec({ sku: "B", warehouse: "大阪", onHand: 8, allocated: 2 }),
+    ]);
+  });
+
+  it("プラス/マイナス差異を onHand に反映し appliedCount を返す", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    const result = store.applyAdjust([
+      { sku: "A", warehouse: "東京", delta: 4 },
+      { sku: "B", warehouse: "大阪", delta: -3 },
+    ]);
+    expect(result.applied).toBe(true);
+    expect(result.appliedCount).toBe(2);
+    expect(store.getState().find((r) => r.sku === "A")!.onHand).toBe(34);
+    expect(store.getState().find((r) => r.sku === "B")!.onHand).toBe(5);
+    expect(calls).toBe(1);
+  });
+
+  it("allocated は触らない", () => {
+    store.applyAdjust([{ sku: "A", warehouse: "東京", delta: -10 }]);
+    expect(store.getState().find((r) => r.sku === "A")!.allocated).toBe(5);
+  });
+
+  it("未登録 (sku, warehouse) は unknownAdjustments に積む", () => {
+    const result = store.applyAdjust([{ sku: "Z", warehouse: "東京", delta: 5 }]);
+    expect(result.applied).toBe(false);
+    expect(result.unknownAdjustments).toHaveLength(1);
+  });
+
+  it("delta=0 のみ / 空配列は no-op（通知しない）", () => {
+    let calls = 0;
+    store.subscribe(() => calls++);
+    expect(store.applyAdjust([{ sku: "A", warehouse: "東京", delta: 0 }]).applied).toBe(false);
+    expect(store.applyAdjust([]).applied).toBe(false);
+    expect(calls).toBe(0);
+  });
+
+  it("同一 (sku, warehouse) の複数 delta を合算する", () => {
+    store.applyAdjust([
+      { sku: "A", warehouse: "東京", delta: 5 },
+      { sku: "A", warehouse: "東京", delta: -2 },
+    ]);
+    expect(store.getState().find((r) => r.sku === "A")!.onHand).toBe(33);
+  });
+});

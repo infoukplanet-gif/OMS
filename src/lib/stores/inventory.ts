@@ -15,12 +15,29 @@
 
 import {
   allocate,
+  adjustStock,
   consume,
   receiveStock,
   release,
   type AllocationLine,
   type InventoryRecord,
 } from "../state-machines/inventory";
+
+/** 棚卸差異の確定で渡す符号付き在庫調整明細。 */
+export interface StockAdjustment {
+  sku: string;
+  warehouse: string;
+  /** 実棚 − システム在庫（符号付き） */
+  delta: number;
+}
+
+export interface ApplyAdjustResult {
+  applied: boolean;
+  /** 実際に onHand が変化した record の件数 */
+  appliedCount: number;
+  /** どの inventory record にもマッチしなかった調整明細 */
+  unknownAdjustments: StockAdjustment[];
+}
 
 export interface ApplyReceiveResult {
   applied: boolean;
@@ -47,6 +64,7 @@ export interface InventoryStore {
   applyAllocate(lines: ReadonlyArray<AllocationLine>): ApplyCascadeResult;
   applyRelease(lines: ReadonlyArray<AllocationLine>): ApplyCascadeResult;
   applyConsume(lines: ReadonlyArray<AllocationLine>): ApplyCascadeResult;
+  applyAdjust(adjustments: ReadonlyArray<StockAdjustment>): ApplyAdjustResult;
   subscribe(listener: () => void): () => void;
 }
 
@@ -185,6 +203,51 @@ export function createInventoryStore(
 
     applyConsume(lines) {
       return applyCascade(lines, consume);
+    },
+
+    applyAdjust(adjustments) {
+      // (sku, warehouse) ごとに delta を合算（delta === 0 は除外）
+      const aggregated = new Map<string, StockAdjustment>();
+      for (const a of adjustments) {
+        if (a.delta === 0) continue;
+        const key = keyOf(a.sku, a.warehouse);
+        const existing = aggregated.get(key);
+        if (existing === undefined) {
+          aggregated.set(key, { sku: a.sku, warehouse: a.warehouse, delta: a.delta });
+        } else {
+          aggregated.set(key, { ...existing, delta: existing.delta + a.delta });
+        }
+      }
+
+      if (aggregated.size === 0) {
+        return { applied: false, appliedCount: 0, unknownAdjustments: [] };
+      }
+
+      const matchedKeys = new Set<string>();
+      let appliedCount = 0;
+      const nextItems = items.map((rec) => {
+        const key = keyOf(rec.sku, rec.warehouse);
+        const a = aggregated.get(key);
+        if (a === undefined) return rec;
+        matchedKeys.add(key);
+        const updated = adjustStock(rec, a.delta);
+        if (updated === rec) return rec;
+        appliedCount++;
+        return updated;
+      });
+
+      const unknownAdjustments: StockAdjustment[] = [];
+      for (const [key, a] of aggregated) {
+        if (!matchedKeys.has(key)) unknownAdjustments.push(a);
+      }
+
+      if (appliedCount === 0) {
+        return { applied: false, appliedCount: 0, unknownAdjustments };
+      }
+
+      items = nextItems;
+      notify();
+      return { applied: true, appliedCount, unknownAdjustments };
     },
 
     subscribe(listener) {

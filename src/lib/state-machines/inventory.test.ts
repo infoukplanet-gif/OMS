@@ -4,6 +4,7 @@ import {
   release,
   consume,
   receiveStock,
+  adjustStock,
   freeStock,
   inventoryHealth,
   type InventoryRecord,
@@ -174,6 +175,42 @@ describe("receiveStock", () => {
     const after = receiveStock(before, 12);
     expect(after.onHand).toBe(12);
     expect(inventoryHealth(after)).not.toBe("在庫切れ");
+  });
+});
+
+describe("adjustStock (棚卸差異の確定)", () => {
+  it("プラス差異で onHand を増やす（allocated は不変）", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    const after = adjustStock(before, 4);
+    expect(after.onHand).toBe(34);
+    expect(after.allocated).toBe(5);
+  });
+
+  it("マイナス差異で onHand を減らす", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    expect(adjustStock(before, -16).onHand).toBe(14);
+  });
+
+  it("0 未満にはせず 0 で下げ止まる", () => {
+    const before = record({ onHand: 5, allocated: 0 });
+    expect(adjustStock(before, -12).onHand).toBe(0);
+  });
+
+  it("delta=0 は no-op（参照同一）", () => {
+    const before = record({ onHand: 30 });
+    expect(adjustStock(before, 0)).toBe(before);
+  });
+
+  it("実質変化なし（既に0でさらにマイナス）も no-op（参照同一）", () => {
+    const before = record({ onHand: 0, allocated: 0 });
+    expect(adjustStock(before, -5)).toBe(before);
+  });
+
+  it("入力を破壊しない（不変）", () => {
+    const before = record({ onHand: 30, allocated: 5 });
+    const snapshot = { ...before };
+    adjustStock(before, -10);
+    expect(before).toEqual(snapshot);
   });
 });
 

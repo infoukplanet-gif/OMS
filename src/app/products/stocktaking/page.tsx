@@ -1,30 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Play, CheckCircle2, Search, History, ScanLine, Save } from "lucide-react";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
+import type { InventoryRecord } from "@/lib/state-machines/inventory";
 
-type Item = {
-  sku: string;
-  name: string;
-  location: string;
-  system: number;
-  actual: number | null;
-  by: string | null;
+/** SKU ごとのロケーション補完（在庫レコードにロケ情報がないため UI 層で補う）。 */
+const SKU_LOCATION: Record<string, string> = {
+  "WEP-001-BK": "A1-001", "WEP-001-WH": "A1-002", "UCB-002": "A2-008",
+  "MBT-004": "B3-014", "CHG-007": "B3-018", "PFS-005": "C1-005",
+  "TWS-006-BK": "A1-005", "TS-WH-M": "D1-002", "JK-NV-L": "D2-006",
 };
+const COUNTED_BY = "佐藤 健";
 
-const ITEMS_INIT: Item[] = [
-  { sku: "WEP-001-BK", name: "ワイヤレスイヤホン Pro / ブラック", location: "A1-001", system: 30, actual: 30, by: "佐藤 健" },
-  { sku: "WEP-001-WH", name: "ワイヤレスイヤホン Pro / ホワイト", location: "A1-002", system: 15, actual: 14, by: "佐藤 健" },
-  { sku: "UCB-002", name: "USB-Cケーブル 2m", location: "A2-008", system: 8, actual: null, by: null },
-  { sku: "MBT-004", name: "モバイルバッテリー 20000mAh", location: "B3-014", system: 2, actual: 2, by: "鈴木 美咲" },
-  { sku: "CHG-007", name: "急速充電器 65W", location: "B3-018", system: 67, actual: 65, by: "鈴木 美咲" },
-  { sku: "PFS-005", name: "保護フィルム セット", location: "C1-005", system: 120, actual: null, by: null },
-  { sku: "TWS-006-BK", name: "完全ワイヤレスイヤホン / ブラック", location: "A1-005", system: 0, actual: null, by: null },
-];
+const keyOf = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
 
 const PAST_STOCKTAKINGS = [
   { id: "STK-2026-0042", at: "2026-04-15", warehouse: "東京本社倉庫", scope: "A棚全体", items: 184, diff: 12, status: "完了" },
@@ -34,10 +28,41 @@ const PAST_STOCKTAKINGS = [
 
 export default function StocktakingPage() {
   const toast = useToast();
-  const [items, setItems] = useState<Item[]>(ITEMS_INIT);
   const [active, setActive] = useState(true);
   const [keyword, setKeyword] = useState("");
   const [diffOnly, setDiffOnly] = useState(false);
+  // 実棚入力（sku@warehouse → 実数）。未入力(null)は未カウント。
+  const [actuals, setActuals] = useState<Record<string, number | null>>({});
+
+  // 共有 inventoryStore を購読。システム在庫(onHand)は実データ由来。
+  useEffect(() => {
+    if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+  }, []);
+  const inventory = useSyncExternalStore(
+    (cb) => inventoryStore.subscribe(cb),
+    () => inventoryStore.getState(),
+    () => INITIAL_INVENTORY as readonly InventoryRecord[],
+  );
+
+  // 在庫レコード → 棚卸行（system=onHand、実棚は actuals state から補完）。
+  const items = useMemo(
+    () =>
+      inventory.map((r) => {
+        const key = keyOf(r.sku, r.warehouse);
+        const actual = actuals[key] ?? null;
+        return {
+          key,
+          sku: r.sku,
+          warehouse: r.warehouse,
+          name: SKU_NAMES[r.sku] ?? r.sku,
+          location: SKU_LOCATION[r.sku] ?? "—",
+          system: r.onHand,
+          actual,
+          by: actual !== null ? COUNTED_BY : null,
+        };
+      }),
+    [inventory, actuals],
+  );
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -48,9 +73,9 @@ export default function StocktakingPage() {
     });
   }, [items, keyword, diffOnly]);
 
-  const updateActual = (sku: string, value: string) => {
+  const updateActual = (key: string, value: string) => {
     const num = value === "" ? null : Number(value);
-    setItems(items.map((i) => (i.sku === sku ? { ...i, actual: num, by: num !== null ? "佐藤 健" : null } : i)));
+    setActuals((prev) => ({ ...prev, [key]: num }));
   };
 
   const stats = {
@@ -58,6 +83,25 @@ export default function StocktakingPage() {
     counted: items.filter((i) => i.actual !== null).length,
     diff: items.filter((i) => i.actual !== null && i.actual !== i.system).length,
     diffQty: items.filter((i) => i.actual !== null).reduce((s, i) => s + Math.abs((i.actual ?? 0) - i.system), 0),
+  };
+
+  /** 差異を確定 → inventoryStore.applyAdjust で onHand を実棚に合わせる。 */
+  const confirmDiff = () => {
+    const adjustments = items
+      .filter((i) => i.actual !== null && i.actual !== i.system)
+      .map((i) => ({ sku: i.sku, warehouse: i.warehouse, delta: (i.actual as number) - i.system }));
+    if (adjustments.length === 0) {
+      toast.show("確定する差異がありません", "info");
+      return;
+    }
+    const result = inventoryStore.applyAdjust(adjustments);
+    const net = adjustments.reduce((s, a) => s + a.delta, 0);
+    // 確定後は実棚入力をクリア（onHand が更新され差異が解消するため）。
+    setActuals({});
+    toast.show(
+      `差異を確定: ${result.appliedCount}SKU の在庫を更新（純増減 ${net > 0 ? "+" : ""}${net}点）`,
+      "success",
+    );
   };
 
   return (
@@ -85,7 +129,7 @@ export default function StocktakingPage() {
               >
                 <ScanLine className="h-4 w-4" />スキャンモード
               </button>
-              <PrimaryButton onClick={() => toast.show("差異を承認し、在庫数を更新しました", "success")}>
+              <PrimaryButton onClick={confirmDiff}>
                 <Save className="h-4 w-4" />差異を確定
               </PrimaryButton>
             </>
@@ -140,7 +184,7 @@ export default function StocktakingPage() {
             {filtered.map((i) => {
               const diff = i.actual !== null ? i.actual - i.system : null;
               return (
-                <tr key={i.sku} className={cn("border-t border-white/30 hover:bg-white/40", diff !== null && diff !== 0 && "bg-amber-500/5")}>
+                <tr key={i.key} className={cn("border-t border-white/30 hover:bg-white/40", diff !== null && diff !== 0 && "bg-amber-500/5")}>
                   <td className="px-3 py-2.5 font-mono text-xs text-gray-600">{i.sku}</td>
                   <td className="px-3 py-2.5 text-gray-800">{i.name}</td>
                   <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{i.location}</td>
@@ -149,7 +193,7 @@ export default function StocktakingPage() {
                     <input
                       type="number"
                       value={i.actual ?? ""}
-                      onChange={(e) => updateActual(i.sku, e.target.value)}
+                      onChange={(e) => updateActual(i.key, e.target.value)}
                       className="h-7 w-20 px-2 rounded-lg text-xs text-center bg-white/60 border border-white/50 focus:outline-none focus:ring-1 focus:ring-blue-500/20"
                       placeholder="入力"
                     />

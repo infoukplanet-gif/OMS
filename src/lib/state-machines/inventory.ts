@@ -109,3 +109,18 @@ export function receiveStock(record: InventoryRecord, qty: number): InventoryRec
   if (qty <= 0) return record;
   return { ...record, onHand: record.onHand + qty };
 }
+
+/**
+ * 棚卸差異の確定で物理在庫（onHand）を増減する。allocated は触らない。
+ * delta は「実棚 − システム在庫」の符号付き差異。
+ *
+ * - delta = 0 は no-op（参照同一性保持）
+ * - 結果は 0 未満にはせず 0 で下げ止まる（マイナス在庫を作らない）
+ * - 実質変化がない（既に 0 でさらにマイナス等）場合も no-op
+ */
+export function adjustStock(record: InventoryRecord, delta: number): InventoryRecord {
+  if (delta === 0) return record;
+  const next = Math.max(0, record.onHand + delta);
+  if (next === record.onHand) return record;
+  return { ...record, onHand: next };
+}
