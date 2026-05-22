@@ -20,6 +20,29 @@ import type { OrderSeed } from "@/lib/seeds/orders";
 
 const WORKSPACE = "default";
 
+/** 保存できる最大件数（DoS・暴走入力対策）。 */
+const MAX_ORDERS = 50_000;
+
+/**
+ * 保存前の最小バリデーション。配列であること・件数上限・各要素が
+ * id/status を持つオブジェクトであることを検証する（任意 JSON の保存を防ぐ）。
+ *
+ * 注意（要対応）: snapshot/restore は "use server" により未認証で公開される。
+ * 本番 DB（DATABASE_URL）接続前に、必ず認証チェックと workspace のセッション由来化
+ * （テナント分離）を追加すること。現状は DATABASE_URL 未設定の in-memory fallback 前提。
+ */
+function isValidOrders(orders: unknown): orders is ReadonlyArray<OrderSeed> {
+  if (!Array.isArray(orders)) return false;
+  if (orders.length > MAX_ORDERS) return false;
+  return orders.every(
+    (o) =>
+      typeof o === "object" &&
+      o !== null &&
+      typeof (o as { id?: unknown }).id === "string" &&
+      typeof (o as { status?: unknown }).status === "string",
+  );
+}
+
 export interface SnapshotResult {
   ok: boolean;
   /** "no-db" | "error" | undefined（成功時） */
@@ -35,6 +58,7 @@ export interface SnapshotResult {
 export async function snapshotOrders(orders: ReadonlyArray<OrderSeed>): Promise<SnapshotResult> {
   const db = getDb();
   if (db === null) return { ok: false, reason: "no-db", count: 0 };
+  if (!isValidOrders(orders)) return { ok: false, reason: "error", count: 0 };
 
   try {
     await db
