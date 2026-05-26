@@ -11,8 +11,9 @@ import {
   PAYMENT_STATUSES,
   paymentStatusBadge,
 } from "@/lib/state-machines/payment";
-import { mailQueue, type MailJob } from "@/lib/mail/queue";
+import { mailQueue } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { applyRecordPaymentCascade } from "@/lib/cascades/record-payment";
 import { paymentStore } from "@/lib/stores/payment";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
@@ -104,98 +105,20 @@ export default function PaymentsPage() {
       .reduce((s, p) => s + (p.orderTotal - p.paidAmount), 0),
   }), [payments]);
 
-  // ---- 入金登録（paymentStore + 実 cascade） ----------------------------------
+  // ---- 入金登録（共有 record-payment cascade） --------------------------------
   /**
-   * paymentStore.applyRecord で SM 遷移 + handler effects を一気に取得。
-   * - effects.sendMail → mailQueue.enqueueAll
-   * - effects.cascadeOrderAction (confirmPayment) → orderStore に流す。
-   *   これにより受注が 入金待ち → 引当待ち に進み、allocateInventory が
-   *   emit される。当該受注の allocation を inventoryStore.applyAllocate に流す。
-   * - 引当失敗時は markInventoryShortage を自動連鎖。
+   * 入金記録〜受注確定〜出荷生成〜在庫引当の連鎖は applyRecordPaymentCascade に集約。
+   * payments/bulk（一括消込）と同一ロジックを共有する。
    */
-  function handleRecordPayment(id: string, amount: number): {
-    enqueued: number;
-    duplicateSkipped: number;
-    disabledSkipped: number;
-    cascadeApplied: number;
-    allocated: number;
-    shortageMarked: number;
-    shipmentsCreated: number;
-  } {
-    const result = paymentStore.applyRecord(id, amount);
-    const mailJobs: MailJob[] = [];
-    let cascadeApplied = 0;
-    let allocated = 0;
-    let shortageMarked = 0;
-    let shipmentsCreated = 0;
-
-    if (!result.applied) {
-      return {
-        ...mailQueue.enqueueAll([], getAutoMailEnabled()),
-        cascadeApplied,
-        allocated,
-        shortageMarked,
-        shipmentsCreated,
-      };
-    }
-
-    if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
-
-    if (result.effects.cascadeOrderAction) {
-      const orderRes = orderStore.applyTransition(
-        result.effects.cascadeOrderAction.orderId,
-        result.effects.cascadeOrderAction.action,
-      );
-      if (orderRes.applied) {
-        cascadeApplied += 1;
-        if (orderRes.effects.sendMail) mailJobs.push(orderRes.effects.sendMail);
-
-        // 出荷指示の自動作成 cascade
-        if (orderRes.effects.createShipment) {
-          const sharedOrder = orderStore
-            .getState()
-            .find((o) => o.id === orderRes.effects.createShipment!.orderId);
-          const created = shipmentStore.createForOrder(
-            orderRes.effects.createShipment.orderId,
-            {
-              customer: sharedOrder?.customer as string | undefined,
-              shop: sharedOrder?.shop as string | undefined,
-              items: sharedOrder?.items as number | undefined,
-              amount: sharedOrder?.amount as number | undefined,
-            },
-          );
-          if (created.created) shipmentsCreated += 1;
-        }
-
-        // confirmPayment cascade で order が引当待ちに到達 → allocateInventory を流す
-        if (orderRes.effects.allocateInventory) {
-          const sharedOrder = orderStore
-            .getState()
-            .find((o) => o.id === orderRes.effects.allocateInventory!.orderId);
-          const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
-          if (allocation && allocation.length > 0) {
-            const cascade = inventoryStore.applyAllocate(allocation);
-            allocated += cascade.appliedCount;
-            const failed = cascade.failedLines.length + cascade.unknownLines.length;
-            if (failed > 0 && cascade.appliedCount === 0) {
-              const shortageRes = orderStore.applyTransition(
-                sharedOrder!.id,
-                "markInventoryShortage",
-              );
-              if (shortageRes.applied) shortageMarked += 1;
-            }
-          }
-        }
-      }
-    }
-
-    return {
-      ...mailQueue.enqueueAll(mailJobs, getAutoMailEnabled()),
-      cascadeApplied,
-      allocated,
-      shortageMarked,
-      shipmentsCreated,
-    };
+  function handleRecordPayment(id: string, amount: number) {
+    return applyRecordPaymentCascade(id, amount, {
+      paymentStore,
+      orderStore,
+      shipmentStore,
+      inventoryStore,
+      mailQueue,
+      autoMailEnabled: getAutoMailEnabled(),
+    });
   }
 
   // ---- 入金取消（paymentStore + 実 cascade） -----------------------------------

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
@@ -8,7 +8,6 @@ import { cn } from "@/lib/utils";
 import {
   type PaymentState,
   paymentStatusBadge,
-  paymentStatusOf,
 } from "@/lib/state-machines/payment";
 import {
   matchPayments,
@@ -16,6 +15,16 @@ import {
   type PaymentMatch,
   type UnmatchedReceipt,
 } from "@/lib/calculations/payment-matching";
+import { applyRecordPaymentCascade } from "@/lib/cascades/record-payment";
+import { paymentStore, type PaymentRecord } from "@/lib/stores/payment";
+import { orderStore } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { shipmentStore } from "@/lib/stores/shipment";
+import { mailQueue } from "@/lib/mail/queue";
+import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import {
   Upload,
   Play,
@@ -41,52 +50,24 @@ function reasonLabel(r: UnmatchedReceipt["reason"]): string {
   return r;
 }
 
-// ---------------------------------------------------------------------------
-// モック: 入金対象の受注一覧（Map<orderId, PaymentState>）
-// ---------------------------------------------------------------------------
-function makePaymentState(
-  orderTotal: number,
-  paidAmount: number,
-): PaymentState {
-  return {
-    orderTotal,
-    paidAmount,
-    status: paymentStatusOf(orderTotal, paidAmount),
-    overpaid: paidAmount > orderTotal,
-  };
-}
+const toState = (p: PaymentRecord): PaymentState => ({
+  status: p.status,
+  orderTotal: p.orderTotal,
+  paidAmount: p.paidAmount,
+  overpaid: p.overpaid,
+});
 
-const MOCK_ORDERS: { orderId: string; customer: string; state: PaymentState }[] = [
-  { orderId: "ORD-2026-00849", customer: "田中一郎",   state: makePaymentState(154000,      0) },
-  { orderId: "ORD-2026-00844", customer: "中村あかり", state: makePaymentState(  3200,      0) },
-  { orderId: "ORD-2026-00838", customer: "井上智",     state: makePaymentState( 28500,  25000) },
-  { orderId: "ORD-2026-00835", customer: "木下真由",   state: makePaymentState( 45000,      0) },
-  { orderId: "ORD-2026-00830", customer: "山田太郎",   state: makePaymentState( 18200,  18200) },
-  { orderId: "ORD-2026-00820", customer: "佐藤花子",   state: makePaymentState( 12400,  12800) },
-  { orderId: "ORD-2026-00815", customer: "高橋翔",     state: makePaymentState( 67000,  30000) },
-  { orderId: "ORD-2026-00810", customer: "渡辺里奈",   state: makePaymentState( 22000,      0) },
+// ---------------------------------------------------------------------------
+// 初期サンプル受領明細（共有 INITIAL_PAYMENTS の未入金/一部入金 orderId に対応）
+// ---------------------------------------------------------------------------
+const CLEAN_INITIAL: ReceiptEntry[] = [
+  { orderId: "ORD-2026-08843", amount:  67500, receivedAt: "2026-05-13", source: "三井住友銀行" }, // P001 完済
+  { orderId: "ORD-2026-08849", amount: 154000, receivedAt: "2026-05-13", source: "三井住友銀行" }, // P002 完済
+  { orderId: "ORD-2026-08841", amount:  26800, receivedAt: "2026-05-14", source: "みずほ銀行" },   // P003 一部→完済
+  { orderId: "ORD-2026-08851", amount:  32400, receivedAt: "2026-05-14", source: "みずほ銀行" },   // P004 完済
+  { orderId: "ORD-INVALID-999", amount: 12000, receivedAt: "2026-05-14", source: "三菱UFJ" },      // 受注番号不一致
+  { orderId: "ORD-2026-08843", amount:   -500, receivedAt: "2026-05-14", source: "三菱UFJ" },      // 金額不正
 ];
-
-// ---------------------------------------------------------------------------
-// 初期サンプル受領明細
-// ---------------------------------------------------------------------------
-const INITIAL_RECEIPTS: ReceiptEntry[] = [
-  { orderId: "ORD-2026-00849", amount: 154000, receivedAt: "2026-05-13", source: "三井住友銀行" },
-  { orderId: "ORD-2026-00844", amount:   3200, receivedAt: "2026-05-13", source: "三井住友銀行" },
-  { orderId: "ORD-2026-00838", amount:   3500, receivedAt: "2026-05-13", source: "三井住友銀行" },
-  { orderId: "ORD-2026-00835", amount:  45000, receivedAt: "2026-05-14", source: "みずほ銀行" },
-  { orderId: "ORD-2026-00815", customer: "高橋翔", amount: 37000, receivedAt: "2026-05-14", source: "みずほ銀行" } as unknown as ReceiptEntry,
-  { orderId: "ORD-INVALID-999", amount: 12000, receivedAt: "2026-05-14", source: "三菱UFJ" },
-  { orderId: "ORD-2026-00830",  amount:  -500, receivedAt: "2026-05-14", source: "三菱UFJ" },
-];
-
-// フィールド名を統一（customer は ReceiptEntry の型にないので削除）
-const CLEAN_INITIAL: ReceiptEntry[] = INITIAL_RECEIPTS.map(({ orderId, amount, receivedAt, source }) => ({
-  orderId,
-  amount,
-  receivedAt,
-  source,
-}));
 
 // ---------------------------------------------------------------------------
 // コンポーネント
@@ -94,13 +75,22 @@ const CLEAN_INITIAL: ReceiptEntry[] = INITIAL_RECEIPTS.map(({ orderId, amount, r
 export default function PaymentBulkPage() {
   const toast = useToast();
 
+  // 共有ストアを seed（消込確定で受注確定→出荷生成→在庫引当まで連鎖させるため
+  // payment / order / inventory を揃える）。shipment は cascade 内で生成される。
+  useEffect(() => {
+    if (paymentStore.getState().length === 0) paymentStore.setItems(INITIAL_PAYMENTS);
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+    if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+  }, []);
+
+  const payments = useSyncExternalStore(
+    (cb) => paymentStore.subscribe(cb),
+    () => paymentStore.getState(),
+    () => INITIAL_PAYMENTS,
+  ) as ReadonlyArray<PaymentRecord & { customer?: string; method?: string }>;
+
   // 受領明細リスト（手動追加可能）
   const [receipts, setReceipts] = useState<ReceiptEntry[]>(CLEAN_INITIAL);
-
-  // 入金対象受注の Map（「全件確定」で更新）
-  const [paymentMap, setPaymentMap] = useState<Map<string, PaymentState>>(
-    () => new Map(MOCK_ORDERS.map((o) => [o.orderId, o.state])),
-  );
 
   // マッチング結果
   const [result, setResult] = useState<{
@@ -116,6 +106,20 @@ export default function PaymentBulkPage() {
   const [newOrderId, setNewOrderId] = useState("");
   const [newAmount, setNewAmount] = useState("");
   const [newSource, setNewSource] = useState("手動入力");
+
+  // 照合元 Map（共有 paymentStore から導出）と消込対象（未完済）一覧
+  const paymentMap = useMemo(
+    () => new Map(payments.map((p) => [p.orderId, toState(p)])),
+    [payments],
+  );
+  const targetOrders = useMemo(
+    () => payments.filter((p) => p.status !== "入金済み"),
+    [payments],
+  );
+  const paymentIdByOrder = useMemo(
+    () => new Map(payments.map((p) => [p.orderId, p.id])),
+    [payments],
+  );
 
   // ---- KPI（受領明細ベース）------------------------------------------------
   const receiptStats = useMemo(() => {
@@ -133,20 +137,54 @@ export default function PaymentBulkPage() {
     );
   }
 
-  // ---- 全件確定 ------------------------------------------------------------
+  // ---- 全件確定（共有ストアへ実反映 + 受注確定〜在庫引当の連鎖） --------------
+  /**
+   * マッチした各受領明細を applyRecordPaymentCascade で paymentStore に記録。
+   * 完済に到達した受注は confirmPayment → 出荷指示作成 → 在庫引当まで自動連鎖する。
+   * 受領明細は orderId 単位で複数あり得るので、明細ごとに金額を積む（store が累積）。
+   */
   function handleConfirmAll() {
     if (!result) return;
-    const next = new Map(paymentMap);
+    let recorded = 0;
+    let confirmed = 0;
+    let shipmentsCreated = 0;
+    let allocated = 0;
+    let shortageMarked = 0;
+    let enqueued = 0;
+
     for (const m of result.matches) {
-      next.set(m.orderId, m.after);
+      const paymentId = paymentIdByOrder.get(m.orderId);
+      if (paymentId === undefined) continue;
+      const res = applyRecordPaymentCascade(paymentId, m.amount, {
+        paymentStore,
+        orderStore,
+        shipmentStore,
+        inventoryStore,
+        mailQueue,
+        autoMailEnabled: getAutoMailEnabled(),
+      });
+      if (res.applied) recorded += 1;
+      confirmed += res.cascadeApplied;
+      shipmentsCreated += res.shipmentsCreated;
+      allocated += res.allocated;
+      shortageMarked += res.shortageMarked;
+      enqueued += res.enqueued;
     }
-    setPaymentMap(next);
+
     setResult(null);
     setReceipts([]);
-    toast.show(
-      `${result.matches.length}件の入金状態を確定しました`,
-      "success",
-    );
+
+    const detail = [
+      `入金 ${recorded}件記録`,
+      confirmed > 0 ? `受注確定 ${confirmed}件` : "",
+      shipmentsCreated > 0 ? `出荷指示 ${shipmentsCreated}件作成` : "",
+      allocated > 0 ? `引当 ${allocated}SKU` : "",
+      shortageMarked > 0 ? `在庫不足 ${shortageMarked}件` : "",
+      enqueued > 0 ? `メール ${enqueued}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    toast.show(detail, shortageMarked > 0 ? "info" : "success");
   }
 
   // ---- 明細行の削除 ---------------------------------------------------------
@@ -291,7 +329,7 @@ export default function PaymentBulkPage() {
               未入金・一部入金が消込対象です。
             </HelpHint>
           </div>
-          <span className="text-xs text-gray-400">{paymentMap.size}件</span>
+          <span className="text-xs text-gray-400">{targetOrders.length}件</span>
         </div>
         <div className="overflow-hidden rounded-xl border border-white/50">
           <table className="w-full text-sm">
@@ -306,33 +344,40 @@ export default function PaymentBulkPage() {
               </tr>
             </thead>
             <tbody>
-              {MOCK_ORDERS.map((o) => {
-                const state = paymentMap.get(o.orderId) ?? o.state;
-                const balance = state.orderTotal - state.paidAmount;
-                return (
-                  <tr key={o.orderId} className="border-t border-white/30 hover:bg-white/40 transition-colors">
-                    <td className="px-3 py-2 font-mono text-xs text-blue-600">{o.orderId}</td>
-                    <td className="px-3 py-2 text-gray-800 text-xs">{o.customer}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-700">{fmt(state.orderTotal)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-xs text-emerald-700">{fmt(state.paidAmount)}</td>
-                    <td className={cn(
-                      "px-3 py-2 text-right tabular-nums text-xs",
-                      balance > 0 ? "text-red-700 font-semibold" : state.overpaid ? "text-purple-700 font-semibold" : "text-gray-400",
-                    )}>
-                      {balance !== 0 ? fmt(Math.abs(balance)) : "—"}
-                      {state.overpaid && <span className="ml-0.5">(超過)</span>}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <span className={cn(
-                        "px-2 py-0.5 rounded-full text-xs font-medium",
-                        state.overpaid ? "bg-purple-500/15 text-purple-700" : paymentStatusBadge[state.status],
+              {targetOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-400">
+                    消込対象の受注はありません（すべて入金済み）
+                  </td>
+                </tr>
+              ) : (
+                targetOrders.map((p) => {
+                  const balance = p.orderTotal - p.paidAmount;
+                  return (
+                    <tr key={p.orderId} className="border-t border-white/30 hover:bg-white/40 transition-colors">
+                      <td className="px-3 py-2 font-mono text-xs text-blue-600">{p.orderId}</td>
+                      <td className="px-3 py-2 text-gray-800 text-xs">{(p.customer as string) ?? "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-gray-700">{fmt(p.orderTotal)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-emerald-700">{fmt(p.paidAmount)}</td>
+                      <td className={cn(
+                        "px-3 py-2 text-right tabular-nums text-xs",
+                        balance > 0 ? "text-red-700 font-semibold" : p.overpaid ? "text-purple-700 font-semibold" : "text-gray-400",
                       )}>
-                        {state.overpaid ? "過剰入金" : state.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
+                        {balance !== 0 ? fmt(Math.abs(balance)) : "—"}
+                        {p.overpaid && <span className="ml-0.5">(超過)</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-xs font-medium",
+                          p.overpaid ? "bg-purple-500/15 text-purple-700" : paymentStatusBadge[p.status],
+                        )}>
+                          {p.overpaid ? "過剰入金" : p.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
