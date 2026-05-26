@@ -78,6 +78,7 @@ const menuItems: MenuItem[] = [
       { label: "配送番号反映", href: "/shipments/tracking" },
       { label: "欠品処理", href: "/shipments/shortage" },
       { label: "不良品振替", href: "/shipments/defective-transfer" },
+      { label: "返品管理", href: "/returns" },
     ],
   },
   {
