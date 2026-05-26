@@ -44,6 +44,11 @@ export interface OrderStore {
   getState(): readonly OrderRecord[];
   setItems(next: ReadonlyArray<OrderRecord>): void;
   applyTransition(orderId: string, action: OrderAction): ApplyTransitionResult;
+  /**
+   * 受注レコードの表示用/付帯フィールドを部分更新する（SM 状態は触らない）。
+   * 引当計画で確定した倉庫別 allocation を書き戻す等に使う。存在しない id は no-op。
+   */
+  patch(orderId: string, partial: Partial<OrderRecord>): boolean;
   subscribe(listener: () => void): () => void;
 }
 
@@ -87,6 +92,15 @@ export function createOrderStore(initial: ReadonlyArray<OrderRecord> = []): Orde
       items = [...items.slice(0, idx), after, ...items.slice(idx + 1)];
       notify();
       return { applied: true, before, after, effects };
+    },
+
+    patch(orderId, partial) {
+      const idx = items.findIndex((o) => o.id === orderId);
+      if (idx === -1) return false;
+      const next: OrderRecord = { ...items[idx], ...partial };
+      items = [...items.slice(0, idx), next, ...items.slice(idx + 1)];
+      notify();
+      return true;
     },
 
     subscribe(listener) {

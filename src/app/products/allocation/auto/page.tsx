@@ -8,6 +8,12 @@ import { cn } from "@/lib/utils";
 import { orderStore, type OrderRecord } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { allocatePendingOrders } from "@/lib/cascades/allocate-orders";
+import {
+  getAllocationRules,
+  setAllocationRules,
+  ORDER_BY_RULES,
+  type OrderByRule,
+} from "@/lib/allocation/rules";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -49,14 +55,31 @@ const RECENT_LOG: RunLogEntry[] = [
 export default function AllocationAutoPage() {
   const toast = useToast();
   const [jobs, setJobs] = useState<Job[]>(INITIAL_JOBS);
-  const [order, setOrder] = useState("受注日昇順");
-  const [statusTarget, setStatusTarget] = useState("新規受付・入金済み");
-  const [partialAllow, setPartialAllow] = useState(false);
+  // 引当ルール（実 config と双方向。保存で setAllocationRules 反映）
+  const initialRules = getAllocationRules();
+  const [orderBy, setOrderBy] = useState<OrderByRule>(initialRules.orderBy);
+  const [allowSplit, setAllowSplit] = useState(initialRules.allowSplit);
+  const [warehousePriority, setWarehousePriority] = useState<string[]>(initialRules.warehousePriority);
   const [failAction, setFailAction] = useState("欠品ステータスへ");
   const [vipPriority, setVipPriority] = useState(true);
   const [reservePriority, setReservePriority] = useState(true);
   const [holdNotify, setHoldNotify] = useState(true);
   const [runLog, setRunLog] = useState<RunLogEntry[]>(RECENT_LOG);
+
+  const moveWarehouse = (index: number, dir: -1 | 1) => {
+    setWarehousePriority((prev) => {
+      const next = [...prev];
+      const target = index + dir;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const saveRules = () => {
+    setAllocationRules({ warehousePriority, allowSplit, orderBy });
+    toast.show("引当ルールを保存しました（拠点優先順・分割可否・引当順を反映）", "success");
+  };
 
   // 引当は共有 orderStore/inventoryStore 上で実行する。両方を seed。
   useEffect(() => {
@@ -127,7 +150,7 @@ export default function AllocationAutoPage() {
           >
             <Play className="h-4 w-4" />マニュアル実行
           </button>
-          <PrimaryButton onClick={() => toast.show("引当ルールを保存しました", "success")}>
+          <PrimaryButton onClick={saveRules}>
             <Save className="h-4 w-4" />設定を保存
           </PrimaryButton>
         </div>
@@ -149,25 +172,15 @@ export default function AllocationAutoPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
-              引当順序
-              <HelpHint side="right">受注を引き当てる順番。古い受注からが基本ですが、VIP優先などにも変更できます。</HelpHint>
+              引当順序（受注処理順）
+              <HelpHint side="right">在庫が競合する時に、どの受注から先に引き当てるか。保存すると実引当に反映されます。</HelpHint>
             </label>
             <select
-              value={order}
-              onChange={(e) => setOrder(e.target.value)}
+              value={orderBy}
+              onChange={(e) => setOrderBy(e.target.value as OrderByRule)}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
-              {["受注日昇順", "出荷予定日昇順", "金額降順", "VIP/卸先優先", "ランダム"].map((o) => <option key={o}>{o}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">引当対象ステータス</label>
-            <select
-              value={statusTarget}
-              onChange={(e) => setStatusTarget(e.target.value)}
-              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            >
-              {["新規受付・入金済み", "新規受付のみ", "入金済みのみ", "確認待ちも含む"].map((o) => <option key={o}>{o}</option>)}
+              {ORDER_BY_RULES.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
           <div className="space-y-1.5">
@@ -183,7 +196,39 @@ export default function AllocationAutoPage() {
               {["欠品ステータスへ", "保留にする", "次回バッチへ繰越", "アラート通知のみ"].map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <Toggle label="部分引当を許可" checked={partialAllow} onChange={setPartialAllow} hint="ONの場合、明細単位で在庫があるものだけ引当ます。" />
+          <div className="md:col-span-2 space-y-1.5">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              拠点引当優先順
+              <HelpHint side="right">上の拠点から順に在庫を引き当てます。▲▼で並べ替え。保存すると実引当に反映されます。</HelpHint>
+            </label>
+            <div className="rounded-xl border border-white/50 bg-white/50 divide-y divide-white/40">
+              {warehousePriority.map((w, i) => (
+                <div key={w} className="flex items-center justify-between px-3 py-2">
+                  <span className="flex items-center gap-2 text-sm text-gray-700">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-blue-500/15 text-blue-700 text-xs font-medium">{i + 1}</span>
+                    {w}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <button
+                      onClick={() => moveWarehouse(i, -1)}
+                      disabled={i === 0}
+                      className="px-2 py-0.5 rounded-lg text-xs bg-white/60 border border-white/50 text-gray-600 hover:bg-white/80 disabled:opacity-30"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      onClick={() => moveWarehouse(i, 1)}
+                      disabled={i === warehousePriority.length - 1}
+                      className="px-2 py-0.5 rounded-lg text-xs bg-white/60 border border-white/50 text-gray-600 hover:bg-white/80 disabled:opacity-30"
+                    >
+                      ▼
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Toggle label="複数倉庫に分割して引当を許可" checked={allowSplit} onChange={setAllowSplit} hint="ONの場合、1拠点で足りなくても優先順に複数拠点から合計で引き当てます。OFFは単一拠点でfull-cover優先。" />
           <Toggle label="VIP顧客を優先引当" checked={vipPriority} onChange={setVipPriority} hint="顧客ランクVIP/プラチナ受注を優先します。" />
           <Toggle label="予約商品を優先引当" checked={reservePriority} onChange={setReservePriority} hint="発売日前の予約受注を優先します。" />
           <Toggle label="保留発生時に通知メール" checked={holdNotify} onChange={setHoldNotify} hint="OFFにすると、欠品保留のみダッシュボードで確認します。" />

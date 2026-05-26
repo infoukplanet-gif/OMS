@@ -110,3 +110,49 @@ describe("allocatePendingOrders — 引当待ち受注の一括引当", () => {
     expect(second.allocated).toBe(0);
   });
 });
+
+describe("allocatePendingOrders — 引当ルール反映", () => {
+  const rules = (over: Partial<import("../allocation/rules").AllocationRules> = {}) => ({
+    warehousePriority: ["本社", "大阪"],
+    allowSplit: true,
+    orderBy: "受注日昇順" as const,
+    ...over,
+  });
+
+  it("拠点優先順に従って shortage リトライの引当先倉庫を選ぶ", () => {
+    // 同一 SKU が大阪と本社にある。優先は本社。
+    const o = { id: "ORD-1", status: "引当待ち", inventoryShortage: true, allocation: [{ sku: "SKU-1", warehouse: "どこか", qty: 2 }] } as unknown as OrderRecord;
+    const deps: AllocateOrdersDeps = {
+      orderStore: createOrderStore([o]),
+      inventoryStore: createInventoryStore([
+        { sku: "SKU-1", warehouse: "大阪", onHand: 10, allocated: 0, constant: 0, reorder: 0, lot: 1 },
+        { sku: "SKU-1", warehouse: "本社", onHand: 10, allocated: 0, constant: 0, reorder: 0, lot: 1 },
+      ]),
+    };
+    const result = allocatePendingOrders(deps, { rules: rules() });
+    expect(result.allocated).toBe(1);
+    // 本社（優先）の allocated が増え、大阪は据え置き
+    const inv = deps.inventoryStore.getState();
+    expect(inv.find((r) => r.warehouse === "本社")?.allocated).toBe(2);
+    expect(inv.find((r) => r.warehouse === "大阪")?.allocated).toBe(0);
+    // order に確定ラインが書き戻される
+    expect((deps.orderStore.getState()[0].allocation as { warehouse: string }[])[0].warehouse).toBe("本社");
+  });
+
+  it("orderBy=金額降順: 在庫が競合する時、高額受注が先に引き当てる", () => {
+    const small = { id: "SMALL", status: "引当待ち", inventoryShortage: true, amount: 1000, allocation: [{ sku: "SKU-1", warehouse: "x", qty: 2 }] } as unknown as OrderRecord;
+    const big = { id: "BIG", status: "引当待ち", inventoryShortage: true, amount: 99000, allocation: [{ sku: "SKU-1", warehouse: "x", qty: 2 }] } as unknown as OrderRecord;
+    const deps: AllocateOrdersDeps = {
+      orderStore: createOrderStore([small, big]),
+      inventoryStore: createInventoryStore([
+        { sku: "SKU-1", warehouse: "本社", onHand: 2, allocated: 0, constant: 0, reorder: 0, lot: 1 }, // 2個しかない
+      ]),
+    };
+    const result = allocatePendingOrders(deps, { rules: rules({ orderBy: "金額降順" }) });
+    expect(result.allocated).toBe(1);
+    expect(result.shortage).toBe(1);
+    // 高額の BIG が印刷待ち、SMALL は引当待ちのまま
+    expect(deps.orderStore.getState().find((o) => o.id === "BIG")?.status).toBe("印刷待ち");
+    expect(deps.orderStore.getState().find((o) => o.id === "SMALL")?.status).toBe("引当待ち");
+  });
+});

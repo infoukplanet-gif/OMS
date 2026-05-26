@@ -23,6 +23,8 @@ import type { PaymentStore } from "../stores/payment";
 import type { OrderStore } from "../stores/orders";
 import type { ShipmentStore } from "../stores/shipment";
 import type { InventoryStore } from "../stores/inventory";
+import { planOrderAllocation } from "../allocation/plan";
+import { getAllocationRules, type AllocationRules } from "../allocation/rules";
 
 export interface RecordPaymentDeps {
   paymentStore: PaymentStore;
@@ -31,6 +33,8 @@ export interface RecordPaymentDeps {
   inventoryStore: InventoryStore;
   mailQueue: MailQueue;
   autoMailEnabled: AutoMailEnabled;
+  /** 引当ルール（倉庫優先順 / 分割可否）。未指定はグローバル設定を使う。 */
+  rules?: AllocationRules;
 }
 
 export interface RecordPaymentCascadeResult extends EnqueueResult {
@@ -66,6 +70,7 @@ export function applyRecordPaymentCascade(
     mailQueue,
     autoMailEnabled,
   } = deps;
+  const rules = deps.rules ?? getAllocationRules();
 
   const result = paymentStore.applyRecord(paymentId, amount);
   const mailJobs: MailJob[] = [];
@@ -113,21 +118,21 @@ export function applyRecordPaymentCascade(
         if (created.created) shipmentsCreated += 1;
       }
 
-      // confirmPayment cascade で order が引当待ちに到達 → allocateInventory を流す
+      // confirmPayment cascade で order が引当待ちに到達 → ルール適用で在庫引当
       if (orderRes.effects.allocateInventory) {
         const sharedOrder = orderStore
           .getState()
           .find((o) => o.id === orderRes.effects.allocateInventory!.orderId);
-        const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
-        if (allocation && allocation.length > 0) {
-          const cascade = inventoryStore.applyAllocate(allocation);
-          allocated += cascade.appliedCount;
-          const failed = cascade.failedLines.length + cascade.unknownLines.length;
-          if (failed > 0 && cascade.appliedCount === 0) {
-            const shortageRes = orderStore.applyTransition(
-              sharedOrder!.id,
-              "markInventoryShortage",
-            );
+        const demand = sharedOrder?.allocation as AllocationLine[] | undefined;
+        if (sharedOrder && demand && demand.length > 0) {
+          const plan = planOrderAllocation(sharedOrder.id, demand, inventoryStore.getState(), rules);
+          if (plan.ok) {
+            const cascade = inventoryStore.applyAllocate(plan.allocation.lines);
+            allocated += cascade.appliedCount;
+            // 確定した倉庫別ラインを order に書き戻す（出荷確定の在庫消費・取消の解放で同一ラインを使う）
+            orderStore.patch(sharedOrder.id, { allocation: plan.allocation.lines });
+          } else {
+            const shortageRes = orderStore.applyTransition(sharedOrder.id, "markInventoryShortage");
             if (shortageRes.applied) shortageMarked += 1;
           }
         }

@@ -17,6 +17,8 @@ import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { planOrderAllocation } from "@/lib/allocation/plan";
+import { getAllocationRules } from "@/lib/allocation/rules";
 import { shipmentStore } from "@/lib/stores/shipment";
 import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
@@ -194,7 +196,6 @@ export default function OrdersPage() {
     let skipped = 0;
     let allocated = 0;
     let released = 0;
-    let allocateFailed = 0;
     let shortageMarked = 0;
     let shipmentsCreated = 0;
     let refunded = 0;
@@ -221,15 +222,16 @@ export default function OrdersPage() {
         if (created.created) shipmentsCreated++;
       }
 
-      // 在庫 cascade: 当該 Order の allocation lines を読み、inventoryStore に流す
+      // 在庫 cascade: 当該 Order の需要をルール適用で倉庫別に引当て、inventoryStore に流す
       if (result.effects.allocateInventory && before?.allocation) {
-        const cascade = inventoryStore.applyAllocate(before.allocation);
-        allocated += cascade.appliedCount;
-        const failedCount = cascade.failedLines.length + cascade.unknownLines.length;
-        allocateFailed += failedCount;
-
-        // 引当失敗（全 line が失敗）→ markInventoryShortage で在庫不足バッジを立てる
-        if (failedCount > 0 && cascade.appliedCount === 0) {
+        const plan = planOrderAllocation(id, before.allocation, inventoryStore.getState(), getAllocationRules());
+        if (plan.ok) {
+          const cascade = inventoryStore.applyAllocate(plan.allocation.lines);
+          allocated += cascade.appliedCount;
+          // 確定した倉庫別ラインを order に書き戻す（出荷確定の消費・取消の解放で同一ラインを使う）
+          orderStore.patch(id, { allocation: plan.allocation.lines });
+        } else {
+          // 在庫不足 → markInventoryShortage で在庫不足バッジを立てる
           const shortageRes = orderStore.applyTransition(id, "markInventoryShortage");
           if (shortageRes.applied) shortageMarked++;
         }
@@ -273,7 +275,6 @@ export default function OrdersPage() {
       allocated > 0 ? `引当 ${allocated}件` : "",
       released > 0 ? `引当戻し ${released}件` : "",
       shortageMarked > 0 ? `在庫不足マーク ${shortageMarked}件` : "",
-      allocateFailed > 0 && shortageMarked === 0 ? `引当失敗 ${allocateFailed}件` : "",
     ]
       .filter(Boolean)
       .join("・");
@@ -287,7 +288,7 @@ export default function OrdersPage() {
     } else {
       toast.show(
         `${label}: ${applied} 件適用${skipped > 0 ? `・${skipped}件スキップ` : ""}${invLine}${refundLine}${shipLine}${mailLine}`,
-        allocateFailed > 0 || shortageMarked > 0 ? "info" : "success",
+        shortageMarked > 0 ? "info" : "success",
       );
     }
   };
@@ -298,15 +299,21 @@ export default function OrdersPage() {
    * - 失敗時は引き続き在庫不足バッジを維持
    */
   const retryAllocate = (order: Order) => {
-    const cascade = inventoryStore.applyAllocate(order.allocation);
+    const plan = planOrderAllocation(order.id, order.allocation, inventoryStore.getState(), getAllocationRules());
+    if (!plan.ok) {
+      toast.show(`${order.id}: 在庫が依然として不足しています`, "info");
+      return;
+    }
+    const cascade = inventoryStore.applyAllocate(plan.allocation.lines);
     if (cascade.appliedCount === 0) {
       toast.show(`${order.id}: 在庫が依然として不足しています`, "info");
       return;
     }
+    orderStore.patch(order.id, { allocation: plan.allocation.lines });
     const smResult = orderStore.applyTransition(order.id, "allocateInventory");
     if (!smResult.applied) {
       // 万一の不整合（引当待ち以外で再試行された等）。inventory は加算済なので戻す。
-      inventoryStore.applyRelease(order.allocation);
+      inventoryStore.applyRelease(plan.allocation.lines);
       toast.show(`${order.id}: 引当再試行に失敗しました`, "error");
       return;
     }
