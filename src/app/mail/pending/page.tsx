@@ -33,6 +33,7 @@ const triggerLabel: Record<MailTriggerType, string> = {
   "payment-confirmed": "入金確認",
   "payment-reminder-3d": "入金催促（3日超過）",
   "payment-final-call-7d": "最終催告（7日超過）",
+  "follow-up": "フォローアップ（配達完了）",
 };
 
 const triggerBadge: Record<MailTriggerType, string> = {
@@ -41,6 +42,7 @@ const triggerBadge: Record<MailTriggerType, string> = {
   "payment-confirmed": "bg-violet-500/15 text-violet-700",
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",
+  "follow-up": "bg-teal-500/15 text-teal-700",
 };
 
 export default function MailPendingPage() {

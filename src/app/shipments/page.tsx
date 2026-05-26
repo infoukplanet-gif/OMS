@@ -303,6 +303,36 @@ export default function ShipmentsPage() {
     setSelected([]);
   };
 
+  /**
+   * 出荷済み→配送中（markInTransit）/ 配送中→配達完了（markDelivered）への一括遷移。
+   * 配達完了で handler が follow-up メールを emit → mailQueue へ enqueue する。
+   * SM ガードに従い、対象外ステータスはスキップする（冪等）。
+   */
+  const progressShipment = (action: "markInTransit" | "markDelivered", label: string) => {
+    if (selected.length === 0) {
+      toast.show(`${label}する出荷を選択してください`, "error");
+      return;
+    }
+    let succeeded = 0;
+    const mailJobs: MailJob[] = [];
+    for (const id of selected) {
+      const result = shipmentStore.applyTransition(id, action);
+      if (!result.applied) continue;
+      if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
+      succeeded += 1;
+    }
+    if (succeeded === 0) {
+      toast.show(`${label}できる出荷がありません（ステータス不一致）`, "error");
+      setSelected([]);
+      return;
+    }
+    const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
+    const mailLine =
+      mailResult.enqueued > 0 ? ` / フォローメール ${mailResult.enqueued}件enqueue` : "";
+    toast.show(`${succeeded} 件を${label}にしました${mailLine}`, "success");
+    setSelected([]);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -488,8 +518,11 @@ export default function ShipmentsPage() {
                 <button onClick={confirmShipping} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 transition-colors">
                   出荷確定
                 </button>
-                <button onClick={() => toast.show(`${selected.length} 件の配送番号を一括登録します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/15 text-purple-700 hover:bg-purple-500/25 transition-colors">
-                  配送番号一括登録
+                <button onClick={() => progressShipment("markInTransit", "配送中")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/15 text-cyan-700 hover:bg-cyan-500/25 transition-colors">
+                  配送中にする
+                </button>
+                <button onClick={() => progressShipment("markDelivered", "配達完了")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-500/15 text-teal-700 hover:bg-teal-500/25 transition-colors">
+                  配達完了にする
                 </button>
                 <button onClick={() => toast.show(`${selected.length} 件の出荷指示書を発行します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors">
                   出荷指示書

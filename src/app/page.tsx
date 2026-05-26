@@ -161,6 +161,7 @@ const TRIGGER_LABEL: Record<MailTriggerType, string> = {
   "payment-confirmed": "入金確認",
   "payment-reminder-3d": "入金催促",
   "payment-final-call-7d": "最終催告",
+  "follow-up": "フォロー",
 };
 
 const TRIGGER_BADGE: Record<MailTriggerType, string> = {
@@ -169,6 +170,7 @@ const TRIGGER_BADGE: Record<MailTriggerType, string> = {
   "payment-confirmed": "bg-violet-500/15 text-violet-700",
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",
+  "follow-up": "bg-teal-500/15 text-teal-700",
 };
 
 const SALES_TREND_BY_PERIOD: Record<PeriodKey, { labels: string[]; values: number[] }> = {
@@ -254,6 +256,7 @@ export default function Dashboard() {
       "payment-confirmed": 0,
       "payment-reminder-3d": 0,
       "payment-final-call-7d": 0,
+      "follow-up": 0,
     };
     for (const job of liveMailJobs) map[job.triggerType]++;
     return map;

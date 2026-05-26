@@ -19,7 +19,7 @@ export interface ShipmentTransitionEffects {
   /** Shipment キャンセル時の在庫戻し記述子 */
   releaseInventory?: { orderId: string; reason: "shipment-cancelled" };
   /** 自動メール送信記述子（PRD: mail-trigger-v1.md） */
-  sendMail?: { orderId: string; triggerType: "ship-notify"; dedupeKey: string };
+  sendMail?: { orderId: string; triggerType: "ship-notify" | "follow-up"; dedupeKey: string };
 }
 
 interface Options {
@@ -58,6 +58,18 @@ export function onShipmentTransitioned(
         orderId,
         triggerType: "ship-notify",
         dedupeKey: `${orderId}:ship-notify`,
+      };
+    }
+  }
+
+  // 配達完了到達 → フォローアップメール（到着確認・レビュー誘導）
+  if (before.status !== "配達完了" && after.status === "配達完了") {
+    const orderId = after.orderIds[0];
+    if (orderId !== undefined) {
+      effects.sendMail = {
+        orderId,
+        triggerType: "follow-up",
+        dedupeKey: `${orderId}:follow-up`,
       };
     }
   }

@@ -193,6 +193,41 @@ describe("onShipmentTransitioned — ship-notify mail trigger", () => {
   });
 });
 
+describe("onShipmentTransitioned — follow-up mail trigger (配達完了)", () => {
+  it("returns sendMail(follow-up) when entering 配達完了", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "配送中" }),
+      shipment({ status: "配達完了" }),
+    );
+    expect(effects.sendMail).toEqual({
+      orderId: "ORD-001",
+      triggerType: "follow-up",
+      dedupeKey: "ORD-001:follow-up",
+    });
+  });
+
+  it("does NOT return sendMail when already 配達完了 (no change)", () => {
+    const same = shipment({ status: "配達完了" });
+    expect(onShipmentTransitioned(same, same).sendMail).toBeUndefined();
+  });
+
+  it("does NOT emit follow-up on 配送中 arrival (markInTransit はメールなし)", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷済み" }),
+      shipment({ status: "配送中" }),
+    );
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT return sendMail when 配達完了 but no orderId", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "配送中", orderIds: [] }),
+      shipment({ status: "配達完了", orderIds: [] }),
+    );
+    expect(effects.sendMail).toBeUndefined();
+  });
+});
+
 describe("onShipmentTransitioned — purity and other transitions", () => {
   it("returns an empty effects object for transitions without cross-domain consequences", () => {
     const effects = onShipmentTransitioned(
