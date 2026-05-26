@@ -17,6 +17,7 @@ import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore, type ShipmentRecord } from "@/lib/stores/shipment";
+import { applyConfirmShipmentCascade } from "@/lib/cascades/confirm-shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
@@ -230,40 +231,26 @@ export default function ShipmentsPage() {
     let cascadeSkipped = 0;
     let consumed = 0;
     let consumeFailed = 0;
-    const mailJobs: MailJob[] = [];
+    let enqueued = 0;
+    let duplicateSkipped = 0;
+    let disabledSkipped = 0;
 
     for (const id of selected) {
-      const tracking = shipmentStore.getState().find((s) => s.id === id)?.trackingNumber;
-      const result = shipmentStore.applyTransition(id, "confirmShipment", {
-        trackingNumber: tracking,
+      const result = applyConfirmShipmentCascade(id, {
+        shipmentStore,
+        orderStore,
+        inventoryStore,
+        mailQueue,
+        autoMailEnabled: getAutoMailEnabled(),
       });
       if (!result.applied) continue;
-
-      if (result.effects.sendMail) mailJobs.push(result.effects.sendMail);
-
-      // cascadeOrderAction (registerShipment) を shared orderStore に流す
-      if (result.effects.cascadeOrderAction) {
-        const r = orderStore.applyTransition(
-          result.effects.cascadeOrderAction.orderId,
-          result.effects.cascadeOrderAction.action,
-        );
-        if (r.applied) cascadeApplied += 1;
-        else cascadeSkipped += 1;
-      }
-
-      // 在庫消費: 対応する Order の allocation を onHand + allocated 同時減算で確定
-      if (result.effects.consumeInventory) {
-        const sharedOrder = orderStore
-          .getState()
-          .find((o) => o.id === result.effects.consumeInventory!.orderId);
-        const allocation = sharedOrder?.allocation as AllocationLine[] | undefined;
-        if (allocation && allocation.length > 0) {
-          const cascade = inventoryStore.applyConsume(allocation);
-          consumed += cascade.appliedCount;
-          consumeFailed += cascade.failedLines.length;
-        }
-      }
-
+      cascadeApplied += result.cascadeApplied;
+      cascadeSkipped += result.cascadeSkipped;
+      consumed += result.consumed;
+      consumeFailed += result.consumeFailed;
+      enqueued += result.enqueued;
+      duplicateSkipped += result.duplicateSkipped;
+      disabledSkipped += result.disabledSkipped;
       succeeded += 1;
     }
 
@@ -273,11 +260,10 @@ export default function ShipmentsPage() {
       return;
     }
 
-    const mailResult = mailQueue.enqueueAll(mailJobs, getAutoMailEnabled());
     const mailDetail = [
-      mailResult.enqueued > 0 ? `enqueue ${mailResult.enqueued}件` : "",
-      mailResult.duplicateSkipped > 0 ? `重複 ${mailResult.duplicateSkipped}件` : "",
-      mailResult.disabledSkipped > 0 ? `無効化 ${mailResult.disabledSkipped}件` : "",
+      enqueued > 0 ? `enqueue ${enqueued}件` : "",
+      duplicateSkipped > 0 ? `重複 ${duplicateSkipped}件` : "",
+      disabledSkipped > 0 ? `無効化 ${disabledSkipped}件` : "",
     ]
       .filter(Boolean)
       .join("・");
