@@ -1,11 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { allocatePendingOrders } from "@/lib/cascades/allocate-orders";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
+
+type RunLogEntry = { id: number; at: string; job: string; success: number; partial: number; failed: number };
+
+function nowStamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 type Job = {
   id: string;
@@ -26,7 +39,7 @@ const INITIAL_JOBS: Job[] = [
   { id: "J-05", name: "卸先優先引当", schedule: "毎日 08:30", target: "卸先受注のみ", enabled: true, lastRun: "2026-04-25 08:30", result: "成功", count: 28 },
 ];
 
-const RECENT_LOG = [
+const RECENT_LOG: RunLogEntry[] = [
   { id: 1, at: "2026-04-25 13:00", job: "昼次自動引当", success: 58, partial: 0, failed: 0 },
   { id: 2, at: "2026-04-25 09:00", job: "朝次自動引当", success: 140, partial: 2, failed: 0 },
   { id: 3, at: "2026-04-25 08:30", job: "卸先優先引当", success: 28, partial: 0, failed: 0 },
@@ -43,9 +56,53 @@ export default function AllocationAutoPage() {
   const [vipPriority, setVipPriority] = useState(true);
   const [reservePriority, setReservePriority] = useState(true);
   const [holdNotify, setHoldNotify] = useState(true);
+  const [runLog, setRunLog] = useState<RunLogEntry[]>(RECENT_LOG);
+
+  // 引当は共有 orderStore/inventoryStore 上で実行する。両方を seed。
+  useEffect(() => {
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+    if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+  }, []);
+
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS,
+  ) as ReadonlyArray<OrderRecord>;
+
+  // ライブ KPI（共有 orderStore 由来）
+  const live = useMemo(() => {
+    const pending = orders.filter((o) => o.status === "引当待ち");
+    return {
+      pending: pending.length,
+      shortage: pending.filter((o) => o.inventoryShortage === true).length,
+      printReady: orders.filter((o) => o.status === "印刷待ち").length,
+    };
+  }, [orders]);
 
   const toggleJob = (id: string) =>
     setJobs(jobs.map((j) => (j.id === id ? { ...j, enabled: !j.enabled } : j)));
+
+  /**
+   * 引当待ち受注を一括引当する。成功は印刷待ちへ進み、在庫不足は欠品マーク。
+   * 実行結果を直近ログに追記する（共有 store を実際に更新）。
+   */
+  const runAllocation = (jobName: string) => {
+    const before = orderStore.getState().filter((o) => o.status === "引当待ち").length;
+    if (before === 0) {
+      toast.show("引当待ちの受注がありません", "info");
+      return;
+    }
+    const res = allocatePendingOrders({ orderStore, inventoryStore });
+    setRunLog((prev) => [
+      { id: Date.now(), at: nowStamp(), job: jobName, success: res.allocated, partial: 0, failed: res.shortage },
+      ...prev,
+    ]);
+    toast.show(
+      `${jobName}: ${res.processed}件処理（引当成功 ${res.allocated}件 / 在庫不足 ${res.shortage}件）`,
+      res.shortage > 0 ? "info" : "success",
+    );
+  };
 
   return (
     <div className="space-y-5">
@@ -60,12 +117,12 @@ export default function AllocationAutoPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">
             稼働ジョブ: <span className="font-semibold text-emerald-700">{jobs.filter((j) => j.enabled).length}</span> ／
-            本日の引当件数: <span className="font-semibold">{jobs.reduce((s, j) => s + j.count, 0)}</span>
+            引当待ち: <span className="font-semibold text-amber-700">{live.pending}</span> 件
           </p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => toast.show("マニュアル引当を実行しました", "success")}
+            onClick={() => runAllocation("マニュアル実行")}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
           >
             <Play className="h-4 w-4" />マニュアル実行
@@ -77,10 +134,10 @@ export default function AllocationAutoPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <GlassCard className="p-4"><p className="text-sm text-gray-500">本日の引当件数</p><p className="mt-2 text-3xl font-bold text-emerald-700 tabular-nums">{jobs.reduce((s, j) => s + j.count, 0)}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-sm text-gray-500">引当待ち（未処理）</p><p className="mt-2 text-3xl font-bold text-amber-700 tabular-nums">{live.pending}</p></GlassCard>
         <GlassCard className="p-4"><p className="text-sm text-gray-500">稼働ジョブ</p><p className="mt-2 text-3xl font-bold text-blue-700 tabular-nums">{jobs.filter((j) => j.enabled).length}<span className="text-sm font-normal ml-1">/{jobs.length}</span></p></GlassCard>
-        <GlassCard className="p-4"><p className="text-sm text-gray-500">部分引当</p><p className="mt-2 text-3xl font-bold text-amber-700 tabular-nums">3</p></GlassCard>
-        <GlassCard className="p-4"><p className="text-sm text-gray-500">失敗（要確認）</p><p className="mt-2 text-3xl font-bold text-red-700 tabular-nums">1</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-sm text-gray-500">印刷待ち到達</p><p className="mt-2 text-3xl font-bold text-emerald-700 tabular-nums">{live.printReady}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-sm text-gray-500">在庫不足（要確認）</p><p className="mt-2 text-3xl font-bold text-red-700 tabular-nums">{live.shortage}</p></GlassCard>
       </div>
 
       <GlassCard>
@@ -186,7 +243,7 @@ export default function AllocationAutoPage() {
                   <td className="px-4 py-3 text-right tabular-nums text-gray-800">{j.count}</td>
                   <td className="px-4 py-3 text-center">
                     <button
-                      onClick={() => toast.show(`${j.name} を即時実行しました`, "success")}
+                      onClick={() => runAllocation(j.name)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                     >
                       即時実行
@@ -217,7 +274,7 @@ export default function AllocationAutoPage() {
               </tr>
             </thead>
             <tbody>
-              {RECENT_LOG.map((l) => (
+              {runLog.map((l) => (
                 <tr key={l.id} className="border-t border-white/30 hover:bg-white/40">
                   <td className="px-3 py-2 text-xs text-gray-700 tabular-nums">{l.at}</td>
                   <td className="px-3 py-2 text-gray-700 text-xs">{l.job}</td>
