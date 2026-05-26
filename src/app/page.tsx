@@ -28,7 +28,13 @@ import {
   orderStatusBadge,
   type OrderStatus,
 } from "@/lib/state-machines/order";
+import { freeStock } from "@/lib/state-machines/inventory";
 import { mailQueue, type MailJob, type MailTriggerType } from "@/lib/mail/queue";
+import { orderStore } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { shipmentStore } from "@/lib/stores/shipment";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 
 type PeriodKey = "today" | "week" | "month" | "ytd";
 
@@ -232,6 +238,24 @@ const STAFF_PERFORMANCE = [
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
+/**
+ * 共有ストア（order/inventory/shipment）から現在の業務状況を集計する。
+ * 過去30日スナップショット（ORDER_STATUS_COUNTS）とは別の「いまの稼働状態」。
+ * 各業務画面で処理を進めると値が更新される。
+ */
+function computeLiveOps() {
+  const orders = orderStore.getState();
+  const byStatus = (s: OrderStatus) => orders.filter((o) => o.status === s).length;
+  return {
+    paymentWait: byStatus("入金待ち"),
+    allocWait: byStatus("引当待ち"),
+    shortage: orders.filter((o) => o.status === "引当待ち" && o.inventoryShortage === true).length,
+    printWait: byStatus("印刷待ち"),
+    awaitingShip: shipmentStore.getState().filter((s) => s.status === "出荷待ち").length,
+    lowStock: inventoryStore.getState().filter((r) => freeStock(r) <= r.reorder).length,
+  };
+}
+
 export default function Dashboard() {
   const [period, setPeriod] = useState<PeriodKey>("today");
 
@@ -248,6 +272,22 @@ export default function Dashboard() {
   const [liveMailJobs, setLiveMailJobs] = useState<MailJob[]>([]);
   useEffect(() => {
     setLiveMailJobs(mailQueue.snapshot());
+  }, []);
+
+  // 共有ストアを seed（ダッシュボードが最初に開かれても業務状況が出るように）。
+  // 各業務画面と同じ singleton を共有し、処理を進めると下のカードが更新される。
+  const [liveOps, setLiveOps] = useState(() => computeLiveOps());
+  useEffect(() => {
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+    if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+    const recompute = () => setLiveOps(computeLiveOps());
+    recompute();
+    const unsubs = [
+      orderStore.subscribe(recompute),
+      inventoryStore.subscribe(recompute),
+      shipmentStore.subscribe(recompute),
+    ];
+    return () => unsubs.forEach((u) => u());
   }, []);
   const liveMailByTrigger = useMemo(() => {
     const map: Record<MailTriggerType, number> = {
@@ -331,6 +371,34 @@ export default function Dashboard() {
           </div>
         </GlassCard>
       )}
+
+      {/* リアルタイム業務状況（共有ストア由来。処理を進めると更新される） */}
+      <GlassCard>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-amber-500" />
+            <h2 className="text-base font-semibold text-gray-800">リアルタイム業務状況</h2>
+            <HelpHint>
+              受注/出荷/在庫の共有ストアから集計した「いまの稼働状態」。過去30日スナップショットとは別物で、入金・引当・出荷確定などの処理を進めると即座に更新されます。
+            </HelpHint>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {[
+            { label: "入金待ち", value: liveOps.paymentWait, href: "/payments", tone: "text-red-700" },
+            { label: "引当待ち", value: liveOps.allocWait, href: "/products/allocation/auto", tone: "text-amber-700" },
+            { label: "在庫不足", value: liveOps.shortage, href: "/shipments/shortage", tone: "text-rose-700" },
+            { label: "印刷待ち", value: liveOps.printWait, href: "/orders", tone: "text-blue-700" },
+            { label: "出荷待ち", value: liveOps.awaitingShip, href: "/shipments", tone: "text-orange-700" },
+            { label: "在庫アラートSKU", value: liveOps.lowStock, href: "/products/inventory", tone: "text-purple-700" },
+          ].map((t) => (
+            <Link key={t.label} href={t.href} className="rounded-xl p-3 bg-white/40 border border-white/50 hover:bg-white/60 transition-colors">
+              <div className="text-xs text-gray-500">{t.label}</div>
+              <div className={cn("text-2xl font-bold tabular-nums mt-1", t.tone)}>{t.value}</div>
+            </Link>
+          ))}
+        </div>
+      </GlassCard>
 
       {/* セッション内 自動メールキュー（state-machine handlers が enqueue した分） */}
       <GlassCard>
