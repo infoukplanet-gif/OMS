@@ -15,6 +15,7 @@ import type { AutoMailEnabled, EnqueueResult, MailJob, MailQueue } from "../mail
 import type { ShipmentStore } from "../stores/shipment";
 import type { OrderStore } from "../stores/orders";
 import type { InventoryStore } from "../stores/inventory";
+import type { SalesStore } from "../stores/sales";
 
 export interface ConfirmShipmentDeps {
   shipmentStore: ShipmentStore;
@@ -22,6 +23,11 @@ export interface ConfirmShipmentDeps {
   inventoryStore: InventoryStore;
   mailQueue: MailQueue;
   autoMailEnabled: AutoMailEnabled;
+  /**
+   * 確定売上台帳（任意）。渡された場合、出荷確定時に受注金額を出荷ベースの確定売上として計上する。
+   * shipmentId が冪等キーなので、同一出荷の再確定でも二重計上されない。
+   */
+  salesStore?: SalesStore;
 }
 
 export interface ConfirmShipmentCascadeResult extends EnqueueResult {
@@ -35,6 +41,8 @@ export interface ConfirmShipmentCascadeResult extends EnqueueResult {
   consumed: number;
   /** 在庫消費が SM ガードで失敗した明細数。 */
   consumeFailed: number;
+  /** 出荷ベースで台帳に計上された確定売上額（計上なしは 0）。 */
+  revenueRecognized: number;
 }
 
 /**
@@ -47,7 +55,7 @@ export function applyConfirmShipmentCascade(
   shipmentId: string,
   deps: ConfirmShipmentDeps,
 ): ConfirmShipmentCascadeResult {
-  const { shipmentStore, orderStore, inventoryStore, mailQueue, autoMailEnabled } = deps;
+  const { shipmentStore, orderStore, inventoryStore, salesStore, mailQueue, autoMailEnabled } = deps;
 
   const tracking = shipmentStore.getState().find((s) => s.id === shipmentId)?.trackingNumber;
   const result = shipmentStore.applyTransition(shipmentId, "confirmShipment", {
@@ -59,6 +67,7 @@ export function applyConfirmShipmentCascade(
   let cascadeSkipped = 0;
   let consumed = 0;
   let consumeFailed = 0;
+  let revenueRecognized = 0;
 
   if (!result.applied) {
     return {
@@ -68,6 +77,7 @@ export function applyConfirmShipmentCascade(
       cascadeSkipped,
       consumed,
       consumeFailed,
+      revenueRecognized,
     };
   }
 
@@ -96,6 +106,26 @@ export function applyConfirmShipmentCascade(
     }
   }
 
+  // 売上計上: 出荷確定で受注金額を出荷ベースの確定売上として台帳へ積む
+  const recognizedOrderId =
+    result.effects.cascadeOrderAction?.orderId ?? result.effects.consumeInventory?.orderId;
+  if (salesStore && recognizedOrderId) {
+    const order = orderStore.getState().find((o) => o.id === recognizedOrderId);
+    const amount = Number(order?.amount ?? 0);
+    if (order && amount > 0) {
+      const recognizedAt = String(order.date ?? "").split(" ")[0];
+      const recognized = salesStore.recognize({
+        shipmentId,
+        orderId: order.id,
+        shop: String(order.shop ?? ""),
+        customer: String(order.customer ?? ""),
+        amount,
+        recognizedAt,
+      });
+      if (recognized.applied) revenueRecognized += amount;
+    }
+  }
+
   return {
     applied: true,
     ...mailQueue.enqueueAll(mailJobs, autoMailEnabled),
@@ -103,5 +133,6 @@ export function applyConfirmShipmentCascade(
     cascadeSkipped,
     consumed,
     consumeFailed,
+    revenueRecognized,
   };
 }
