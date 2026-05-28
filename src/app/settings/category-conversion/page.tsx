@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { ArrowRight, Edit, Plus, Search, Trash2 } from "lucide-react";
+import { productStore } from "@/lib/stores/product";
+import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
+import { recalculateProductCategories, type ConversionRule } from "@/lib/calculations/category-conversion";
+import { ArrowRight, Edit, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 type Rule = {
   id: string;
@@ -37,6 +40,38 @@ const targets = ["アパレル/トップス/Tシャツ", "アパレル/トップ
 export default function CategoryConversionPage() {
   const toast = useToast();
   const [items, setItems] = useState(initial);
+
+  // 商品マスタが空なら seed しておく（再計算ボタンが空回りしないよう）。
+  useEffect(() => {
+    if (productStore.getState().length === 0) {
+      productStore.setItems(INITIAL_PRODUCTS);
+    }
+  }, []);
+
+  /**
+   * 取込済み商品のカテゴリを現在のルールセットで再計算する。
+   * 変更があれば productStore.setItems で書き戻し、購読中の商品一覧画面もライブで更新される。
+   */
+  const recalcCategories = () => {
+    const rules: ConversionRule[] = items.map((r) => ({
+      id: r.id,
+      from: r.from,
+      fromSource: r.fromSource,
+      to: r.to,
+      matchType: r.matchType,
+      priority: r.priority,
+      enabled: r.enabled,
+    }));
+    const products = productStore.getState();
+    const result = recalculateProductCategories(products, rules);
+    if (result.changedCount === 0) {
+      toast.show("再計算: 変更が必要な商品はありませんでした", "info");
+      return;
+    }
+    productStore.setItems(result.updated);
+    toast.show(`${result.changedCount} 件の商品カテゴリを再計算しました`, "success");
+  };
+
   const [keyword, setKeyword] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [matchFilter, setMatchFilter] = useState("all");
@@ -68,6 +103,9 @@ export default function CategoryConversionPage() {
         </div>
         <div className="flex gap-2">
           <SecondaryButton onClick={() => toast.show("変換ルールをCSVで書き出しました", "success")}>CSV書き出し</SecondaryButton>
+          <SecondaryButton onClick={recalcCategories}>
+            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />取込済み商品を再計算</span>
+          </SecondaryButton>
           <PrimaryButton onClick={() => toast.show("新規ルールを追加します", "info")}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />新規ルール</span>
           </PrimaryButton>
