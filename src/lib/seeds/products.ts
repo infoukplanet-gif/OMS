@@ -19,6 +19,10 @@ export type SeededProduct = ProductRecord & {
   stock: number;
   safety: number;
   updated: string;
+  /** 取込元モールの外部カテゴリ表記（カテゴリ変換ルールで再計算される）。 */
+  externalCategory?: string;
+  /** 取込元（楽天/Amazon/Yahoo!/自社EC/FAX手入力 等）。 */
+  fromSource?: string;
 };
 
 export const INITIAL_PRODUCTS: SeededProduct[] = [
@@ -30,6 +34,6 @@ export const INITIAL_PRODUCTS: SeededProduct[] = [
   { id: "P006", code: "TWS-006", name: "完全ワイヤレスイヤホン", category: "家電", skus: 2, price: 8_900, cost: 3_200, stock: 0, safety: 5, status: "販売中", updated: "2026/04/25" },
   { id: "P007", code: "CHG-007", name: "急速充電器 65W", category: "家電", skus: 1, price: 3_480, cost: 1_100, stock: 67, safety: 15, status: "販売中", updated: "2026/04/25" },
   { id: "P008", code: "OLD-008", name: "旧モデルケーブル 1m", category: "家電", skus: 1, price: 680, cost: 200, stock: 234, safety: 30, status: "廃番", updated: "2026/03/15" },
-  { id: "P009", code: "TEE-009", name: "コットンTシャツ", category: "アパレル", skus: 6, price: 2_980, cost: 980, stock: 350, safety: 50, status: "販売中", updated: "2026/04/20" },
-  { id: "P010", code: "STP-010", name: "停止中スマホスタンド", category: "雑貨", skus: 1, price: 1_980, cost: 600, stock: 18, safety: 5, status: "停止中", updated: "2026/04/01" },
+  { id: "P009", code: "TEE-009", name: "コットンTシャツ", category: "アパレル", skus: 6, price: 2_980, cost: 980, stock: 350, safety: 50, status: "販売中", updated: "2026/04/20", externalCategory: "レディース > トップス > Tシャツ", fromSource: "楽天" },
+  { id: "P010", code: "STP-010", name: "停止中スマホスタンド", category: "雑貨", skus: 1, price: 1_980, cost: 600, stock: 18, safety: 5, status: "停止中", updated: "2026/04/01", externalCategory: "Beauty > Skincare", fromSource: "Amazon" },
 ];
