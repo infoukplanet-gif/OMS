@@ -16,6 +16,7 @@ import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { salesStore } from "@/lib/stores/sales";
 import { shipmentStore, type ShipmentRecord } from "@/lib/stores/shipment";
 import { applyConfirmShipmentCascade } from "@/lib/cascades/confirm-shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
@@ -234,12 +235,14 @@ export default function ShipmentsPage() {
     let enqueued = 0;
     let duplicateSkipped = 0;
     let disabledSkipped = 0;
+    let revenueRecognized = 0;
 
     for (const id of selected) {
       const result = applyConfirmShipmentCascade(id, {
         shipmentStore,
         orderStore,
         inventoryStore,
+        salesStore,
         mailQueue,
         autoMailEnabled: getAutoMailEnabled(),
       });
@@ -251,6 +254,7 @@ export default function ShipmentsPage() {
       enqueued += result.enqueued;
       duplicateSkipped += result.duplicateSkipped;
       disabledSkipped += result.disabledSkipped;
+      revenueRecognized += result.revenueRecognized;
       succeeded += 1;
     }
 
@@ -282,8 +286,11 @@ export default function ShipmentsPage() {
       .join("・");
     const invLine = invDetail ? ` / ${invDetail}` : "";
 
+    const revenueLine =
+      revenueRecognized > 0 ? ` / 売上計上 ¥${revenueRecognized.toLocaleString()}` : "";
+
     toast.show(
-      `${succeeded} 件を出荷確定しました${cascadeLine}${invLine}${mailLine}`,
+      `${succeeded} 件を出荷確定しました${cascadeLine}${invLine}${revenueLine}${mailLine}`,
       consumeFailed > 0 ? "info" : "success",
     );
     setSelected([]);

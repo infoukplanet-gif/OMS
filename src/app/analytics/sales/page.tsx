@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
-import { ArrowDown, ArrowUp, Download, TrendingDown, TrendingUp } from "lucide-react";
+import { salesStore, type SalesEntry } from "@/lib/stores/sales";
+import { ArrowDown, ArrowUp, Download, Truck, TrendingDown, TrendingUp } from "lucide-react";
 
 type DailyRow = {
   date: string;
@@ -42,8 +43,28 @@ const channels = Array.from(new Set(data.map((d) => d.channel)));
 
 type SortKey = "orders" | "amount" | "gross";
 
+const EMPTY_LEDGER: readonly SalesEntry[] = [];
+
 export default function AnalyticsSalesPage() {
   const toast = useToast();
+
+  // 出荷確定で計上された確定売上台帳（出荷確定 cascade が salesStore.recognize で積む）
+  const ledger = useSyncExternalStore(
+    salesStore.subscribe,
+    salesStore.getState,
+    () => EMPTY_LEDGER,
+  );
+  const ledgerTotals = useMemo(() => {
+    const amount = ledger.reduce((s, e) => s + e.amount, 0);
+    const shops = new Set(ledger.map((e) => e.shop)).size;
+    return {
+      amount,
+      count: ledger.length,
+      shops,
+      avg: ledger.length > 0 ? Math.round(amount / ledger.length) : 0,
+    };
+  }, [ledger]);
+
   const [shop, setShop] = useState("all");
   const [channel, setChannel] = useState("all");
   const [groupBy, setGroupBy] = useState<"none" | "shop" | "date">("none");
@@ -131,6 +152,66 @@ export default function AnalyticsSalesPage() {
           <div className="text-xs text-gray-500 mt-0.5">返品額 ¥{totals.returnAmount.toLocaleString()}</div>
         </GlassCard>
       </div>
+
+      <GlassCard className="p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/40 bg-white/40 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Truck className="h-4 w-4 text-blue-500" />
+            <span className="text-sm font-semibold text-gray-800">確定売上（出荷ベース）</span>
+            <HelpHint>出荷確定の連鎖で計上された確定売上です。上の集計（日次推計）とは別に、実際に出荷が確定した受注の売上だけをリアルタイムに積み上げます。</HelpHint>
+          </div>
+          <span className="text-xs text-gray-500">{ledgerTotals.count} 件計上</span>
+        </div>
+
+        {ledger.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-500">
+            まだ確定売上はありません。出荷管理で出荷を確定すると、ここに売上が計上されます。
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-white/40">
+              <div className="bg-white/50 px-4 py-3">
+                <div className="text-xs text-gray-500">確定売上合計</div>
+                <div className="text-xl font-bold text-blue-600 mt-0.5">¥{ledgerTotals.amount.toLocaleString()}</div>
+              </div>
+              <div className="bg-white/50 px-4 py-3">
+                <div className="text-xs text-gray-500">計上件数</div>
+                <div className="text-xl font-bold text-gray-800 mt-0.5">{ledgerTotals.count.toLocaleString()}</div>
+              </div>
+              <div className="bg-white/50 px-4 py-3">
+                <div className="text-xs text-gray-500">平均単価</div>
+                <div className="text-xl font-bold text-gray-800 mt-0.5">¥{ledgerTotals.avg.toLocaleString()}</div>
+              </div>
+              <div className="bg-white/50 px-4 py-3">
+                <div className="text-xs text-gray-500">店舗数</div>
+                <div className="text-xl font-bold text-gray-800 mt-0.5">{ledgerTotals.shops}</div>
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-white/40 border-y border-white/40">
+                  <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">計上日</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">受注番号</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">店舗</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">顧客</th>
+                  <th className="px-3 py-2.5 text-right text-xs font-medium text-gray-500">確定売上</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...ledger].reverse().map((e) => (
+                  <tr key={e.shipmentId} className="border-t border-white/30 hover:bg-white/40">
+                    <td className="px-3 py-2.5 text-gray-700 text-xs">{e.recognizedAt}</td>
+                    <td className="px-3 py-2.5 text-gray-800 text-xs font-medium">{e.orderId}</td>
+                    <td className="px-3 py-2.5 text-gray-700">{e.shop}</td>
+                    <td className="px-3 py-2.5 text-gray-700">{e.customer}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">¥{e.amount.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </GlassCard>
 
       <GlassCard>
         <div className="flex flex-wrap items-center gap-3">

@@ -143,7 +143,15 @@ const menuItems: MenuItem[] = [
       { label: "送信履歴", href: "/mail/history" },
     ],
   },
-  { icon: BarChart3, label: "分析", href: "/analytics" },
+  {
+    icon: BarChart3, label: "分析", href: "/analytics",
+    children: [
+      { label: "分析ダッシュボード", href: "/analytics" },
+      { label: "売上分析", href: "/analytics/sales" },
+      { label: "商品別分析", href: "/analytics/products" },
+      { label: "CSVダウンロード", href: "/analytics/csv-download" },
+    ],
+  },
   {
     icon: Settings, label: "設定", href: "/settings",
     children: [
