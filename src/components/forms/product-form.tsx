@@ -1,8 +1,11 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { productStore, type ProductRecord } from "@/lib/stores/product";
 import { Upload, Plus, Trash2, Package, Tag, DollarSign, Box, Truck, Image as ImageIcon, Globe, FileText } from "lucide-react";
 
 const Field = ({ label, required, placeholder, className, type = "text", defaultValue }: { label: string; required?: boolean; placeholder?: string; className?: string; type?: string; defaultValue?: string }) => (
@@ -41,7 +44,46 @@ interface ProductFormProps {
 
 export function ProductForm({ mode }: ProductFormProps) {
   const isEdit = mode === "edit";
+  const toast = useToast();
+  const router = useRouter();
   const [skus, setSkus] = useState([1, 2]);
+
+  // 商品マスタの必須項目（コード/商品名/カテゴリ/単価/原価/状態）を controlled で管理し、
+  // 保存ボタンで productStore.upsert に流す。
+  // 残りの装飾フィールドは v1 では非保存のままにしておき、v2 で順次拡張する。
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState<string>("オーディオ");
+  const [price, setPrice] = useState<string>("");
+  const [cost, setCost] = useState<string>("");
+  const [status, setStatus] = useState<ProductRecord["status"]>("販売中");
+
+  const handleSave = () => {
+    const trimmedCode = code.trim();
+    const trimmedName = name.trim();
+    if (!trimmedCode) {
+      toast.show("商品コードを入力してください", "error");
+      return;
+    }
+    if (!trimmedName) {
+      toast.show("商品名を入力してください", "error");
+      return;
+    }
+    const record: ProductRecord = {
+      code: trimmedCode,
+      name: trimmedName,
+      category,
+      price: Number(price) || 0,
+      cost: Number(cost) || 0,
+      status,
+    };
+    const r = productStore.upsert(record);
+    toast.show(
+      `${trimmedName}（${trimmedCode}）を${r.created ? "登録" : "更新"}しました`,
+      "success",
+    );
+    router.push("/products");
+  };
 
   return (
     <div className="space-y-5">
@@ -49,8 +91,18 @@ export function ProductForm({ mode }: ProductFormProps) {
         <h1 className="text-2xl font-bold text-gray-800">{isEdit ? "商品編集" : "商品登録"}</h1>
         <div className="flex gap-2">
           {isEdit && <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">削除</button>}
-          <button className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">キャンセル</button>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all">{isEdit ? "更新" : "保存"}</button>
+          <button
+            onClick={() => router.push("/products")}
+            className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
+            キャンセル
+          </button>
+          <button
+            onClick={handleSave}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+          >
+            {isEdit ? "更新" : "保存"}
+          </button>
         </div>
       </div>
       {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 商品一覧 &gt; <span className="text-blue-600">ワイヤレスイヤホン Pro</span> &gt; 編集</div>}
@@ -59,9 +111,25 @@ export function ProductForm({ mode }: ProductFormProps) {
       <GlassCard>
         <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Package className="h-4 w-4 text-gray-400" />基本情報</h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="商品コード" required placeholder="WEP-001" />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">商品コード <span className="text-red-500 text-xs">*必須</span></label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="WEP-001"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <Field label="JANコード" placeholder="4901234567890" />
-          <Field label="商品名" required placeholder="ワイヤレスイヤホン Pro" className="col-span-2" />
+          <div className="space-y-1.5 col-span-2">
+            <label className="text-sm font-medium text-gray-700">商品名 <span className="text-red-500 text-xs">*必須</span></label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="ワイヤレスイヤホン Pro"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <Field label="商品名カナ" placeholder="ワイヤレスイヤホン プロ" className="col-span-2" />
           <Field label="英文商品名" placeholder="Wireless Earphones Pro" className="col-span-2" />
           <div className="col-span-4 space-y-1.5">
@@ -79,14 +147,32 @@ export function ProductForm({ mode }: ProductFormProps) {
       <GlassCard>
         <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Tag className="h-4 w-4 text-gray-400" />カテゴリ・分類</h2>
         <div className="grid grid-cols-4 gap-4">
-          <Select label="カテゴリ" required options={["オーディオ", "充電器", "ケーブル", "アクセサリー", "スマホ周辺"]} />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">カテゴリ <span className="text-red-500 text-xs">*必須</span></label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            >
+              {["オーディオ", "充電器", "ケーブル", "アクセサリー", "スマホ周辺", "家電", "雑貨", "アパレル"].map((o) => <option key={o}>{o}</option>)}
+            </select>
+          </div>
           <Select label="サブカテゴリ" options={["イヤホン", "ヘッドホン", "スピーカー"]} />
           <Field label="ブランド" placeholder="SAMPLE BRAND" />
           <Field label="メーカー" placeholder="株式会社サンプル" />
           <Field label="原産国" placeholder="日本/中国/韓国" />
           <Field label="型番" placeholder="SP-WEP-001" />
           <Field label="シリーズ" placeholder="Proシリーズ" />
-          <Select label="ステータス" required options={["販売中", "停止中", "廃番", "予約販売"]} />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">ステータス <span className="text-red-500 text-xs">*必須</span></label>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as ProductRecord["status"])}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            >
+              {(["販売中", "停止中", "廃番"] as const).map((o) => <option key={o}>{o}</option>)}
+            </select>
+          </div>
           <Field label="検索キーワード" placeholder="ワイヤレス,イヤホン,Bluetooth,ノイキャン" className="col-span-4" />
         </div>
       </GlassCard>
@@ -129,8 +215,26 @@ export function ProductForm({ mode }: ProductFormProps) {
       <GlassCard>
         <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><DollarSign className="h-4 w-4 text-gray-400" />価格設定</h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="標準販売価格" required type="number" placeholder="12800" />
-          <Field label="原価" type="number" placeholder="4500" />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">標準販売価格 <span className="text-red-500 text-xs">*必須</span></label>
+            <input
+              type="number"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="12800"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">原価</label>
+            <input
+              type="number"
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              placeholder="4500"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <Field label="希望小売価格" type="number" placeholder="14800" />
           <Field label="参考価格" type="number" placeholder="13800" />
           <Field label="卸価格 A" type="number" placeholder="8000" />

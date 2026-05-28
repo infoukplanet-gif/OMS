@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { productStore } from "@/lib/stores/product";
+import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
 import {
   ChevronLeft,
   ChevronRight,
@@ -30,18 +32,8 @@ type Product = {
   updated: string;
 };
 
-const initial: Product[] = [
-  { id: "P001", code: "WEP-001", name: "ワイヤレスイヤホン Pro", category: "家電", skus: 3, price: 12_800, cost: 4_500, stock: 45, safety: 10, status: "販売中", updated: "2026/04/28" },
-  { id: "P002", code: "UCB-002", name: "USB-Cケーブル 2m", category: "家電", skus: 1, price: 1_280, cost: 320, stock: 8, safety: 15, status: "販売中", updated: "2026/04/27" },
-  { id: "P003", code: "SWB-003", name: "スマートウォッチバンド", category: "雑貨", skus: 5, price: 3_980, cost: 1_200, stock: 5, safety: 10, status: "販売中", updated: "2026/04/27" },
-  { id: "P004", code: "MBT-004", name: "モバイルバッテリー 20000mAh", category: "家電", skus: 2, price: 4_980, cost: 1_800, stock: 2, safety: 8, status: "販売中", updated: "2026/04/26" },
-  { id: "P005", code: "PFS-005", name: "保護フィルム セット", category: "雑貨", skus: 4, price: 1_580, cost: 380, stock: 120, safety: 20, status: "販売中", updated: "2026/04/26" },
-  { id: "P006", code: "TWS-006", name: "完全ワイヤレスイヤホン", category: "家電", skus: 2, price: 8_900, cost: 3_200, stock: 0, safety: 5, status: "販売中", updated: "2026/04/25" },
-  { id: "P007", code: "CHG-007", name: "急速充電器 65W", category: "家電", skus: 1, price: 3_480, cost: 1_100, stock: 67, safety: 15, status: "販売中", updated: "2026/04/25" },
-  { id: "P008", code: "OLD-008", name: "旧モデルケーブル 1m", category: "家電", skus: 1, price: 680, cost: 200, stock: 234, safety: 30, status: "廃番", updated: "2026/03/15" },
-  { id: "P009", code: "TEE-009", name: "コットンTシャツ", category: "アパレル", skus: 6, price: 2_980, cost: 980, stock: 350, safety: 50, status: "販売中", updated: "2026/04/20" },
-  { id: "P010", code: "STP-010", name: "停止中スマホスタンド", category: "雑貨", skus: 1, price: 1_980, cost: 600, stock: 18, safety: 5, status: "停止中", updated: "2026/04/01" },
-];
+// 初期シードは src/lib/seeds/products.ts (INITIAL_PRODUCTS) に集約。
+// productStore に投入され、商品登録フォームや受注作成ページのサジェストと共有される。
 
 const tabs: { label: string; value: "list" | "inventory" | "set" }[] = [
   { label: "商品一覧", value: "list" },
@@ -63,7 +55,19 @@ const statusMap: Record<ProductStatus, string> = {
 
 export default function ProductsPage() {
   const toast = useToast();
-  const [items] = useState(initial);
+
+  // 共有 productStore を購読。商品登録（/products/new）で追加・更新された商品も即座に
+  // ここに反映される。受注作成画面の商品サジェストとも同じインスタンスを共有する。
+  useEffect(() => {
+    if (productStore.getState().length === 0) {
+      productStore.setItems(INITIAL_PRODUCTS);
+    }
+  }, []);
+  const items = useSyncExternalStore(
+    (cb) => productStore.subscribe(cb),
+    () => productStore.getState() as readonly Product[],
+    () => INITIAL_PRODUCTS as readonly Product[],
+  ) as readonly Product[];
   const [activeTab, setActiveTab] = useState<"list" | "inventory" | "set">("list");
   const [selected, setSelected] = useState<string[]>([]);
   const [keyword, setKeyword] = useState("");

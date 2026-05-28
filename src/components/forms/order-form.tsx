@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -7,8 +7,10 @@ import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui
 import { cn } from "@/lib/utils";
 import { Plus, Trash2, ShoppingCart, User, MapPin, CreditCard, FileText, Warehouse } from "lucide-react";
 import { orderStore } from "@/lib/stores/orders";
+import { productStore, type ProductRecord } from "@/lib/stores/product";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
+import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
 import type { AllocationLine } from "@/lib/state-machines/inventory";
 
 const STORES = ["楽天市場", "Amazon", "Yahoo!ショッピング", "Shopify", "自社EC", "卸売", "電話受注"];
@@ -42,6 +44,25 @@ export function OrderForm({ mode }: OrderFormProps) {
   const toast = useToast();
   const router = useRouter();
   const isEdit = mode === "edit";
+
+  // 共有 productStore を購読。/products/new で新規登録された商品が即座に
+  // ここの SKU サジェスト・商品名オートフィルに反映される。
+  useEffect(() => {
+    if (productStore.getState().length === 0) {
+      productStore.setItems(INITIAL_PRODUCTS);
+    }
+  }, []);
+  const products = useSyncExternalStore(
+    (cb) => productStore.subscribe(cb),
+    () => productStore.getState(),
+    () => INITIAL_PRODUCTS as readonly ProductRecord[],
+  );
+  // code 引き商品マップ（live）。SKU を入力したら商品名・単価をオートフィル。
+  const productByCode = useMemo(() => {
+    const m = new Map<string, ProductRecord>();
+    for (const p of products) m.set(p.code, p);
+    return m;
+  }, [products]);
 
   const [store, setStore] = useState(STORES[0]);
   const [orderDate, setOrderDate] = useState<Date | undefined>(new Date());
@@ -92,9 +113,14 @@ export function OrderForm({ mode }: OrderFormProps) {
     setItems((prev) => [...prev, { id: Math.max(0, ...prev.map((p) => p.id)) + 1, code: "", name: "", price: 0, qty: 1, warehouse: WAREHOUSES[0] ?? "" }]);
   }
 
-  /** SKU を選んだら商品名・倉庫を在庫マスタからオートフィルする。 */
+  /**
+   * SKU を選んだら商品名・単価を共有 productStore から、倉庫を在庫マスタからオートフィルする。
+   * productStore に無い場合は INITIAL_INVENTORY の SKU_NAMES にフォールバック。
+   */
   function selectSku(itemId: number, sku: string) {
-    const rec = INITIAL_INVENTORY.find((r) => r.sku === sku);
+    const invRec = INITIAL_INVENTORY.find((r) => r.sku === sku);
+    const product = productByCode.get(sku);
+    const fallbackName = product?.name ?? SKU_NAMES[sku] ?? "";
     setItems((prev) =>
       prev.map((i) =>
         i.id !== itemId
@@ -102,8 +128,10 @@ export function OrderForm({ mode }: OrderFormProps) {
           : {
               ...i,
               code: sku,
-              name: i.name || (SKU_NAMES[sku] ?? ""),
-              warehouse: i.warehouse || rec?.warehouse || WAREHOUSES[0] || "",
+              name: i.name || fallbackName,
+              // 単価が未入力なら product master の price をオートフィル
+              price: i.price > 0 ? i.price : (product?.price ?? i.price),
+              warehouse: i.warehouse || invRec?.warehouse || WAREHOUSES[0] || "",
             },
       ),
     );
@@ -273,11 +301,24 @@ export function OrderForm({ mode }: OrderFormProps) {
           </button>
         </div>
         <datalist id="order-form-sku-list">
-          {INITIAL_INVENTORY.map((r) => (
-            <option key={`${r.sku}-${r.warehouse}`} value={r.sku}>
-              {SKU_NAMES[r.sku] ?? r.sku} / {r.warehouse}
-            </option>
-          ))}
+          {/* 共有 productStore + 在庫マスタを組み合わせて SKU サジェストを構築。
+             商品登録ページで追加された商品もここに即反映される。 */}
+          {INITIAL_INVENTORY.map((r) => {
+            const name = productByCode.get(r.sku)?.name ?? SKU_NAMES[r.sku] ?? r.sku;
+            return (
+              <option key={`${r.sku}-${r.warehouse}`} value={r.sku}>
+                {name} / {r.warehouse}
+              </option>
+            );
+          })}
+          {/* 在庫マスタには無いが商品マスタには登録済みのSKUも候補に出す。 */}
+          {products
+            .filter((p) => !INITIAL_INVENTORY.some((r) => r.sku === p.code))
+            .map((p) => (
+              <option key={p.code} value={p.code}>
+                {p.name}（在庫未登録）
+              </option>
+            ))}
         </datalist>
         <div className="overflow-hidden rounded-xl border border-white/50">
           <table className="w-full text-sm">
