@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { orderStore } from "@/lib/stores/orders";
+import { paymentStore } from "@/lib/stores/payment";
+import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
+import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
+import { computeOrderCreditOutstanding, type CreditOrder, type CreditPayment } from "@/lib/customers/credit-usage";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { cn } from "@/lib/utils";
@@ -66,6 +71,46 @@ type SortKey = "code" | "name" | "creditLimit" | "creditUsed" | "monthSales" | "
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function WholesalePage() {
+  // 共有 orderStore / paymentStore を購読し、卸先の与信使用額を live に算出する。
+  // seed の creditUsed は legacy outstanding（移行前の未回収）として保持し、
+  // 新規 B2B 受注（customerCode 付き）の未回収残額を上乗せして「現在の与信使用額」を表示する。
+  useEffect(() => {
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+    if (paymentStore.getState().length === 0) paymentStore.setItems(INITIAL_PAYMENTS);
+  }, []);
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS,
+  );
+  const payments = useSyncExternalStore(
+    (cb) => paymentStore.subscribe(cb),
+    () => paymentStore.getState(),
+    () => INITIAL_PAYMENTS,
+  );
+
+  // 卸先ごとに B2B 受注の未回収残額を計算し、seed creditUsed に上乗せした実効値を作る。
+  const effectiveClients = useMemo<Wholesale[]>(() => {
+    const creditOrders: CreditOrder[] = orders.map((o) => {
+      const seed = o as OrderSeed;
+      return {
+        id: seed.id,
+        customerCode: seed.customerCode,
+        amount: Number(seed.amount ?? 0),
+        status: seed.status,
+      };
+    });
+    const creditPayments: CreditPayment[] = payments.map((p) => ({
+      orderId: String(p.orderId),
+      orderTotal: Number(p.orderTotal),
+      paidAmount: Number(p.paidAmount),
+    }));
+    return ALL_CLIENTS.map((c) => ({
+      ...c,
+      creditUsed: c.creditUsed + computeOrderCreditOutstanding(c.code, creditOrders, creditPayments),
+    }));
+  }, [orders, payments]);
+
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>("すべて");
   const [group, setGroup] = useState<(typeof GROUP_OPTIONS)[number]>("すべて");
@@ -74,11 +119,16 @@ export default function WholesalePage() {
   const [delayOnly, setDelayOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("ytdSales");
   const [sortDesc, setSortDesc] = useState(true);
-  const [selected, setSelected] = useState<Wholesale | null>(null);
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
+  // selected は effectiveClients から live に解決（orders/payments の変化に追従）
+  const selected: Wholesale | null = useMemo(
+    () => (selectedCode ? effectiveClients.find((c) => c.code === selectedCode) ?? null : null),
+    [selectedCode, effectiveClients],
+  );
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
-    const result = ALL_CLIENTS.filter((c) => {
+    const result = effectiveClients.filter((c) => {
       if (
         k &&
         !c.name.toLowerCase().includes(k) &&
@@ -103,7 +153,7 @@ export default function WholesalePage() {
         : String(av).localeCompare(String(bv), "ja");
     });
     return result;
-  }, [keyword, status, group, terms, creditAlert, delayOnly, sortKey, sortDesc]);
+  }, [effectiveClients, keyword, status, group, terms, creditAlert, delayOnly, sortKey, sortDesc]);
 
   const totals = useMemo(
     () => ({
@@ -154,7 +204,7 @@ export default function WholesalePage() {
             </HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">
-            {ALL_CLIENTS.length} 件中 <span className="font-semibold text-gray-700">{totals.count}</span> 件表示
+            {effectiveClients.length} 件中 <span className="font-semibold text-gray-700">{totals.count}</span> 件表示
           </p>
         </div>
         <div className="flex gap-2">
@@ -343,7 +393,7 @@ export default function WholesalePage() {
                     return (
                       <tr
                         key={c.code}
-                        onClick={() => setSelected(c)}
+                        onClick={() => setSelectedCode(c.code)}
                         className={cn(
                           "border-t border-white/30 cursor-pointer transition-colors",
                           selected?.code === c.code ? "bg-blue-500/10" : "hover:bg-white/40"
@@ -420,7 +470,7 @@ export default function WholesalePage() {
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-800">{selected.name}</h3>
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => setSelectedCode(null)}
                 className="p-1 rounded-lg hover:bg-white/60 text-gray-400 hover:text-gray-600"
               >
                 <X className="h-4 w-4" />
