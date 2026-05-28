@@ -14,6 +14,8 @@ import {
 import { mailQueue } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { applyRecordPaymentCascade } from "@/lib/cascades/record-payment";
+import { applyCancelOrderCascade } from "@/lib/cascades/cancel-order";
+import { extractCancelCandidates } from "@/lib/payments/cancel-candidates";
 import { paymentStore } from "@/lib/stores/payment";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
@@ -35,6 +37,7 @@ import {
   Banknote,
   TrendingUp,
   Mail,
+  Ban,
 } from "lucide-react";
 
 /** ページ内で扱う入金レコード型（共有シードの型を再利用）。 */
@@ -76,6 +79,18 @@ export default function PaymentsPage() {
   );
   const payments = storeItems as ReadonlyArray<PayRecord>;
 
+  // orderStore も購読し、キャンセル候補からキャンセル済み受注を除外する
+  // （キャンセル時の返金で paidAmount が 0 に戻るため、payment だけ見ると候補に残り続ける）。
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS,
+  );
+  const cancelledOrderIds = useMemo(
+    () => new Set(orders.filter((o) => o.status === "キャンセル").map((o) => o.id)),
+    [orders],
+  );
+
   const [activeTab, setActiveTab] = useState<TabValue>("all");
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState("すべて");
@@ -104,6 +119,26 @@ export default function PaymentsPage() {
       .filter((p) => p.status !== "入金済み")
       .reduce((s, p) => s + (p.orderTotal - p.paidAmount), 0),
   }), [payments]);
+
+  // ---- キャンセル候補（期日7日超過の未完済） ----------------------------------
+  // 最終催告（payment-final-call-7d）と同じ閾値。実キャンセルは applyCancelOrderCascade に委譲。
+  const cancelCandidates = useMemo(
+    () =>
+      extractCancelCandidates(
+        payments
+          .filter((p) => !cancelledOrderIds.has(p.orderId))
+          .map((p) => ({
+            paymentId: p.id,
+            orderId: p.orderId,
+            customer: p.customer,
+            due: p.due,
+            paidAmount: p.paidAmount,
+            orderTotal: p.orderTotal,
+          })),
+        new Date(),
+      ),
+    [payments, cancelledOrderIds],
+  );
 
   // ---- 入金登録（共有 record-payment cascade） --------------------------------
   /**
@@ -236,6 +271,34 @@ export default function PaymentsPage() {
     );
   }
 
+  /**
+   * キャンセル候補の受注を実キャンセルする。applyCancelOrderCascade で
+   * 受注キャンセル遷移 → 引当解放 → 入金済み分の全額返金 → キャンセル通知メールまで連鎖。
+   * 入金管理画面からも受注ライフサイクルの巻き戻しを一気通貫で起動できる。
+   */
+  function onCancelCandidate(orderId: string) {
+    const result = applyCancelOrderCascade(orderId, {
+      orderStore,
+      paymentStore,
+      inventoryStore,
+      mailQueue,
+      autoMailEnabled: getAutoMailEnabled(),
+    });
+    if (!result.applied) {
+      toast.show(`${orderId} はキャンセルできない状態です（出荷済み以降は返品フロー）`, "error");
+      return;
+    }
+    const tail = [
+      result.released > 0 ? `引当戻し ${result.released}SKU` : "",
+      result.refunded ? `返金 ${fmt(result.refundedAmount)}` : "",
+      result.enqueued > 0 ? `キャンセル通知メール ${result.enqueued}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    const line = tail ? ` / ${tail}` : "";
+    toast.show(`${orderId} をキャンセルしました${line}`, "info");
+  }
+
   function onClickCancel(p: PayRecord) {
     if (p.paidAmount <= 0) {
       toast.show(`${p.order} には取消できる入金がありません`);
@@ -330,6 +393,56 @@ export default function PaymentsPage() {
           <p className="mt-1 text-xs text-gray-400">未収残高</p>
         </GlassCard>
       </div>
+
+      {/* ---- キャンセル候補（期日7日超過の未入金/一部入金） ------------------- */}
+      {cancelCandidates.length > 0 && (
+        <GlassCard className="p-0 overflow-hidden border-red-200/60">
+          <div className="px-4 py-3 border-b border-white/40 bg-red-50/50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Ban className="h-4 w-4 text-red-500" />
+              <span className="text-sm font-semibold text-gray-800">キャンセル候補</span>
+              <HelpHint>
+                入金期日を7日以上超過した未入金/一部入金の受注です。最終催告メールの対象でもあります。{"\n"}
+                キャンセルすると引当済み在庫の解放・入金済み分の全額返金・キャンセル通知メールまで自動で連鎖します。
+              </HelpHint>
+            </div>
+            <span className="text-xs text-red-700">{cancelCandidates.length} 件</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-white/40 border-b border-white/40">
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">受注番号</th>
+                <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">顧客</th>
+                <th className="px-3 py-2.5 text-right text-xs font-medium text-gray-500">超過日数</th>
+                <th className="px-3 py-2.5 text-right text-xs font-medium text-gray-500">未回収残額</th>
+                <th className="px-3 py-2.5 text-right text-xs font-medium text-gray-500">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cancelCandidates.map((c) => (
+                <tr key={c.paymentId} className="border-t border-white/30 hover:bg-white/40">
+                  <td className="px-3 py-2.5">
+                    <Link href={`/orders/${c.orderId}/edit`} className="text-blue-700 hover:underline font-medium">
+                      {c.orderId}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2.5 text-gray-700">{c.customer}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-red-700 font-semibold">{c.daysOverdue}日</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-800">{fmt(c.outstanding)}</td>
+                  <td className="px-3 py-2.5 text-right">
+                    <button
+                      onClick={() => onCancelCandidate(c.orderId)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-medium bg-red-500/80 text-white border border-red-400/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] hover:bg-red-500/90"
+                    >
+                      <Ban className="h-3.5 w-3.5" />キャンセル
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </GlassCard>
+      )}
 
       {/* ---- ステータスタブ -------------------------------------------------- */}
       <div className="flex gap-1 p-1 rounded-2xl bg-white/40 backdrop-blur-xl border border-white/50 w-fit flex-wrap">
