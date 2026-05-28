@@ -19,6 +19,8 @@ export type OrderSeed = OrderRecord & {
   payment: string;
   date: string;
   allocation: AllocationLine[];
+  /** B2B 受注の卸先コード（卸先マスタ WS-xxx）。B2C 個人受注は未設定。 */
+  customerCode?: string;
 };
 
 /** allocation の 1 行ヘルパ。 */
@@ -39,4 +41,7 @@ export const INITIAL_ORDERS: OrderSeed[] = [
   { id: "ORD-2026-08842", shop: "Amazon", customer: "加藤 裕子", items: 2, amount: 12_400, payment: "代金引換", status: "キャンセル", date: "2026/04/29 14:22", allocation: alloc("MBT-004", "東京本社倉庫", 2) },
   { id: "ORD-2026-08841", shop: "楽天市場", customer: "吉田 あゆみ", items: 4, amount: 56_800, payment: "クレジットカード", status: "発売日時待ち", date: "2026/04/29 11:10", allocation: alloc("PFS-005", "東京本社倉庫", 4) },
   { id: "ORD-2026-08840", shop: "Yahoo!", customer: "松本 愛", items: 2, amount: 15_800, payment: "クレジットカード", status: "印刷待ち", date: "2026/04/28 15:00", allocation: alloc("UCB-002", "大阪倉庫", 2) },
+  // ---- B2B 受注（卸先マスタ WS-xxx 紐付け・与信使用に上乗せされる） --------
+  { id: "ORD-2026-08901", shop: "卸売 (B2B)", customer: "株式会社ABC商事", customerCode: "WS-001", items: 12, amount: 84_000, payment: "請求書払い", status: "引当待ち", date: "2026/04/28 11:30", allocation: alloc("WEP-001-BK", "東京本社倉庫", 12) },
+  { id: "ORD-2026-08902", shop: "卸売 (B2B)", customer: "東海卸センター株式会社", customerCode: "WS-005", items: 30, amount: 120_000, payment: "請求書払い", status: "印刷済み", date: "2026/04/27 14:00", allocation: alloc("UCB-002", "大阪倉庫", 30) },
 ];
