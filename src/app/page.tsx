@@ -29,6 +29,7 @@ import {
   type OrderStatus,
 } from "@/lib/state-machines/order";
 import { freeStock } from "@/lib/state-machines/inventory";
+import { extractReorderAlerts, type ReorderAlert } from "@/lib/inventory/reorder-alerts";
 import { mailQueue, type MailJob, type MailTriggerType } from "@/lib/mail/queue";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
@@ -208,13 +209,7 @@ const RECENT_ORDERS = [
   { id: "ORD-2026-00847", shop: "楽天市場", customer: "高橋健", amount: "¥22,800", status: "完了", sc: "bg-gray-500/15 text-gray-600", date: "09:22" },
 ];
 
-const LOW_STOCK = [
-  { name: "ワイヤレスイヤホン Pro", sku: "WEP-001", current: 3, safety: 10, danger: true },
-  { name: "USB-Cケーブル 2m", sku: "UCB-002", current: 8, safety: 15, danger: false },
-  { name: "スマートウォッチバンド", sku: "SWB-003", current: 5, safety: 10, danger: false },
-  { name: "モバイルバッテリー 20000mAh", sku: "MBT-004", current: 2, safety: 8, danger: true },
-  { name: "保護フィルム セット", sku: "PFS-005", current: 12, safety: 20, danger: false },
-];
+// 低在庫アラートは extractReorderAlerts で live inventoryStore から派生（旧 LOW_STOCK モックは削除）。
 
 const ALERTS = [
   { id: 1, severity: "critical", title: "出荷遅延の恐れ", body: "本日18時までに出荷必要な12件が未指示です", href: "/shipments", action: "出荷指示画面へ" },
@@ -247,14 +242,17 @@ const fmt = (n: number) => `¥${n.toLocaleString()}`;
  */
 function computeLiveOps() {
   const orders = orderStore.getState();
+  const inventory = inventoryStore.getState();
   const byStatus = (s: OrderStatus) => orders.filter((o) => o.status === s).length;
+  const reorderAlerts = extractReorderAlerts(inventory);
   return {
     paymentWait: byStatus("入金待ち"),
     allocWait: byStatus("引当待ち"),
     shortage: orders.filter((o) => o.status === "引当待ち" && o.inventoryShortage === true).length,
     printWait: byStatus("印刷待ち"),
     awaitingShip: shipmentStore.getState().filter((s) => s.status === "出荷待ち").length,
-    lowStock: inventoryStore.getState().filter((r) => freeStock(r) <= r.reorder).length,
+    lowStock: inventory.filter((r) => freeStock(r) <= r.reorder).length,
+    reorderAlerts: reorderAlerts as ReadonlyArray<ReorderAlert>,
   };
 }
 
@@ -709,35 +707,43 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {LOW_STOCK.map((item) => (
-                  <tr key={item.sku} className="border-t border-white/40 hover:bg-white/40 transition-colors">
-                    <td className="px-3 py-2.5">
-                      <div className="text-gray-700">{item.name}</div>
-                      <div className="text-xs text-gray-400 font-mono">{item.sku}</div>
-                    </td>
-                    <td className="px-3 py-2.5 text-center font-medium text-gray-800 tabular-nums">{item.current}</td>
-                    <td className="px-3 py-2.5 text-center text-gray-500 tabular-nums">{item.safety}</td>
-                    <td className="px-3 py-2.5 text-center">
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium",
-                          item.danger ? "bg-red-500/15 text-red-700" : "bg-yellow-500/15 text-yellow-700"
-                        )}
-                      >
-                        {item.danger ? <XCircle className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
-                        {item.danger ? "危険" : "注意"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-center">
-                      <Link
-                        href="/purchasing/calculate"
-                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        発注 →
-                      </Link>
+                {liveOps.reorderAlerts.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-6 text-center text-xs text-gray-400">
+                      発注点を下回ったSKUはありません
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  liveOps.reorderAlerts.slice(0, 6).map((a) => (
+                    <tr key={`${a.sku}-${a.warehouse}`} className="border-t border-white/40 hover:bg-white/40 transition-colors">
+                      <td className="px-3 py-2.5">
+                        <div className="text-gray-700 font-mono">{a.sku}</div>
+                        <div className="text-xs text-gray-400">{a.warehouse}</div>
+                      </td>
+                      <td className="px-3 py-2.5 text-center font-medium text-gray-800 tabular-nums">{a.currentFree}</td>
+                      <td className="px-3 py-2.5 text-center text-gray-500 tabular-nums">{a.reorderPoint}</td>
+                      <td className="px-3 py-2.5 text-center">
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium",
+                            a.danger ? "bg-red-500/15 text-red-700" : "bg-yellow-500/15 text-yellow-700",
+                          )}
+                        >
+                          {a.danger ? <XCircle className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                          {a.danger ? "在庫切れ" : `発注対象 (推奨 ${a.suggestedQty})`}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        <Link
+                          href="/purchasing/calculate"
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          発注 →
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
