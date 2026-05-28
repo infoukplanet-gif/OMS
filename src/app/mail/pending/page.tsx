@@ -30,6 +30,7 @@ const pb: Record<string, string> = {
 const triggerLabel: Record<MailTriggerType, string> = {
   thanks: "受注確認（サンクス）",
   "ship-notify": "出荷完了通知",
+  "delivery-notify": "配送通知（追跡番号）",
   "payment-confirmed": "入金確認",
   "payment-reminder-3d": "入金催促（3日超過）",
   "payment-final-call-7d": "最終催告（7日超過）",
@@ -39,6 +40,7 @@ const triggerLabel: Record<MailTriggerType, string> = {
 const triggerBadge: Record<MailTriggerType, string> = {
   thanks: "bg-blue-500/15 text-blue-700",
   "ship-notify": "bg-emerald-500/15 text-emerald-700",
+  "delivery-notify": "bg-purple-500/15 text-purple-700",
   "payment-confirmed": "bg-violet-500/15 text-violet-700",
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",

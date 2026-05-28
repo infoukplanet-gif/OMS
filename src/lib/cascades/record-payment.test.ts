@@ -11,6 +11,7 @@ import type { InventoryRecord } from "../state-machines/inventory";
 const ALL_ENABLED: AutoMailEnabled = {
   thanks: true,
   "ship-notify": true,
+  "delivery-notify": true,
   "payment-confirmed": true,
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,

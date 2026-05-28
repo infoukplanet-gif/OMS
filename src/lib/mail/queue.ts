@@ -12,6 +12,7 @@
 export type MailTriggerType =
   | "thanks"
   | "ship-notify"
+  | "delivery-notify"
   | "payment-confirmed"
   | "payment-reminder-3d"
   | "payment-final-call-7d"
@@ -40,6 +41,7 @@ export interface MailQueue {
 const DEFAULT_ENABLED: AutoMailEnabled = {
   thanks: true,
   "ship-notify": true,
+  "delivery-notify": true,
   "payment-confirmed": true,
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,

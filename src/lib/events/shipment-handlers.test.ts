@@ -38,6 +38,36 @@ describe("onShipmentTransitioned — Order cascade on shipment confirmation", ()
   });
 });
 
+describe("onShipmentTransitioned — delivery-notify on 配送中 entry", () => {
+  it("returns sendMail delivery-notify when entering 配送中（追跡番号反映）", () => {
+    const before = shipment({ status: "出荷済み" });
+    const after = shipment({ status: "配送中" });
+
+    const effects = onShipmentTransitioned(before, after);
+
+    expect(effects.sendMail).toEqual({
+      orderId: "ORD-001",
+      triggerType: "delivery-notify",
+      dedupeKey: "ORD-001:delivery-notify",
+    });
+  });
+
+  it("does NOT emit delivery-notify when shipment was already 配送中 (no change)", () => {
+    const same = shipment({ status: "配送中" });
+    const effects = onShipmentTransitioned(same, same);
+
+    expect(effects.sendMail).toBeUndefined();
+  });
+
+  it("does NOT emit delivery-notify on 出荷済み 到達（ship-notify はそのまま）", () => {
+    const effects = onShipmentTransitioned(
+      shipment({ status: "出荷待ち" }),
+      shipment({ status: "出荷済み" }),
+    );
+    expect(effects.sendMail?.triggerType).toBe("ship-notify");
+  });
+});
+
 describe("onShipmentTransitioned — cancellation cascade", () => {
   it("cascades cancel to Order when Order is below 出荷済み (e.g. 印刷待ち)", () => {
     const before = shipment({ status: "出荷待ち" });
@@ -211,12 +241,12 @@ describe("onShipmentTransitioned — follow-up mail trigger (配達完了)", () 
     expect(onShipmentTransitioned(same, same).sendMail).toBeUndefined();
   });
 
-  it("does NOT emit follow-up on 配送中 arrival (markInTransit はメールなし)", () => {
+  it("配送中 arrival は follow-up ではなく delivery-notify を emit する", () => {
     const effects = onShipmentTransitioned(
       shipment({ status: "出荷済み" }),
       shipment({ status: "配送中" }),
     );
-    expect(effects.sendMail).toBeUndefined();
+    expect(effects.sendMail?.triggerType).toBe("delivery-notify");
   });
 
   it("does NOT return sendMail when 配達完了 but no orderId", () => {

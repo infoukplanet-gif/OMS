@@ -164,6 +164,7 @@ const ORDER_STATUS_COUNTS: Record<OrderStatus, number> = {
 const TRIGGER_LABEL: Record<MailTriggerType, string> = {
   thanks: "受注確認",
   "ship-notify": "出荷通知",
+  "delivery-notify": "配送通知",
   "payment-confirmed": "入金確認",
   "payment-reminder-3d": "入金催促",
   "payment-final-call-7d": "最終催告",
@@ -173,6 +174,7 @@ const TRIGGER_LABEL: Record<MailTriggerType, string> = {
 const TRIGGER_BADGE: Record<MailTriggerType, string> = {
   thanks: "bg-blue-500/15 text-blue-700",
   "ship-notify": "bg-emerald-500/15 text-emerald-700",
+  "delivery-notify": "bg-purple-500/15 text-purple-700",
   "payment-confirmed": "bg-violet-500/15 text-violet-700",
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",
@@ -293,6 +295,7 @@ export default function Dashboard() {
     const map: Record<MailTriggerType, number> = {
       thanks: 0,
       "ship-notify": 0,
+      "delivery-notify": 0,
       "payment-confirmed": 0,
       "payment-reminder-3d": 0,
       "payment-final-call-7d": 0,

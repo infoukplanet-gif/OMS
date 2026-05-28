@@ -140,7 +140,12 @@ export function transitionShipment<T extends ShipmentState>(
       return { ...shipment, status: "出荷済み", trackingNumber: options.trackingNumber };
 
     case "markInTransit":
-      return { ...shipment, status: "配送中" };
+      // 追跡番号反映: 入力された tracking が来た場合は更新、未指定なら既存値を維持
+      return {
+        ...shipment,
+        status: "配送中",
+        trackingNumber: options.trackingNumber ?? shipment.trackingNumber,
+      };
 
     case "markDelivered":
       return { ...shipment, status: "配達完了" };

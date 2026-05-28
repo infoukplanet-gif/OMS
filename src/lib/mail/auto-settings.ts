@@ -15,6 +15,7 @@ import type { AutoMailEnabled, MailTriggerType } from "./queue";
 export const DEFAULT_AUTO_MAIL_ENABLED: AutoMailEnabled = {
   thanks: true,
   "ship-notify": true,
+  "delivery-notify": true,
   "payment-confirmed": true,
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,

@@ -20,6 +20,7 @@ describe("auto-settings — module-level enabled map", () => {
     expect(getAutoMailEnabled()).toEqual({
       thanks: true,
       "ship-notify": true,
+      "delivery-notify": true,
       "payment-confirmed": false,
       "payment-reminder-3d": true,
       "payment-final-call-7d": true,
@@ -33,6 +34,7 @@ describe("auto-settings — module-level enabled map", () => {
     expect(getAutoMailEnabled()).toEqual({
       thanks: false,
       "ship-notify": false,
+      "delivery-notify": true,
       "payment-confirmed": true,
       "payment-reminder-3d": true,
       "payment-final-call-7d": true,

@@ -84,6 +84,24 @@ describe("transitionShipment — happy paths", () => {
     expect(after.status).toBe("配送中");
   });
 
+  it("markInTransit は options.trackingNumber を反映する（配送番号反映ページから入力）", () => {
+    const after = transitionShipment(
+      shipment({ status: "出荷済み", trackingNumber: undefined }),
+      "markInTransit",
+      { trackingNumber: "TRK-NEW-123" },
+    );
+    expect(after.status).toBe("配送中");
+    expect(after.trackingNumber).toBe("TRK-NEW-123");
+  });
+
+  it("markInTransit で options.trackingNumber 未指定なら既存値を維持する", () => {
+    const after = transitionShipment(
+      shipment({ status: "出荷済み", trackingNumber: "TRK-OLD" }),
+      "markInTransit",
+    );
+    expect(after.trackingNumber).toBe("TRK-OLD");
+  });
+
   it("markDelivered 配送中 → 配達完了", () => {
     const after = transitionShipment(shipment({ status: "配送中" }), "markDelivered");
     expect(after.status).toBe("配達完了");
