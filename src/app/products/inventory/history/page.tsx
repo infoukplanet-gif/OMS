@@ -5,6 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 import { Search, Download, Package, ArrowUpRight, ArrowDownLeft, Settings2, History as HistoryIcon } from "lucide-react";
 
 type Move = {
@@ -63,6 +64,29 @@ export default function InventoryHistoryPage() {
     move: MOVES.filter((m) => m.type === "移動").length,
   };
 
+  /** 現在の絞り込み結果（在庫変動履歴）を CSV でダウンロードする。 */
+  function exportHistoryCsv() {
+    if (filtered.length === 0) {
+      toast.show("出力対象の変動履歴がありません", "info");
+      return;
+    }
+    const headers = ["日時", "SKU", "商品名", "種別", "変動数", "変動前", "変動後", "参照元", "倉庫", "担当"];
+    const rows = filtered.map((m) => [
+      m.date,
+      m.sku,
+      m.product,
+      m.type,
+      m.qty,
+      m.before,
+      m.after,
+      m.ref,
+      m.warehouse,
+      m.by,
+    ]);
+    downloadCsv(`在庫変動履歴_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show(`${filtered.length}件の変動履歴をCSV出力しました`, "success");
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -77,7 +101,7 @@ export default function InventoryHistoryPage() {
           <p className="text-sm text-gray-500 mt-1">対象期間: 直近30日 ／ 表示: {filtered.length}件</p>
         </div>
         <button
-          onClick={() => toast.show("CSVエクスポートを開始しました")}
+          onClick={exportHistoryCsv}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
         >
           <Download className="h-4 w-4" />CSVエクスポート

@@ -21,20 +21,10 @@ import {
   type InventoryRecord,
 } from "@/lib/state-machines/inventory";
 import { recommendReorderQty } from "@/lib/calculations/reorder-calculation";
-import { buildPurchaseOrdersFromReorder } from "@/lib/calculations/reorder-to-po";
+import { buildPurchaseOrdersFromReorder, nextPoSeq } from "@/lib/calculations/reorder-to-po";
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 const rowKey = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
-
-/** PO id（PO-YYYY-NNNN）の連番から次の採番値を求める。 */
-function nextSeq(ids: readonly string[]): number {
-  let max = 0;
-  for (const id of ids) {
-    const m = /^PO-\d{4}-(\d+)$/.exec(id);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return max + 1;
-}
 
 export default function CalculatePage() {
   const toast = useToast();
@@ -139,7 +129,7 @@ export default function CalculatePage() {
     const newPOs = buildPurchaseOrdersFromReorder(
       suggestions,
       { supplier: SKU_SUPPLIER, unitCost: SKU_UNIT_COST },
-      { today, year: new Date().getFullYear(), startSeq: nextSeq(existing.map((p) => p.id)) },
+      { today, year: new Date().getFullYear(), startSeq: nextPoSeq(existing.map((p) => p.id)) },
     );
     // 既存の「未発行」発注書は破棄し、計算結果で起票し直す（発注計算の仕様）。
     const retained = existing.filter((po) => po.status !== "未発行");

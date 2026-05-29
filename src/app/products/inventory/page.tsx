@@ -28,9 +28,19 @@ import {
   reorderSuggestions,
   type ReorderSuggestion,
 } from "@/lib/calculations/reorder-calculation";
-import { type PurchaseOrderLine, type PurchaseOrderState } from "@/lib/state-machines/purchase";
+import {
+  buildPurchaseOrdersFromReorder,
+  nextPoSeq,
+} from "@/lib/calculations/reorder-to-po";
 import { inventoryStore } from "@/lib/stores/inventory";
-import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
+import { purchaseStore } from "@/lib/stores/purchase";
+import { downloadCsv } from "@/lib/export/csv";
+import {
+  INITIAL_INVENTORY,
+  SKU_NAMES,
+  SKU_SUPPLIER,
+  SKU_UNIT_COST,
+} from "@/lib/seeds/inventory";
 
 // -----------------------------------------------------------------------
 // デザイントークン
@@ -114,6 +124,28 @@ export default function InventoryPage() {
   // -----------------------------------------------------------------------
   // イベントハンドラ
   // -----------------------------------------------------------------------
+  /** 現在の絞り込み結果（在庫一覧）を CSV でダウンロードする。 */
+  function exportInventoryCsv() {
+    if (filtered.length === 0) {
+      toast.show("出力対象の在庫データがありません", "info");
+      return;
+    }
+    const headers = ["SKU", "商品名", "倉庫", "在庫数", "引当数", "フリー在庫", "発注点", "在庫定数", "状態"];
+    const rows = filtered.map(({ record, name, health, free }) => [
+      record.sku,
+      name,
+      record.warehouse,
+      record.onHand,
+      record.allocated,
+      free,
+      record.reorder,
+      record.constant,
+      health,
+    ]);
+    downloadCsv(`在庫一覧_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show(`${filtered.length}件の在庫データをCSV出力しました`, "success");
+  }
+
   function toggleSku(sku: string) {
     setSelectedSkus((prev) => {
       const next = new Set(prev);
@@ -138,18 +170,32 @@ export default function InventoryPage() {
       return;
     }
 
-    const lines: PurchaseOrderLine[] = targets.map((s) => ({
-      sku:         s.sku,
-      warehouse:   s.warehouse,
-      orderedQty:  s.suggestedQty,
-      receivedQty: 0,
-    }));
+    // 発注計算ページと同じ変換層で仕入先ごとの未発行POを起票し、
+    // 共有 purchaseStore に追加する（発注一覧・発注計算と同一データソース）。
+    const existing = purchaseStore.getState();
+    const today = new Date().toISOString().slice(0, 10);
+    const newPOs = buildPurchaseOrdersFromReorder(
+      targets,
+      { supplier: SKU_SUPPLIER, unitCost: SKU_UNIT_COST },
+      { today, year: new Date().getFullYear(), startSeq: nextPoSeq(existing.map((p) => p.id)) },
+    );
 
-    // モック生成（実装フェーズでは API 呼び出しに差し替え）
-    const draft: PurchaseOrderState = { status: "未発行", lines };
-    console.info("[InventoryPage] 発注書ドラフト生成:", draft);
+    if (newPOs.length === 0) {
+      toast.show("起票できる発注推奨がありません", "info");
+      return;
+    }
 
-    toast.show(`発注書を作成しました（${lines.length} SKU）`);
+    // 在庫ページからの起票は既存POを破棄せず追記する（発注計算ページの全置換とは挙動が異なる）。
+    purchaseStore.setItems([
+      ...(newPOs as unknown as typeof existing),
+      ...existing,
+    ]);
+
+    const totalQty = newPOs.reduce((s, po) => s + po.items, 0);
+    toast.show(
+      `発注書を ${newPOs.length}件起票しました（${targets.length}SKU / ${totalQty}点）`,
+      "success",
+    );
     setSelectedSkus(new Set());
   }
 
@@ -174,7 +220,7 @@ export default function InventoryPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => toast.show("CSVエクスポートを開始しました")}
+            onClick={exportInventoryCsv}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80"
           >
             <Download className="h-4 w-4" />CSV

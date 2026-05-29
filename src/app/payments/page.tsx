@@ -14,6 +14,7 @@ import {
 import { mailQueue } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
 import { applyRecordPaymentCascade } from "@/lib/cascades/record-payment";
+import { downloadCsv } from "@/lib/export/csv";
 import { applyCancelOrderCascade } from "@/lib/cascades/cancel-order";
 import { extractCancelCandidates } from "@/lib/payments/cancel-candidates";
 import { paymentStore } from "@/lib/stores/payment";
@@ -94,6 +95,9 @@ export default function PaymentsPage() {
   const [activeTab, setActiveTab] = useState<TabValue>("all");
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState("すべて");
+  // 入金登録ダイアログ: 対象レコードと入力中の金額（一部入金に対応）
+  const [recordTarget, setRecordTarget] = useState<PayRecord | null>(null);
+  const [recordAmount, setRecordAmount] = useState("");
 
   // ---- フィルタリング --------------------------------------------------------
   const filtered = useMemo(() => {
@@ -202,15 +206,30 @@ export default function PaymentsPage() {
     return { cascadeApplied, released };
   }
 
-  // ---- 操作ボタン処理（モック） -----------------------------------------------
+  // ---- 操作ボタン処理 ---------------------------------------------------------
+  /** 入金登録ダイアログを開く。初期値は残額（全額入金が既定、編集で一部入金可）。 */
   function onClickRecord(p: PayRecord) {
-    // モック: 残額を全額入金する
     const remaining = p.orderTotal - p.paidAmount;
     if (remaining <= 0) {
       toast.show(`${p.order} はすでに全額入金済みです`);
       return;
     }
-    const result = handleRecordPayment(p.id, remaining);
+    setRecordTarget(p);
+    setRecordAmount(String(remaining));
+  }
+
+  /** ダイアログで確定された入金額で cascade を実行する。 */
+  function confirmRecord() {
+    const p = recordTarget;
+    if (!p) return;
+    const amount = Math.round(Number(recordAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.show("入金額は1円以上で入力してください", "info");
+      return;
+    }
+    const result = handleRecordPayment(p.id, amount);
+    const remaining = p.orderTotal - p.paidAmount;
+    const isPartial = amount < remaining;
     const mailDetail = [
       result.enqueued > 0 ? `enqueue ${result.enqueued}件` : "",
       result.duplicateSkipped > 0 ? `重複 ${result.duplicateSkipped}件` : "",
@@ -228,11 +247,14 @@ export default function PaymentsPage() {
       .filter(Boolean)
       .join("・");
     const cascadeLine = cascadeDetail ? ` / ${cascadeDetail}` : "";
+    const kindLabel = isPartial ? "一部入金" : amount > remaining ? "過剰入金" : "入金登録";
 
     toast.show(
-      `${p.order}: ${fmt(remaining)} を入金登録しました${cascadeLine}${mailLine}`,
+      `${p.order}: ${fmt(amount)} を${kindLabel}しました${cascadeLine}${mailLine}`,
       result.shortageMarked > 0 ? "info" : "success",
     );
+    setRecordTarget(null);
+    setRecordAmount("");
   }
 
   /**
@@ -324,6 +346,30 @@ export default function PaymentsPage() {
   function statusLabel(p: PayRecord): string {
     if (p.overpaid) return "過剰入金";
     return p.status;
+  }
+
+  /** 現在の絞り込み結果を CSV でダウンロードする。 */
+  function exportFilteredCsv() {
+    if (filtered.length === 0) {
+      toast.show("出力対象の入金データがありません", "info");
+      return;
+    }
+    const headers = [
+      "受注番号", "顧客", "決済方法", "受注金額", "入金額", "残額", "期日", "超過日数", "状態",
+    ];
+    const rows = filtered.map((p) => [
+      p.order,
+      p.customer,
+      p.method,
+      p.orderTotal,
+      p.paidAmount,
+      p.orderTotal - p.paidAmount,
+      p.due,
+      p.daysOverdue,
+      statusLabel(p),
+    ]);
+    downloadCsv(`入金一覧_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show(`${filtered.length}件の入金データをCSV出力しました`, "success");
   }
 
   return (
@@ -598,7 +644,7 @@ export default function PaymentsPage() {
             <Mail className="h-4 w-4" />催促メール一括送信
           </button>
           <button
-            onClick={() => toast.show("CSV エクスポートを開始します（モック）")}
+            onClick={exportFilteredCsv}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80"
           >
             CSV出力
@@ -608,6 +654,98 @@ export default function PaymentsPage() {
           全 {payments.length} 件 / 表示 {filtered.length} 件
         </p>
       </div>
+
+      {/* ---- 入金登録ダイアログ（一部入金対応） ------------------------------- */}
+      {recordTarget && (() => {
+        const remaining = recordTarget.orderTotal - recordTarget.paidAmount;
+        const amount = Math.round(Number(recordAmount));
+        const valid = Number.isFinite(amount) && amount > 0;
+        const isPartial = valid && amount < remaining;
+        const isOver = valid && amount > remaining;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-6">
+              <div className="flex items-start gap-3">
+                <Banknote className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <h2 className="text-base font-semibold text-gray-800">入金登録</h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {recordTarget.order}（{recordTarget.customer}）
+                  </p>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                    <div className="rounded-xl bg-white/60 border border-white/50 px-3 py-2">
+                      <p className="text-xs text-gray-500">受注金額</p>
+                      <p className="font-semibold tabular-nums">{fmt(recordTarget.orderTotal)}</p>
+                    </div>
+                    <div className="rounded-xl bg-white/60 border border-white/50 px-3 py-2">
+                      <p className="text-xs text-gray-500">入金残額</p>
+                      <p className="font-semibold tabular-nums text-blue-700">{fmt(remaining)}</p>
+                    </div>
+                  </div>
+
+                  <label className="block mt-4 text-sm font-medium text-gray-700">入金額（円）</label>
+                  <input
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    value={recordAmount}
+                    onChange={(e) => setRecordAmount(e.target.value)}
+                    autoFocus
+                    className="mt-1 w-full px-3 py-2 rounded-xl text-sm tabular-nums bg-white/70 border border-white/60 focus:outline-none focus:ring-2 focus:ring-blue-400/50"
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRecordAmount(String(remaining))}
+                      className="px-2.5 py-1 rounded-lg text-xs bg-blue-500/10 text-blue-700 hover:bg-blue-500/20"
+                    >
+                      全額（{fmt(remaining)}）
+                    </button>
+                    {[Math.round(remaining / 2)].filter((v) => v > 0 && v < remaining).map((half) => (
+                      <button
+                        key={half}
+                        type="button"
+                        onClick={() => setRecordAmount(String(half))}
+                        className="px-2.5 py-1 rounded-lg text-xs bg-white/60 border border-white/50 text-gray-600 hover:bg-white/80"
+                      >
+                        半額（{fmt(half)}）
+                      </button>
+                    ))}
+                  </div>
+
+                  {isPartial && (
+                    <p className="mt-2 text-xs text-amber-700">
+                      一部入金として記録します（残額 {fmt(remaining - amount)} は未入金のまま）。
+                    </p>
+                  )}
+                  {isOver && (
+                    <p className="mt-2 text-xs text-purple-700">
+                      残額を超える金額です。過剰入金として記録され、差額調整の対象になります。
+                    </p>
+                  )}
+
+                  <div className="flex gap-2 mt-4 justify-end">
+                    <button
+                      onClick={() => { setRecordTarget(null); setRecordAmount(""); }}
+                      className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      onClick={confirmRecord}
+                      disabled={!valid}
+                      className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      入金登録
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

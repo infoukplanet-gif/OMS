@@ -13,7 +13,7 @@ import {
 } from "@/lib/state-machines/purchase";
 import { purchaseStore } from "@/lib/stores/purchase";
 import { inventoryStore } from "@/lib/stores/inventory";
-import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
+import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
   INITIAL_PURCHASE_ORDERS,
   type SeededPurchaseOrder,
@@ -37,6 +37,7 @@ import {
 type PurchaseOrder = SeededPurchaseOrder;
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
+const lineKey = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
 
 const tabs: { label: string; value: "all" | PurchaseOrderStatus }[] = [
   { label: "すべて", value: "all" },
@@ -73,6 +74,9 @@ export default function PurchasingPage() {
   const [activeTab, setActiveTab] = useState<"all" | PurchaseOrderStatus>("all");
   const [keyword, setKeyword] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("すべて");
+  // 入荷登録ダイアログ: 対象発注書と明細ごとの受領数量（一部入荷に対応）
+  const [receiveTarget, setReceiveTarget] = useState<PurchaseOrder | null>(null);
+  const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({});
   const toast = useToast();
 
   const filtered = useMemo(() => {
@@ -112,21 +116,43 @@ export default function PurchasingPage() {
   }
 
   /**
-   * モック受領: 全明細を残数（orderedQty - receivedQty）で受領し、
-   * purchase SM 経由で状態を更新 → effects.receiveInventory を inventoryStore に流して
-   * onHand を加算する。実プロジェクトでは受領数量入力モーダルに置き換える。
+   * 入荷登録ダイアログを開く。明細ごとに残数（orderedQty - receivedQty）を
+   * 既定の受領数量としてプリフィルし、編集で一部入荷にも対応する。
    */
   function handleReceive(o: PurchaseOrder) {
+    const hasRemaining = o.lines.some((l) => l.orderedQty - l.receivedQty > 0);
+    if (!hasRemaining) {
+      toast.show(`${o.id} は受領残がありません`, "info");
+      return;
+    }
+    const init: Record<string, string> = {};
+    for (const l of o.lines) {
+      init[lineKey(l.sku, l.warehouse)] = String(Math.max(0, l.orderedQty - l.receivedQty));
+    }
+    setReceiveQtys(init);
+    setReceiveTarget(o);
+  }
+
+  /**
+   * ダイアログで入力された受領数量で入荷登録する。
+   * purchase SM 経由で状態を更新 → effects.receiveInventory を inventoryStore に流して
+   * onHand を加算する（一部入荷なら「注残あり」、全数受領なら「仕入完了」へ遷移）。
+   */
+  function confirmReceive() {
+    const o = receiveTarget;
+    if (!o) return;
+
     const receipts = o.lines
-      .map((l) => ({
-        sku: l.sku,
-        warehouse: l.warehouse,
-        qty: l.orderedQty - l.receivedQty,
-      }))
+      .map((l) => {
+        const remaining = l.orderedQty - l.receivedQty;
+        const raw = Math.round(Number(receiveQtys[lineKey(l.sku, l.warehouse)]));
+        const qty = Number.isFinite(raw) ? Math.min(Math.max(0, raw), remaining) : 0;
+        return { sku: l.sku, warehouse: l.warehouse, qty };
+      })
       .filter((r) => r.qty > 0);
 
     if (receipts.length === 0) {
-      toast.show(`${o.id} は受領残がありません`, "info");
+      toast.show("受領数量を1点以上入力してください", "info");
       return;
     }
 
@@ -149,12 +175,14 @@ export default function PurchasingPage() {
       `${totalQty}個受領`,
       `在庫加算 ${stockAdded}SKU`,
       unknownCount > 0 ? `未登録SKU ${unknownCount}件` : "",
-      result.after?.status === "仕入完了" ? "→ 仕入完了" : "",
+      result.after?.status === "仕入完了" ? "→ 仕入完了" : "→ 注残あり",
     ]
       .filter(Boolean)
       .join("・");
 
     toast.show(`${o.id}: ${detail}`, unknownCount > 0 ? "info" : "success");
+    setReceiveTarget(null);
+    setReceiveQtys({});
   }
 
   function handleCancel(o: PurchaseOrder) {
@@ -370,6 +398,88 @@ export default function PurchasingPage() {
           </tbody>
         </table>
       </GlassCard>
+
+      {/* ---- 入荷登録ダイアログ（明細ごと一部入荷対応） ---------------------- */}
+      {receiveTarget && (() => {
+        const lines = receiveTarget.lines.map((l) => {
+          const remaining = l.orderedQty - l.receivedQty;
+          const raw = Math.round(Number(receiveQtys[lineKey(l.sku, l.warehouse)]));
+          const qty = Number.isFinite(raw) ? Math.min(Math.max(0, raw), remaining) : 0;
+          return { ...l, remaining, qty };
+        });
+        const totalQty = lines.reduce((s, l) => s + l.qty, 0);
+        const fullReceive = lines.every((l) => l.qty === l.remaining);
+        const valid = totalQty > 0;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-6">
+              <div className="flex items-start gap-3">
+                <PackageCheck className="h-5 w-5 text-emerald-600 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-base font-semibold text-gray-800">入荷登録</h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {receiveTarget.id}（{receiveTarget.supplier}）／ 明細ごとに受領数量を入力してください。
+                  </p>
+
+                  <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-white/50 divide-y divide-white/40">
+                    {lines.map((l) => {
+                      const key = lineKey(l.sku, l.warehouse);
+                      return (
+                        <div key={key} className="flex items-center gap-3 px-3 py-2.5 bg-white/40">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">
+                              {SKU_NAMES[l.sku] ?? l.sku}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {l.sku} ／ {l.warehouse} ／ 発注 {l.orderedQty}・受領済 {l.receivedQty}・残 {l.remaining}
+                            </p>
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            max={l.remaining}
+                            inputMode="numeric"
+                            value={receiveQtys[key] ?? ""}
+                            onChange={(e) =>
+                              setReceiveQtys((prev) => ({ ...prev, [key]: e.target.value }))
+                            }
+                            disabled={l.remaining === 0}
+                            className="w-20 px-2 py-1.5 rounded-lg text-sm text-right tabular-nums bg-white/70 border border-white/60 focus:outline-none focus:ring-2 focus:ring-emerald-400/50 disabled:opacity-40"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between">
+                    <p className="text-sm text-gray-600">
+                      受領合計 <span className="font-semibold tabular-nums">{totalQty}</span> 点
+                      <span className="ml-2 text-xs text-gray-500">
+                        {fullReceive ? "（全数受領 → 仕入完了）" : "（一部入荷 → 注残あり）"}
+                      </span>
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setReceiveTarget(null); setReceiveQtys({}); }}
+                        className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+                      >
+                        キャンセル
+                      </button>
+                      <button
+                        onClick={confirmReceive}
+                        disabled={!valid}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-500/80 border border-emerald-400/50 text-white hover:bg-emerald-500/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <PackageCheck className="h-4 w-4" />入荷登録
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
