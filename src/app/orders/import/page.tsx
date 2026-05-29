@@ -6,7 +6,26 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
 import { cn } from "@/lib/utils";
+import { productStore } from "@/lib/stores/product";
+import {
+  buildAutoCreatedProducts,
+  type ImportProductRow,
+} from "@/lib/calculations/product-auto-create";
+import { getProductAutoCreateSettings } from "@/lib/products/auto-create-settings";
 import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
+
+/**
+ * 取込テンプレート名から入手元（source）を推定する。
+ * 商品マスタ自動作成の enabledSources / カテゴリ変換の fromSource と突き合わせる。
+ */
+function sourceFromTemplate(template: string): string {
+  if (template.includes("楽天")) return "楽天市場";
+  if (template.includes("Amazon")) return "Amazon";
+  if (template.includes("Yahoo")) return "Yahoo!ショッピング";
+  if (template.includes("卸")) return "卸先EDI";
+  if (template.includes("自社") || template.toLowerCase().includes("shopify")) return "自社EC（Shopify）";
+  return "楽天市場";
+}
 
 const steps = [
   { label: "ファイルアップロード", value: 1 },
@@ -142,7 +161,32 @@ export default function ImportPage() {
 
   function confirmImport() {
     const n = counts.ok + counts.warning;
-    toast.show(`${n} 件をインポートしました`);
+
+    // 取込実行時に未登録SKUを検出し、設定に従って商品マスタを自動作成する。
+    // 不正行(status==="error")はスキップし、正常行のみ生成（取込全体は止めない）。
+    const settings = getProductAutoCreateSettings();
+    const source = sourceFromTemplate(templateKey);
+    const rows: ImportProductRow[] = previewData.map((d) => ({
+      skuCode: d.skuCode,
+      productName: d.productName,
+      price: d.price,
+      source,
+      status: d.status,
+    }));
+    const existingCodes = productStore.getState().map((p) => p.code);
+    const plan = buildAutoCreatedProducts(rows, settings, existingCodes);
+
+    for (const rec of [...plan.created, ...plan.updated]) {
+      productStore.upsert(rec);
+    }
+
+    const autoLine =
+      plan.created.length > 0 || plan.updated.length > 0
+        ? ` ／ 未登録商品 ${plan.created.length}件を商品マスタに自動作成${
+            plan.updated.length > 0 ? `・${plan.updated.length}件更新` : ""
+          }`
+        : "";
+    toast.show(`${n} 件をインポートしました${autoLine}`, "success");
     setStep(1);
     clearFile();
   }

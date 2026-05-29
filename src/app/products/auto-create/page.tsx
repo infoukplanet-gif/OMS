@@ -5,6 +5,10 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import {
+  getProductAutoCreateSettings,
+  setProductAutoCreateSettings,
+} from "@/lib/products/auto-create-settings";
 import { Save, Settings2, ImageIcon, Bell, History, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Rule = {
@@ -35,15 +39,36 @@ const HISTORY = [
 
 export default function ProductAutoCreatePage() {
   const toast = useToast();
-  const [rules, setRules] = useState<Rule[]>(INITIAL_RULES);
-  const [autoDetect, setAutoDetect] = useState(true);
+  // 共有設定（auto-create-settings シングルトン）を初期値として読み込む。
+  // enabledSources に含まれる source のルールだけ有効化状態を復元する。
+  const initial = getProductAutoCreateSettings();
+  const [rules, setRules] = useState<Rule[]>(() =>
+    INITIAL_RULES.map((r) => ({ ...r, enabled: initial.enabledSources.includes(r.source) })),
+  );
+  const [autoDetect, setAutoDetect] = useState(initial.autoDetect);
   const [downloadImage, setDownloadImage] = useState(true);
   const [notifyAdmin, setNotifyAdmin] = useState(false);
-  const [skipConflict, setSkipConflict] = useState(true);
-  const [autoCategorize, setAutoCategorize] = useState(true);
-  const [defaultMargin, setDefaultMargin] = useState(30);
+  const [skipConflict, setSkipConflict] = useState(initial.skipConflict);
+  const [autoCategorize, setAutoCategorize] = useState(initial.autoCategorize);
+  const [defaultMargin, setDefaultMargin] = useState(initial.defaultMargin);
 
   const toggleRule = (id: string) => setRules(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+
+  /** 画面の状態を共有設定へ保存する。orders/import の取込実行がこの設定を読む。 */
+  function saveSettings() {
+    const enabledSources = rules.filter((r) => r.enabled).map((r) => r.source);
+    setProductAutoCreateSettings({
+      autoDetect,
+      skipConflict,
+      autoCategorize,
+      defaultMargin,
+      enabledSources,
+    });
+    toast.show(
+      `自動作成設定を保存しました（有効ルール ${enabledSources.length}件 / 原価率 ${defaultMargin}%）`,
+      "success",
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -61,7 +86,7 @@ export default function ProductAutoCreatePage() {
             <span className="font-semibold">{rules.reduce((s, r) => s + r.count, 0)}件</span>
           </p>
         </div>
-        <PrimaryButton onClick={() => toast.show("自動作成設定を保存しました", "success")}>
+        <PrimaryButton onClick={saveSettings}>
           <Save className="h-4 w-4" />設定を保存
         </PrimaryButton>
       </div>
