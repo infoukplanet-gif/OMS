@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildPurchaseOrdersFromReorder,
+  nextPoSeq,
   type ReorderMasterMaps,
 } from "./reorder-to-po";
 import type { ReorderSuggestion } from "./reorder-calculation";
@@ -115,5 +116,23 @@ describe("buildPurchaseOrdersFromReorder", () => {
     expect(pos[0].id).toBe("PO-2026-0050");
     expect(pos[1].supplier).toBe("株式会社ABC電子");
     expect(pos[1].id).toBe("PO-2026-0051");
+  });
+});
+
+describe("nextPoSeq", () => {
+  it("空配列なら 1 を返す", () => {
+    expect(nextPoSeq([])).toBe(1);
+  });
+
+  it("最大連番 + 1 を返す", () => {
+    expect(nextPoSeq(["PO-2026-0001", "PO-2026-0007", "PO-2026-0003"])).toBe(8);
+  });
+
+  it("年が異なっても連番部分の最大で採番する", () => {
+    expect(nextPoSeq(["PO-2025-0010", "PO-2026-0004"])).toBe(11);
+  });
+
+  it("規定形式にマッチしない id は無視する", () => {
+    expect(nextPoSeq(["DRAFT-x", "PO-2026-0002", "PO-9"])).toBe(3);
   });
 });

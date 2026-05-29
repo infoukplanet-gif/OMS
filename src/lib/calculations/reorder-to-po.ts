@@ -59,6 +59,19 @@ function padSeq(seq: number): string {
 }
 
 /**
+ * 既存の発注書 id（PO-YYYY-NNNN）の連番から次の採番値（最大連番 + 1）を求める。
+ * 規定形式にマッチしない id は無視する。空配列なら 1。
+ */
+export function nextPoSeq(ids: ReadonlyArray<string>): number {
+  let max = 0;
+  for (const id of ids) {
+    const m = /^PO-\d{4}-(\d+)$/.exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+/**
  * 推奨発注一覧を仕入先ごとの未発行 PO へ集約する。
  * suggestedQty <= 0 の提案は除外する。
  */
