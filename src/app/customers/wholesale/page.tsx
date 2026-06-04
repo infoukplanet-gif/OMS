@@ -7,6 +7,7 @@ import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
 import { computeOrderCreditOutstanding, type CreditOrder, type CreditPayment } from "@/lib/customers/credit-usage";
+import { wholesaleStore, INITIAL_WHOLESALE } from "@/lib/stores/wholesale";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { cn } from "@/lib/utils";
@@ -41,18 +42,7 @@ type Wholesale = {
   startedAt: string;
 };
 
-const ALL_CLIENTS: Wholesale[] = [
-  { code: "WS-001", name: "株式会社ABC商事", kana: "エービーシーショウジ", contact: "山本部長", terms: "月末締翌月末払", creditLimit: 500000, creditUsed: 384000, group: "A", status: "通常", monthSales: 248000, ytdSales: 3120000, delays: 0, prefecture: "東京都", startedAt: "2022-04-15" },
-  { code: "WS-002", name: "グローバルトレード合同会社", kana: "グローバルトレード", contact: "李マネージャー", terms: "月末締翌々月末払", creditLimit: 1000000, creditUsed: 920000, group: "S", status: "重点", monthSales: 1284000, ytdSales: 18420500, delays: 0, prefecture: "大阪府", startedAt: "2020-09-01" },
-  { code: "WS-003", name: "北海道物産株式会社", kana: "ホッカイドウブッサン", contact: "鈴木課長", terms: "月末締翌月末払", creditLimit: 300000, creditUsed: 184000, group: "B", status: "通常", monthSales: 142000, ytdSales: 1820000, delays: 0, prefecture: "北海道", startedAt: "2023-06-12" },
-  { code: "WS-004", name: "九州フードサービス", kana: "キュウシュウフード", contact: "田中支店長", terms: "20日締翌月10日払", creditLimit: 800000, creditUsed: 640000, group: "A", status: "重点", monthSales: 720000, ytdSales: 8920000, delays: 1, prefecture: "福岡県", startedAt: "2021-11-20" },
-  { code: "WS-005", name: "東海卸センター株式会社", kana: "トウカイオロシ", contact: "佐藤主任", terms: "月末締翌月20日払", creditLimit: 600000, creditUsed: 240000, group: "B", status: "通常", monthSales: 320000, ytdSales: 4480000, delays: 0, prefecture: "愛知県", startedAt: "2022-02-08" },
-  { code: "WS-006", name: "関西商事 株式会社", kana: "カンサイショウジ", contact: "村田専務", terms: "月末締翌月末払", creditLimit: 1200000, creditUsed: 1180000, group: "S", status: "重点", monthSales: 1480000, ytdSales: 21340000, delays: 0, prefecture: "京都府", startedAt: "2018-04-01" },
-  { code: "WS-007", name: "信越流通", kana: "シンエツリュウツウ", contact: "高橋係長", terms: "10日締翌月末払", creditLimit: 200000, creditUsed: 0, group: "C", status: "新規", monthSales: 0, ytdSales: 84000, delays: 0, prefecture: "長野県", startedAt: "2026-04-01" },
-  { code: "WS-008", name: "南九州ロジスティクス", kana: "ミナミキュウシュウ", contact: "前田室長", terms: "月末締翌々月末払", creditLimit: 400000, creditUsed: 412000, group: "B", status: "通常", monthSales: 224000, ytdSales: 2480000, delays: 2, prefecture: "鹿児島県", startedAt: "2023-08-10" },
-  { code: "WS-009", name: "東北物流ネットワーク", kana: "トウホクブツリュウ", contact: "渡辺所長", terms: "月末締翌月末払", creditLimit: 0, creditUsed: 18000, group: "C", status: "停止", monthSales: 0, ytdSales: 18000, delays: 4, prefecture: "宮城県", startedAt: "2021-01-15" },
-  { code: "WS-010", name: "首都圏卸売市場 株式会社", kana: "シュトケンオロシ", contact: "中村部長", terms: "月末締翌月15日払", creditLimit: 950000, creditUsed: 412000, group: "A", status: "通常", monthSales: 384000, ytdSales: 6248000, delays: 0, prefecture: "東京都", startedAt: "2019-07-22" },
-];
+// storeClients は wholesaleStore に移動。一覧はストアから購読する。
 
 const STATUS_OPTIONS = ["すべて", "通常", "重点", "新規", "停止"] as const;
 const GROUP_OPTIONS = ["すべて", "S", "A", "B", "C"] as const;
@@ -71,6 +61,13 @@ type SortKey = "code" | "name" | "creditLimit" | "creditUsed" | "monthSales" | "
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function WholesalePage() {
+  // wholesaleStore を購読（登録した卸先を即座に一覧に反映）
+  const storeClients = useSyncExternalStore(
+    (cb) => wholesaleStore.subscribe(cb),
+    () => wholesaleStore.getState() as readonly Wholesale[],
+    () => INITIAL_WHOLESALE as readonly Wholesale[],
+  );
+
   // 共有 orderStore / paymentStore を購読し、卸先の与信使用額を live に算出する。
   // seed の creditUsed は legacy outstanding（移行前の未回収）として保持し、
   // 新規 B2B 受注（customerCode 付き）の未回収残額を上乗せして「現在の与信使用額」を表示する。
@@ -105,11 +102,11 @@ export default function WholesalePage() {
       orderTotal: Number(p.orderTotal),
       paidAmount: Number(p.paidAmount),
     }));
-    return ALL_CLIENTS.map((c) => ({
+    return storeClients.map((c) => ({
       ...c,
       creditUsed: c.creditUsed + computeOrderCreditOutstanding(c.code, creditOrders, creditPayments),
     }));
-  }, [orders, payments]);
+  }, [orders, payments, storeClients]);
 
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>("すべて");

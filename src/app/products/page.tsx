@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { productStore } from "@/lib/stores/product";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
 import {
   ChevronLeft,
@@ -56,13 +57,14 @@ const statusMap: Record<ProductStatus, string> = {
 export default function ProductsPage() {
   const toast = useToast();
 
-  // 共有 productStore を購読。商品登録（/products/new）で追加・更新された商品も即座に
-  // ここに反映される。受注作成画面の商品サジェストとも同じインスタンスを共有する。
-  useEffect(() => {
-    if (productStore.getState().length === 0) {
-      productStore.setItems(INITIAL_PRODUCTS);
-    }
-  }, []);
+  // 商品ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  // 商品登録（/products/new）で追加・更新された商品も即座にここに反映され、
+  // 受注作成画面の商品サジェストとも同じインスタンスを共有する。
+  usePersistentStore({
+    store: productStore,
+    domain: "products",
+    seed: INITIAL_PRODUCTS,
+  });
   const items = useSyncExternalStore(
     (cb) => productStore.subscribe(cb),
     () => productStore.getState() as readonly Product[],
@@ -122,20 +124,33 @@ export default function ProductsPage() {
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
         <div className="flex gap-1 p-1 rounded-2xl bg-white/40 backdrop-blur-xl border border-white/50 w-max sm:w-fit">
-          {tabs.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setActiveTab(tab.value)}
-              className={cn(
-                "px-4 py-2 rounded-xl text-sm transition-all duration-200 whitespace-nowrap",
-                activeTab === tab.value
-                  ? "bg-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_8px_rgba(0,0,0,0.06)] text-gray-800 font-medium"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-white/40"
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {tabs.map((tab) =>
+            tab.value === "set" ? (
+              <Link
+                key={tab.value}
+                href="/products/sets"
+                className={cn(
+                  "px-4 py-2 rounded-xl text-sm transition-all duration-200 whitespace-nowrap",
+                  "text-gray-500 hover:text-gray-700 hover:bg-white/40",
+                )}
+              >
+                {tab.label}
+              </Link>
+            ) : (
+              <button
+                key={tab.value}
+                onClick={() => setActiveTab(tab.value)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-sm transition-all duration-200 whitespace-nowrap",
+                  activeTab === tab.value
+                    ? "bg-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_8px_rgba(0,0,0,0.06)] text-gray-800 font-medium"
+                    : "text-gray-500 hover:text-gray-700 hover:bg-white/40",
+                )}
+              >
+                {tab.label}
+              </button>
+            ),
+          )}
         </div>
       </div>
 

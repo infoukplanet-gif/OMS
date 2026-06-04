@@ -1,9 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { wholesaleStore, type WholesaleRecord } from "@/lib/stores/wholesale";
 import {
   Building2,
   MapPin,
@@ -114,19 +117,40 @@ const TAG_OPTIONS = [
   "OEM対応",
 ];
 
-export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
+interface WholesaleFormProps {
+  mode: "create" | "edit";
+  recordId?: string;
+}
+
+export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
   const isEdit = mode === "edit";
+  const toast = useToast();
+  const router = useRouter();
   const [contacts, setContacts] = useState([1]);
   const [shippingPoints, setShippingPoints] = useState([1]);
   const [tags, setTags] = useState<string[]>(isEdit ? ["大口取引", "EDI連携"] : []);
 
-  const d = isEdit
-    ? {
-        code: "WS-001",
-        name: "株式会社ABC商事",
-        contact: "山本部長",
-      }
-    : ({} as Record<string, string>);
+  // 必須フィールドを controlled で管理
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+
+  // 編集モードでは recordId から prefill
+  useEffect(() => {
+    if (!isEdit || !recordId) return;
+    const record = wholesaleStore.findById(recordId);
+    if (record) {
+      setCode(record.code);
+      setName(record.name);
+      setTags(Array.isArray(record.tags) ? (record.tags as string[]) : ["大口取引", "EDI連携"]);
+    }
+  }, [isEdit, recordId]);
+
+  const existingRecord = isEdit && recordId ? wholesaleStore.findById(recordId) : undefined;
+  const d = existingRecord
+    ? { code: existingRecord.code, name: existingRecord.name, contact: String(existingRecord.contact ?? "") }
+    : isEdit
+    ? { code: "WS-001", name: "株式会社ABC商事", contact: "山本部長" }
+    : { code: "", name: "", contact: "" };
 
   const toggleTag = (t: string) =>
     setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -135,6 +159,58 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
   const removeContact = (i: number) => setContacts(contacts.filter((n) => n !== i));
   const addShipPt = () => shippingPoints.length < 8 && setShippingPoints([...shippingPoints, shippingPoints.length + 1]);
   const removeShipPt = (i: number) => setShippingPoints(shippingPoints.filter((n) => n !== i));
+
+  const handleSave = () => {
+    const trimmedCode = code.trim();
+    const trimmedName = name.trim();
+    if (!trimmedCode) {
+      toast.show("取引先コードを入力してください", "error");
+      return;
+    }
+    if (!trimmedName) {
+      toast.show("法人名を入力してください", "error");
+      return;
+    }
+
+    const existing = wholesaleStore.findById(trimmedCode);
+    const now = new Date().toISOString().slice(0, 10);
+
+    const record: WholesaleRecord = {
+      id: trimmedCode,
+      code: trimmedCode,
+      name: trimmedName,
+      kana: String(existing?.kana ?? ""),
+      contact: String(existing?.contact ?? d.contact ?? ""),
+      terms: String(existing?.terms ?? "月末締翌月末払"),
+      creditLimit: Number(existing?.creditLimit ?? 0),
+      creditUsed: Number(existing?.creditUsed ?? 0),
+      group: (existing?.group as WholesaleRecord["group"]) ?? "B",
+      status: (existing?.status as WholesaleRecord["status"]) ?? "通常",
+      monthSales: Number(existing?.monthSales ?? 0),
+      ytdSales: Number(existing?.ytdSales ?? 0),
+      delays: Number(existing?.delays ?? 0),
+      prefecture: String(existing?.prefecture ?? ""),
+      startedAt: String(existing?.startedAt ?? now),
+      tags,
+    };
+
+    const result = wholesaleStore.upsert(record);
+    toast.show(
+      `${trimmedName}（${trimmedCode}）を${result.created ? "登録" : "更新"}しました`,
+      "success"
+    );
+    router.push("/customers/wholesale");
+  };
+
+  const handleDelete = () => {
+    if (!recordId) return;
+    if (!window.confirm(`「${name || d.name}」を削除してよいですか？`)) return;
+    wholesaleStore.remove(recordId);
+    toast.show("卸先を削除しました", "success");
+    router.push("/customers/wholesale");
+  };
+
+  const handleCancel = () => router.push("/customers/wholesale");
 
   return (
     <div className="space-y-5">
@@ -147,14 +223,26 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
         </div>
         <div className="flex gap-2">
           {isEdit && (
-            <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+            >
               削除
             </button>
           )}
-          <button className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
             キャンセル
           </button>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
+          <button
+            type="button"
+            onClick={handleSave}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+          >
             {isEdit ? "更新" : "保存"}
           </button>
         </div>
@@ -162,7 +250,7 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
 
       {isEdit && (
         <div className="text-xs text-gray-500">
-          ダッシュボード &gt; 卸先マスタ &gt; <span className="text-blue-600">{d.name}</span> &gt; 編集
+          ダッシュボード &gt; 卸先マスタ &gt; <span className="text-blue-600">{name || d.name}</span> &gt; 編集
         </div>
       )}
 
@@ -201,9 +289,30 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
           <HelpHint>取引先を識別する法人情報。インボイス登録番号は請求書発行時に必須です。</HelpHint>
         </h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="取引先コード" required placeholder="WS-001" defaultValue={d.code} hint="自動採番設定の場合は空欄で保存してください。" />
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              取引先コード <span className="text-red-500 text-xs">*必須</span>
+              <HelpHint side="right">自動採番設定の場合は空欄で保存してください。</HelpHint>
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="WS-001"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
           <Field label="屋号・通称" placeholder="サンプル商店" />
-          <Field label="法人名" required placeholder="株式会社サンプル" defaultValue={d.name} className="col-span-2" />
+          <div className="space-y-1.5 col-span-2">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              法人名 <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="株式会社サンプル"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
           <Field label="法人名カナ" placeholder="カブシキガイシャサンプル" className="col-span-2" />
           <Field label="法人番号" placeholder="1234567890123" hint="国税庁が指定する13桁の法人番号。" />
           <Field label="インボイス登録番号" placeholder="T1234567890123" hint="2023年10月以降、適格請求書発行に必要。" />
@@ -227,7 +336,11 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
             <HelpHint>取引先の窓口担当者を最大5名まで登録。発注・経理・配送など役割別に登録できます。</HelpHint>
           </h2>
           {contacts.length < 5 && (
-            <button onClick={addContact} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700">
+            <button
+              type="button"
+              onClick={addContact}
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+            >
               <Plus className="h-4 w-4" />担当者を追加
             </button>
           )}
@@ -237,7 +350,11 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-700">担当者 {i}{i === 1 && "（主担当）"}</h3>
               {contacts.length > 1 && (
-                <button onClick={() => removeContact(i)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => removeContact(i)}
+                  className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               )}
@@ -358,7 +475,11 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
             <HelpHint>本社・倉庫・店舗・物流センターなど、納品先を最大8件登録できます。</HelpHint>
           </h2>
           {shippingPoints.length < 8 && (
-            <button onClick={addShipPt} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700">
+            <button
+              type="button"
+              onClick={addShipPt}
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+            >
               <Plus className="h-4 w-4" />配送先を追加
             </button>
           )}
@@ -368,7 +489,11 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-700">配送先 {i}{i === 1 && "（既定）"}</h3>
               {shippingPoints.length > 1 && (
-                <button onClick={() => removeShipPt(i)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => removeShipPt(i)}
+                  className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               )}
@@ -462,14 +587,26 @@ export function WholesaleForm({ mode }: { mode: "create" | "edit" }) {
 
       <div className="flex justify-end gap-2 pt-2">
         {isEdit && (
-          <button className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+          >
             削除
           </button>
         )}
-        <button className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+        >
           キャンセル
         </button>
-        <button className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
+        <button
+          type="button"
+          onClick={handleSave}
+          className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+        >
           {isEdit ? "更新" : "保存"}
         </button>
       </div>

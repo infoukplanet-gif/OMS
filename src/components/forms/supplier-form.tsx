@@ -1,47 +1,206 @@
 "use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { supplierStore, type SupplierRecord } from "@/lib/stores/supplier";
 import { Building2, MapPin, CreditCard, Truck, FileText } from "lucide-react";
 
-const Field = ({ label, required, placeholder, className, type = "text", defaultValue }: { label: string; required?: boolean; placeholder?: string; className?: string; type?: string; defaultValue?: string }) => (
+const Field = ({
+  label,
+  required,
+  placeholder,
+  className,
+  type = "text",
+  defaultValue,
+}: {
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  className?: string;
+  type?: string;
+  defaultValue?: string;
+}) => (
   <div className={cn("space-y-1.5", className)}>
-    <label className="text-sm font-medium text-gray-700">{label} {required && <span className="text-red-500 text-xs">*必須</span>}</label>
-    <input type={type} placeholder={placeholder} defaultValue={defaultValue} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+    <label className="text-sm font-medium text-gray-700">
+      {label} {required && <span className="text-red-500 text-xs">*必須</span>}
+    </label>
+    <input
+      type={type}
+      placeholder={placeholder}
+      defaultValue={defaultValue}
+      className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+    />
   </div>
 );
 
-const Select = ({ label, required, options, className }: { label: string; required?: boolean; options: string[]; className?: string }) => (
+const Select = ({
+  label,
+  required,
+  options,
+  className,
+}: {
+  label: string;
+  required?: boolean;
+  options: string[];
+  className?: string;
+}) => (
   <div className={cn("space-y-1.5", className)}>
-    <label className="text-sm font-medium text-gray-700">{label} {required && <span className="text-red-500 text-xs">*必須</span>}</label>
+    <label className="text-sm font-medium text-gray-700">
+      {label} {required && <span className="text-red-500 text-xs">*必須</span>}
+    </label>
     <select className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-      {options.map(o => <option key={o}>{o}</option>)}
+      {options.map((o) => (
+        <option key={o}>{o}</option>
+      ))}
     </select>
   </div>
 );
 
-export function SupplierForm({ mode }: { mode: "create" | "edit" }) {
+interface SupplierFormProps {
+  mode: "create" | "edit";
+  recordId?: string;
+}
+
+export function SupplierForm({ mode, recordId }: SupplierFormProps) {
   const isEdit = mode === "edit";
-  const d = isEdit ? { code: "SUP-001", name: "株式会社ABC電子", contact: "鈴木 直子" } : {} as Record<string, string>;
+  const toast = useToast();
+  const router = useRouter();
+
+  // 必須フィールドを controlled で管理
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+
+  // 編集モードでは recordId から prefill
+  useEffect(() => {
+    if (!isEdit || !recordId) return;
+    const record = supplierStore.findById(recordId);
+    if (record) {
+      setCode(record.code);
+      setName(record.name);
+    }
+  }, [isEdit, recordId]);
+
+  const existingRecord = isEdit && recordId ? supplierStore.findById(recordId) : undefined;
+  const d = existingRecord
+    ? { code: existingRecord.code, name: existingRecord.name, contact: String(existingRecord.contact ?? "") }
+    : isEdit
+    ? { code: "SUP-001", name: "株式会社ABC電子", contact: "鈴木 直子" }
+    : { code: "", name: "", contact: "" };
+
+  const handleSave = () => {
+    const trimmedCode = code.trim();
+    const trimmedName = name.trim();
+    if (!trimmedCode) {
+      toast.show("仕入先コードを入力してください", "error");
+      return;
+    }
+    if (!trimmedName) {
+      toast.show("仕入先名を入力してください", "error");
+      return;
+    }
+
+    const existing = supplierStore.findById(trimmedCode);
+
+    const record: SupplierRecord = {
+      id: trimmedCode,
+      code: trimmedCode,
+      name: trimmedName,
+      contact: String(existing?.contact ?? d.contact ?? ""),
+      phone: String(existing?.phone ?? ""),
+      email: String(existing?.email ?? ""),
+      monthVolume: Number(existing?.monthVolume ?? 0),
+      ytdVolume: Number(existing?.ytdVolume ?? 0),
+      unpaid: Number(existing?.unpaid ?? 0),
+      leadTime: Number(existing?.leadTime ?? 7),
+      rating: (existing?.rating as SupplierRecord["rating"]) ?? "B",
+      status: (existing?.status as SupplierRecord["status"]) ?? "新規",
+    };
+
+    const result = supplierStore.upsert(record);
+    toast.show(
+      `${trimmedName}（${trimmedCode}）を${result.created ? "登録" : "更新"}しました`,
+      "success"
+    );
+    router.push("/purchasing/suppliers");
+  };
+
+  const handleDelete = () => {
+    if (!recordId) return;
+    if (!window.confirm(`「${name || d.name}」を削除してよいですか？`)) return;
+    supplierStore.remove(recordId);
+    toast.show("仕入先を削除しました", "success");
+    router.push("/purchasing/suppliers");
+  };
+
+  const handleCancel = () => router.push("/purchasing/suppliers");
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">{isEdit ? "仕入先編集" : "仕入先登録"}</h1>
         <div className="flex gap-2">
-          {isEdit && <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">削除</button>}
-          <button className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">キャンセル</button>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">{isEdit ? "更新" : "保存"}</button>
+          {isEdit && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+            >
+              削除
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+          >
+            {isEdit ? "更新" : "保存"}
+          </button>
         </div>
       </div>
 
-      {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 仕入先マスタ &gt; <span className="text-blue-600">{d.name}</span> &gt; 編集</div>}
+      {isEdit && (
+        <div className="text-xs text-gray-500">
+          ダッシュボード &gt; 仕入先マスタ &gt; <span className="text-blue-600">{name || d.name}</span> &gt; 編集
+        </div>
+      )}
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Building2 className="h-4 w-4 text-gray-400" />基本情報</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Building2 className="h-4 w-4 text-gray-400" />基本情報
+        </h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="仕入先コード" required placeholder="SUP-001" defaultValue={d.code} />
-          <Field label="仕入先名" required placeholder="株式会社ABC電子" defaultValue={d.name} className="col-span-2" />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">
+              仕入先コード <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="SUP-001"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
+          <div className="space-y-1.5 col-span-2">
+            <label className="text-sm font-medium text-gray-700">
+              仕入先名 <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="株式会社ABC電子"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
           <Field label="仕入先名カナ" placeholder="カブシキガイシャエービーシーデンシ" />
           <Field label="法人番号" placeholder="1234567890123" />
           <Field label="インボイス登録番号" placeholder="T1234567890123" />
@@ -67,7 +226,9 @@ export function SupplierForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><MapPin className="h-4 w-4 text-gray-400" />連絡先・住所</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-gray-400" />連絡先・住所
+        </h2>
         <div className="grid grid-cols-6 gap-4">
           <Field label="代表電話" required placeholder="03-0000-0000" className="col-span-2" type="tel" />
           <Field label="FAX" placeholder="03-0000-0000" className="col-span-2" type="tel" />
@@ -81,10 +242,15 @@ export function SupplierForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><CreditCard className="h-4 w-4 text-gray-400" />取引条件</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <CreditCard className="h-4 w-4 text-gray-400" />取引条件
+        </h2>
         <div className="grid grid-cols-4 gap-4">
           <Select label="取引区分" required options={["買取", "委託", "預り在庫"]} />
-          <div className="space-y-1.5"><label className="text-sm font-medium text-gray-700">取引開始日</label><DatePicker placeholder="取引開始日を選択" /></div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">取引開始日</label>
+            <DatePicker placeholder="取引開始日を選択" />
+          </div>
           <Select label="通貨" options={["JPY - 日本円", "USD - 米ドル", "EUR - ユーロ", "CNY - 人民元"]} />
           <Select label="課税区分" options={["課税", "免税", "輸入"]} />
           <Select label="締日" options={["毎月末日", "毎月10日", "毎月15日", "毎月20日", "毎月25日"]} />
@@ -111,7 +277,9 @@ export function SupplierForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Truck className="h-4 w-4 text-gray-400" />配送・物流</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Truck className="h-4 w-4 text-gray-400" />配送・物流
+        </h2>
         <div className="grid grid-cols-4 gap-4">
           <Field label="出荷元住所" placeholder="東京都品川区..." className="col-span-2" />
           <Select label="主要配送業者" options={["ヤマト運輸", "佐川急便", "日本郵便", "西濃運輸", "福山通運"]} />
@@ -120,14 +288,40 @@ export function SupplierForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><FileText className="h-4 w-4 text-gray-400" />備考・社内メモ</h2>
-        <textarea rows={4} placeholder="取引履歴、品質情報、社内向けメモなど..." className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none" />
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <FileText className="h-4 w-4 text-gray-400" />備考・社内メモ
+        </h2>
+        <textarea
+          rows={4}
+          placeholder="取引履歴、品質情報、社内向けメモなど..."
+          className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+        />
       </GlassCard>
 
       <div className="flex justify-end gap-2 pt-2">
-        {isEdit && <button className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">削除</button>}
-        <button className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">キャンセル</button>
-        <button className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">{isEdit ? "更新" : "保存"}</button>
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+          >
+            削除
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+        >
+          キャンセル
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+        >
+          {isEdit ? "更新" : "保存"}
+        </button>
       </div>
     </div>
   );

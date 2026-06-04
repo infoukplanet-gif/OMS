@@ -1,9 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { customerStore, type CustomerRecord } from "@/lib/stores/customer";
 import {
   Plus,
   Trash2,
@@ -125,13 +128,30 @@ const TAG_OPTIONS = [
 
 interface CustomerFormProps {
   mode: "create" | "edit";
-  initialData?: Record<string, unknown>;
+  recordId?: string;
 }
 
-export function CustomerForm({ mode }: CustomerFormProps) {
-  const [shippingAddresses, setShippingAddresses] = useState([1, 2]);
-  const [tags, setTags] = useState<string[]>(mode === "edit" ? ["リピーター", "ギフト購入多"] : []);
+export function CustomerForm({ mode, recordId }: CustomerFormProps) {
   const isEdit = mode === "edit";
+  const toast = useToast();
+  const router = useRouter();
+  const [shippingAddresses, setShippingAddresses] = useState([1, 2]);
+  const [tags, setTags] = useState<string[]>(isEdit ? ["リピーター", "ギフト購入多"] : []);
+
+  // 必須フィールドを controlled で管理する
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+
+  // 編集モードでは recordId から prefill
+  useEffect(() => {
+    if (!isEdit || !recordId) return;
+    const record = customerStore.findById(recordId);
+    if (record) {
+      setCode(record.code);
+      setName(record.name);
+      setTags(Array.isArray(record.tags) ? (record.tags as string[]) : isEdit ? ["リピーター", "ギフト購入多"] : []);
+    }
+  }, [isEdit, recordId]);
 
   const addAddress = () => {
     if (shippingAddresses.length < 5) setShippingAddresses([...shippingAddresses, shippingAddresses.length + 1]);
@@ -141,15 +161,70 @@ export function CustomerForm({ mode }: CustomerFormProps) {
   const toggleTag = (t: string) =>
     setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
-  const d = isEdit
+  // 既存の表示用データ（編集モードのプレースホルダー用）
+  const existingRecord = isEdit && recordId ? customerStore.findById(recordId) : undefined;
+  const d = existingRecord
     ? {
-        code: "CUS-0001",
-        name: "山田 太郎",
-        kana: "ヤマダ タロウ",
-        email: "yamada@example.com",
-        tel: "090-1234-5678",
+        code: existingRecord.code,
+        name: existingRecord.name,
+        kana: String(existingRecord.kana ?? ""),
+        email: String(existingRecord.email ?? ""),
+        tel: String(existingRecord.phone ?? ""),
       }
-    : ({} as Record<string, string>);
+    : isEdit
+    ? { code: "CUS-0001", name: "山田 太郎", kana: "ヤマダ タロウ", email: "yamada@example.com", tel: "090-1234-5678" }
+    : { code: "", name: "", kana: "", email: "", tel: "" };
+
+  const handleSave = () => {
+    const trimmedCode = code.trim();
+    const trimmedName = name.trim();
+    if (!trimmedCode) {
+      toast.show("顧客コードを入力してください", "error");
+      return;
+    }
+    if (!trimmedName) {
+      toast.show("顧客名を入力してください", "error");
+      return;
+    }
+
+    const now = new Date().toISOString().slice(0, 10);
+    const existing = customerStore.findById(trimmedCode);
+
+    const record: CustomerRecord = {
+      id: trimmedCode,
+      code: trimmedCode,
+      name: trimmedName,
+      kana: String(existing?.kana ?? ""),
+      email: String(existing?.email ?? d.email ?? ""),
+      phone: String(existing?.phone ?? d.tel ?? ""),
+      prefecture: String(existing?.prefecture ?? ""),
+      purchases: Number(existing?.purchases ?? 0),
+      total: Number(existing?.total ?? 0),
+      lastPurchase: String(existing?.lastPurchase ?? now),
+      registered: String(existing?.registered ?? now),
+      rank: (existing?.rank as CustomerRecord["rank"]) ?? "通常",
+      vip: Boolean(existing?.vip ?? false),
+      kind: "general",
+      tags,
+    };
+
+    const result = customerStore.upsert(record);
+    toast.show(
+      `${trimmedName}（${trimmedCode}）を${result.created ? "登録" : "更新"}しました`,
+      "success"
+    );
+    router.push("/customers");
+  };
+
+  const handleDelete = () => {
+    if (!recordId) return;
+    if (!window.confirm(`「${name || d.name}」を削除してよいですか？`)) return;
+    customerStore.remove(recordId);
+    toast.show("顧客を削除しました", "success");
+    router.push("/customers");
+  };
+
+  const handleCancel = () => router.push("/customers");
 
   return (
     <div className="space-y-5">
@@ -162,14 +237,26 @@ export function CustomerForm({ mode }: CustomerFormProps) {
         </div>
         <div className="flex gap-2">
           {isEdit && (
-            <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+            >
               削除
             </button>
           )}
-          <button className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
             キャンセル
           </button>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all">
+          <button
+            type="button"
+            onClick={handleSave}
+            className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+          >
             {isEdit ? "更新" : "保存"}
           </button>
         </div>
@@ -177,7 +264,7 @@ export function CustomerForm({ mode }: CustomerFormProps) {
 
       {isEdit && (
         <div className="text-xs text-gray-500">
-          ダッシュボード &gt; 顧客一覧 &gt; <span className="text-blue-600">{d.name}</span> &gt; 編集
+          ダッシュボード &gt; 顧客一覧 &gt; <span className="text-blue-600">{name || d.name}</span> &gt; 編集
         </div>
       )}
 
@@ -216,9 +303,30 @@ export function CustomerForm({ mode }: CustomerFormProps) {
           <HelpHint>顧客を識別する基本項目。コードは自動採番運用も可能です（システム設定）。</HelpHint>
         </h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="顧客コード" required placeholder="CUS-0001" defaultValue={d.code} hint="自動採番設定の場合は空欄で保存してください。" />
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              顧客コード <span className="text-red-500 text-xs">*必須</span>
+              <HelpHint side="right">自動採番設定の場合は空欄で保存してください。</HelpHint>
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="CUS-0001"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
           <Select label="顧客タイプ" options={["個人", "法人", "団体"]} hint="法人を選ぶと請求書宛名が法人名で出力されます。" />
-          <Field label="顧客名（姓 名）" required placeholder="山田 太郎" defaultValue={d.name} />
+          <div className="space-y-1.5 col-span-2">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              顧客名（姓 名） <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="山田 太郎"
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+            />
+          </div>
           <Field label="顧客名カナ" placeholder="ヤマダ タロウ" defaultValue={d.kana} hint="検索性のため必ず入力推奨。半角/全角は自動正規化されます。" />
           <Field label="ニックネーム" placeholder="タロちゃん" />
           <Select label="性別" options={["未設定", "男性", "女性", "その他"]} />
@@ -287,6 +395,7 @@ export function CustomerForm({ mode }: CustomerFormProps) {
           </h2>
           {shippingAddresses.length < 5 && (
             <button
+              type="button"
               onClick={addAddress}
               className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
             >
@@ -299,6 +408,7 @@ export function CustomerForm({ mode }: CustomerFormProps) {
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-700">送付先 {i}</h3>
               <button
+                type="button"
                 onClick={() => removeAddress(i)}
                 className="p-1 text-gray-400 hover:text-red-500 transition-colors"
               >
@@ -491,14 +601,26 @@ export function CustomerForm({ mode }: CustomerFormProps) {
 
       <div className="flex justify-end gap-2 pt-2">
         {isEdit && (
-          <button className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all"
+          >
             削除
           </button>
         )}
-        <button className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+        >
           キャンセル
         </button>
-        <button className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all">
+        <button
+          type="button"
+          onClick={handleSave}
+          className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+        >
           {isEdit ? "更新" : "保存"}
         </button>
       </div>

@@ -88,6 +88,7 @@ const menuItems: MenuItem[] = [
       { label: "商品登録", href: "/products/new" },
       { label: "商品一括登録", href: "/products/import" },
       { label: "モール商品一括登録", href: "/products/mall-import" },
+      { label: "セット商品一覧", href: "/products/sets" },
       { label: "セット商品登録", href: "/products/sets/new" },
       { label: "商品マスタダウンロード", href: "/products/master-download" },
       { label: "在庫管理", href: "/products/inventory" },

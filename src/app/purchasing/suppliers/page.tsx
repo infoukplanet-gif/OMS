@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { cn } from "@/lib/utils";
 import { Plus, Upload, Pencil, Search, Building2, Truck, Banknote, AlertTriangle, Download } from "lucide-react";
+import { supplierStore, INITIAL_SUPPLIERS } from "@/lib/stores/supplier";
 
 type Supplier = {
   code: string;
@@ -21,36 +22,35 @@ type Supplier = {
   status: "取引中" | "停止中" | "新規";
 };
 
-const SUPPLIERS: Supplier[] = [
-  { code: "SUP-001", name: "株式会社ABC電子", contact: "佐藤一郎", phone: "03-1234-5678", email: "sato@abc-elec.co.jp", monthVolume: 1284000, ytdVolume: 18420000, unpaid: 245000, leadTime: 7, rating: "A", status: "取引中" },
-  { code: "SUP-002", name: "グローバルパーツ合同会社", contact: "田中明", phone: "06-2345-6789", email: "tanaka@globalparts.jp", monthVolume: 248000, ytdVolume: 4280000, unpaid: 128000, leadTime: 14, rating: "B", status: "取引中" },
-  { code: "SUP-003", name: "株式会社ケーブルワークス", contact: "鈴木直子", phone: "045-3456-7890", email: "suzuki@cableworks.jp", monthVolume: 56000, ytdVolume: 1840000, unpaid: 0, leadTime: 5, rating: "A", status: "取引中" },
-  { code: "SUP-004", name: "アジアサプライ株式会社", contact: "高橋裕", phone: "03-4567-8901", email: "takahashi@asiasupply.co.jp", monthVolume: 0, ytdVolume: 1240000, unpaid: 84000, leadTime: 30, rating: "C", status: "停止中" },
-  { code: "SUP-005", name: "株式会社東京物流", contact: "中村健太", phone: "03-5678-9012", email: "nakamura@tokyologi.co.jp", monthVolume: 0, ytdVolume: 0, unpaid: 0, leadTime: 3, rating: "A", status: "新規" },
-];
+// SUPPLIERS は supplierStore に移動。一覧はストアから購読する。
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function PurchasingSuppliersPage() {
+  const suppliers = useSyncExternalStore(
+    (cb) => supplierStore.subscribe(cb),
+    () => supplierStore.getState() as readonly Supplier[],
+    () => INITIAL_SUPPLIERS as readonly Supplier[],
+  );
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("すべて");
   const [ratingFilter, setRatingFilter] = useState("すべて");
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
-    return SUPPLIERS.filter((s) => {
+    return suppliers.filter((s) => {
       if (k && !s.code.toLowerCase().includes(k) && !s.name.toLowerCase().includes(k) && !s.contact.toLowerCase().includes(k)) return false;
       if (statusFilter !== "すべて" && s.status !== statusFilter) return false;
       if (ratingFilter !== "すべて" && s.rating !== ratingFilter) return false;
       return true;
     });
-  }, [keyword, statusFilter, ratingFilter]);
+  }, [keyword, statusFilter, ratingFilter, suppliers]);
 
   const stats = {
-    active: SUPPLIERS.filter((s) => s.status === "取引中").length,
-    monthTotal: SUPPLIERS.reduce((s, x) => s + x.monthVolume, 0),
-    unpaidTotal: SUPPLIERS.reduce((s, x) => s + x.unpaid, 0),
-    avgLead: Math.round(SUPPLIERS.filter((s) => s.status === "取引中").reduce((s, x) => s + x.leadTime, 0) / Math.max(1, SUPPLIERS.filter((s) => s.status === "取引中").length)),
+    active: suppliers.filter((s) => s.status === "取引中").length,
+    monthTotal: suppliers.reduce((s, x) => s + x.monthVolume, 0),
+    unpaidTotal: suppliers.reduce((s, x) => s + x.unpaid, 0),
+    avgLead: Math.round(suppliers.filter((s) => s.status === "取引中").reduce((s, x) => s + x.leadTime, 0) / Math.max(1, suppliers.filter((s) => s.status === "取引中").length)),
   };
 
   return (

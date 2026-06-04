@@ -1,26 +1,78 @@
 "use client";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, Package, DollarSign, Globe, Image as ImageIcon, Upload, Boxes, FileText } from "lucide-react";
+import { setProductStore, type SetProductRecord } from "@/lib/stores/set-product";
+import {
+  Plus,
+  Trash2,
+  Package,
+  DollarSign,
+  Globe,
+  Image as ImageIcon,
+  Upload,
+  Boxes,
+  FileText,
+} from "lucide-react";
 
-const Field = ({ label, required, placeholder, className, type = "text", defaultValue }: { label: string; required?: boolean; placeholder?: string; className?: string; type?: string; defaultValue?: string }) => (
+const Field = ({
+  label,
+  required,
+  placeholder,
+  className,
+  type = "text",
+  defaultValue,
+}: {
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  className?: string;
+  type?: string;
+  defaultValue?: string;
+}) => (
   <div className={cn("space-y-1.5", className)}>
-    <label className="text-sm font-medium text-gray-700">{label} {required && <span className="text-red-500 text-xs">*必須</span>}</label>
-    <input type={type} placeholder={placeholder} defaultValue={defaultValue} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+    <label className="text-sm font-medium text-gray-700">
+      {label} {required && <span className="text-red-500 text-xs">*必須</span>}
+    </label>
+    <input
+      type={type}
+      placeholder={placeholder}
+      defaultValue={defaultValue}
+      className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+    />
   </div>
 );
 
-const Select = ({ label, required, options, className, value, onChange }: { label: string; required?: boolean; options: string[]; className?: string; value?: string; onChange?: (v: string) => void }) => (
+const Select = ({
+  label,
+  required,
+  options,
+  className,
+  value,
+  onChange,
+}: {
+  label: string;
+  required?: boolean;
+  options: string[];
+  className?: string;
+  value?: string;
+  onChange?: (v: string) => void;
+}) => (
   <div className={cn("space-y-1.5", className)}>
-    <label className="text-sm font-medium text-gray-700">{label} {required && <span className="text-red-500 text-xs">*必須</span>}</label>
+    <label className="text-sm font-medium text-gray-700">
+      {label} {required && <span className="text-red-500 text-xs">*必須</span>}
+    </label>
     <select
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
       className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
     >
-      {options.map((o) => <option key={o}>{o}</option>)}
+      {options.map((o) => (
+        <option key={o}>{o}</option>
+      ))}
     </select>
   </div>
 );
@@ -52,10 +104,24 @@ const initialComponents: Component[] = [
   { id: 3, sku: "CBL-007", name: "USB-Cケーブル 1m", variation: "白", quantity: 1, unitPrice: 980, cost: 220, required: false },
 ];
 
-export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
+interface SetProductFormProps {
+  mode: "create" | "edit";
+  recordId?: string;
+}
+
+export function SetProductForm({ mode, recordId }: SetProductFormProps) {
   const isEdit = mode === "edit";
+  const router = useRouter();
+  const toast = useToast();
+
+  const existing = recordId ? setProductStore.findById(recordId) : undefined;
+
+  const [code, setCode] = useState(existing?.code ?? "");
+  const [name, setName] = useState(existing?.name ?? "");
+  const [category, setCategory] = useState(existing?.category ?? "セット・福袋");
+  const [status, setStatus] = useState<SetProductRecord["status"]>(existing?.status ?? "販売中");
   const [components, setComponents] = useState<Component[]>(initialComponents);
-  const [setPrice, setSetPrice] = useState<number>(13800);
+  const [setPrice, setSetPrice] = useState<number>(existing?.setPrice ?? 13800);
   const [stockMode, setStockMode] = useState("構成品在庫に連動");
 
   const totals = useMemo(() => {
@@ -69,10 +135,19 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
   }, [components, setPrice]);
 
   function addComponent() {
-    setComponents((prev) => [...prev, {
-      id: Math.max(0, ...prev.map((c) => c.id)) + 1,
-      sku: "", name: "", variation: "", quantity: 1, unitPrice: 0, cost: 0, required: true,
-    }]);
+    setComponents((prev) => [
+      ...prev,
+      {
+        id: Math.max(0, ...prev.map((c) => c.id)) + 1,
+        sku: "",
+        name: "",
+        variation: "",
+        quantity: 1,
+        unitPrice: 0,
+        cost: 0,
+        required: true,
+      },
+    ]);
   }
 
   function updateComponent<K extends keyof Component>(id: number, key: K, value: Component[K]) {
@@ -83,41 +158,161 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
     setComponents((prev) => prev.filter((c) => c.id !== id));
   }
 
+  function validate(): string | null {
+    if (!code.trim()) return "セット商品コードは必須です";
+    if (!name.trim()) return "セット商品名は必須です";
+    if (components.length === 0) return "構成商品を1件以上追加してください";
+    return null;
+  }
+
+  function handleSave() {
+    const err = validate();
+    if (err) {
+      toast.show(err, "error");
+      return;
+    }
+    const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "/");
+    const record: SetProductRecord = {
+      id: existing?.id ?? `SP${Date.now()}`,
+      code: code.trim(),
+      name: name.trim(),
+      category,
+      status,
+      setPrice,
+      totalCost: totals.costTotal,
+      componentCount: components.length,
+      updated: today,
+    };
+    setProductStore.upsert(record);
+    toast.show(isEdit ? "セット商品を更新しました" : "セット商品を登録しました", "success");
+    router.push("/products/sets");
+  }
+
+  function handleDelete() {
+    if (!recordId) return;
+    if (!window.confirm("このセット商品を削除しますか？")) return;
+    setProductStore.remove(recordId);
+    toast.show("セット商品を削除しました", "info");
+    router.push("/products/sets");
+  }
+
+  function handleCancel() {
+    router.push("/products/sets");
+  }
+
+  const ActionButtons = (
+    <div className="flex gap-2">
+      {isEdit && (
+        <button
+          onClick={handleDelete}
+          className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25"
+        >
+          削除
+        </button>
+      )}
+      <button
+        onClick={handleCancel}
+        className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+      >
+        キャンセル
+      </button>
+      <button
+        onClick={handleSave}
+        className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90"
+      >
+        {isEdit ? "更新" : "保存"}
+      </button>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">{isEdit ? "セット商品編集" : "セット商品登録"}</h1>
-        <div className="flex gap-2">
-          {isEdit && <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">削除</button>}
-          <button className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">キャンセル</button>
-          <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">{isEdit ? "更新" : "保存"}</button>
-        </div>
+        <h1 className="text-2xl font-bold text-gray-800">
+          {isEdit ? "セット商品編集" : "セット商品登録"}
+        </h1>
+        {ActionButtons}
       </div>
-      {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 商品一覧 &gt; セット商品 &gt; <span className="text-blue-600">スターターパック</span> &gt; 編集</div>}
+      {isEdit && (
+        <div className="text-xs text-gray-500">
+          商品管理 &gt; セット商品 &gt;{" "}
+          <span className="text-blue-600">{existing?.name ?? "（不明）"}</span> &gt; 編集
+        </div>
+      )}
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Package className="h-4 w-4 text-gray-400" />基本情報</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Package className="h-4 w-4 text-gray-400" />基本情報
+        </h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="セット商品コード" required placeholder="SET-001" />
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">
+              セット商品コード <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              type="text"
+              placeholder="SET-001"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <Field label="JANコード" placeholder="4580123456789" />
-          <Field label="セット商品名" required placeholder="スターターパック" className="col-span-2" />
+          <div className="col-span-2 space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">
+              セット商品名 <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              type="text"
+              placeholder="スターターパック"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
           <Field label="セット商品名カナ" placeholder="スターターパック" className="col-span-2" />
           <Field label="英文商品名" placeholder="Starter Pack" className="col-span-2" />
-          <Select label="カテゴリ" required options={["セット・福袋", "ギフトセット", "お試しセット", "定期便"]} />
+          <Select
+            label="カテゴリ"
+            required
+            options={["セット・福袋", "ギフトセット", "お試しセット", "定期便"]}
+            value={category}
+            onChange={setCategory}
+          />
           <Field label="ブランド" placeholder="SAMPLE BRAND" />
-          <Select label="ステータス" required options={["販売中", "停止中", "予約販売", "廃番"]} />
-          <Select label="販売チャネル" options={["全チャネル", "EC のみ", "卸のみ", "モール限定"]} />
+          <Select
+            label="ステータス"
+            required
+            options={["販売中", "停止中", "予約販売", "廃番"]}
+            value={status}
+            onChange={(v) => setStatus(v as SetProductRecord["status"])}
+          />
+          <Select
+            label="販売チャネル"
+            options={["全チャネル", "ECのみ", "卸のみ", "モール限定"]}
+          />
           <div className="col-span-4 space-y-1.5">
             <label className="text-sm font-medium text-gray-700">セット内容の説明</label>
-            <textarea rows={3} placeholder="セット内容の魅力や特徴を説明..." className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none" />
+            <textarea
+              rows={3}
+              placeholder="セット内容の魅力や特徴を説明..."
+              className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+            />
           </div>
         </div>
       </GlassCard>
 
       <GlassCard>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2"><Boxes className="h-4 w-4 text-gray-400" />構成商品</h2>
-          <button onClick={addComponent} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"><Plus className="h-4 w-4" />商品を追加</button>
+          <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+            <Boxes className="h-4 w-4 text-gray-400" />構成商品
+          </h2>
+          <button
+            onClick={addComponent}
+            className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+          >
+            <Plus className="h-4 w-4" />商品を追加
+          </button>
         </div>
         <div className="overflow-x-auto rounded-xl border border-white/50">
           <table className="w-full text-sm">
@@ -138,34 +333,82 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
               {components.map((c) => (
                 <tr key={c.id} className="border-t border-white/30">
                   <td className="px-3 py-2">
-                    <input value={c.sku} onChange={(e) => updateComponent(c.id, "sku", e.target.value)} className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50" placeholder="WEP-001" />
+                    <input
+                      value={c.sku}
+                      onChange={(e) => updateComponent(c.id, "sku", e.target.value)}
+                      className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50"
+                      placeholder="WEP-001"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <input value={c.name} onChange={(e) => updateComponent(c.id, "name", e.target.value)} className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50" placeholder="商品名" />
+                    <input
+                      value={c.name}
+                      onChange={(e) => updateComponent(c.id, "name", e.target.value)}
+                      className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50"
+                      placeholder="商品名"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <input value={c.variation} onChange={(e) => updateComponent(c.id, "variation", e.target.value)} className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50" placeholder="ブラック" />
+                    <input
+                      value={c.variation}
+                      onChange={(e) => updateComponent(c.id, "variation", e.target.value)}
+                      className="h-7 w-full px-2 rounded-lg text-xs bg-white/50 border border-white/50"
+                      placeholder="ブラック"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <input type="number" min={1} value={c.quantity} onChange={(e) => updateComponent(c.id, "quantity", Number(e.target.value))} className="h-7 w-16 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-center" />
+                    <input
+                      type="number"
+                      min={1}
+                      value={c.quantity}
+                      onChange={(e) => updateComponent(c.id, "quantity", Number(e.target.value))}
+                      className="h-7 w-16 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-center"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <input type="number" value={c.unitPrice} onChange={(e) => updateComponent(c.id, "unitPrice", Number(e.target.value))} className="h-7 w-24 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-right" />
+                    <input
+                      type="number"
+                      value={c.unitPrice}
+                      onChange={(e) => updateComponent(c.id, "unitPrice", Number(e.target.value))}
+                      className="h-7 w-24 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-right"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <input type="number" value={c.cost} onChange={(e) => updateComponent(c.id, "cost", Number(e.target.value))} className="h-7 w-24 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-right" />
+                    <input
+                      type="number"
+                      value={c.cost}
+                      onChange={(e) => updateComponent(c.id, "cost", Number(e.target.value))}
+                      className="h-7 w-24 px-2 rounded-lg text-xs bg-white/50 border border-white/50 text-right"
+                    />
                   </td>
-                  <td className="px-3 py-2 text-right text-gray-700 text-xs font-medium">¥{(c.unitPrice * c.quantity).toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right text-gray-700 text-xs font-medium">
+                    ¥{(c.unitPrice * c.quantity).toLocaleString()}
+                  </td>
                   <td className="px-3 py-2 text-center">
-                    <input type="checkbox" checked={c.required} onChange={(e) => updateComponent(c.id, "required", e.target.checked)} className="rounded" />
+                    <input
+                      type="checkbox"
+                      checked={c.required}
+                      onChange={(e) => updateComponent(c.id, "required", e.target.checked)}
+                      className="rounded"
+                    />
                   </td>
                   <td className="px-3 py-2">
-                    <button onClick={() => removeComponent(c.id)} aria-label="削除" className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button
+                      onClick={() => removeComponent(c.id)}
+                      aria-label="削除"
+                      className="p-1 text-gray-400 hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))}
               {components.length === 0 && (
-                <tr><td colSpan={9} className="py-6 text-center text-xs text-gray-500">構成商品を追加してください</td></tr>
+                <tr>
+                  <td colSpan={9} className="py-6 text-center text-xs text-gray-500">
+                    構成商品を追加してください
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -173,24 +416,41 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><DollarSign className="h-4 w-4 text-gray-400" />価格設定</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-gray-400" />価格設定
+        </h2>
         <div className="grid grid-cols-4 gap-4 mb-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">セット販売価格 <span className="text-red-500 text-xs">*必須</span></label>
-            <input type="number" value={setPrice} onChange={(e) => setSetPrice(Number(e.target.value))} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            <label className="text-sm font-medium text-gray-700">
+              セット販売価格 <span className="text-red-500 text-xs">*必須</span>
+            </label>
+            <input
+              type="number"
+              value={setPrice}
+              onChange={(e) => setSetPrice(Number(e.target.value))}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
           </div>
           <Field label="会員価格" type="number" placeholder="12800" />
           <Field label="卸価格" type="number" placeholder="9800" />
           <Select label="税率" options={["10%（標準）", "8%（軽減）", "0%（非課税）"]} />
           <Field label="ポイント倍率" type="number" defaultValue="1" />
-          <div className="space-y-1.5"><label className="text-sm font-medium text-gray-700">販売開始日</label><DatePicker placeholder="開始日" /></div>
-          <div className="space-y-1.5"><label className="text-sm font-medium text-gray-700">販売終了日</label><DatePicker placeholder="終了日" /></div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">販売開始日</label>
+            <DatePicker placeholder="開始日" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-gray-700">販売終了日</label>
+            <DatePicker placeholder="終了日" />
+          </div>
           <Field label="販売数量上限" type="number" placeholder="制限なし" />
         </div>
         <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/60">
           <div className="p-3 rounded-xl bg-white/60 border border-white/60">
             <div className="text-xs text-gray-500">構成品 通常合計</div>
-            <div className="text-lg font-bold text-gray-800 mt-0.5">¥{totals.normalTotal.toLocaleString()}</div>
+            <div className="text-lg font-bold text-gray-800 mt-0.5">
+              ¥{totals.normalTotal.toLocaleString()}
+            </div>
           </div>
           <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-400/40">
             <div className="text-xs text-blue-700">セット割引</div>
@@ -224,14 +484,19 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
               <Field label="安全在庫数" type="number" placeholder="10" />
             </>
           )}
-          <Select label="構成品欠品時の動作" options={["販売停止", "欠品表示のまま販売", "代替品を自動提案"]} />
+          <Select
+            label="構成品欠品時の動作"
+            options={["販売停止", "欠品表示のまま販売", "代替品を自動提案"]}
+          />
           <Select label="引当順序" options={["セット優先", "単品優先"]} />
           <Field label="リードタイム(日)" type="number" placeholder="3" />
         </div>
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><Globe className="h-4 w-4 text-gray-400" />モール掲載設定</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <Globe className="h-4 w-4 text-gray-400" />モール掲載設定
+        </h2>
         <div className="grid grid-cols-3 gap-2 mb-4">
           <Toggle label="楽天市場に掲載" defaultChecked />
           <Toggle label="Amazonに掲載" />
@@ -249,10 +514,15 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><ImageIcon className="h-4 w-4 text-gray-400" />セット商品画像</h2>
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <ImageIcon className="h-4 w-4 text-gray-400" />セット商品画像
+        </h2>
         <div className="grid grid-cols-5 gap-3">
           {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <div key={i} className="aspect-square flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300/50 bg-white/30 hover:bg-white/50 transition-colors cursor-pointer">
+            <div
+              key={i}
+              className="aspect-square flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300/50 bg-white/30 hover:bg-white/50 transition-colors cursor-pointer"
+            >
               <Upload className="h-5 w-5 text-gray-400" />
               <p className="text-[10px] text-gray-400 mt-1">{i === 1 ? "メイン" : `サブ${i - 1}`}</p>
             </div>
@@ -273,14 +543,37 @@ export function SetProductForm({ mode }: { mode: "create" | "edit" }) {
       </GlassCard>
 
       <GlassCard>
-        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><FileText className="h-4 w-4 text-gray-400" />備考・社内メモ</h2>
-        <textarea rows={3} placeholder="セット組成の意図、仕入れ先、販促メモなど..." className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none" />
+        <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <FileText className="h-4 w-4 text-gray-400" />備考・社内メモ
+        </h2>
+        <textarea
+          rows={3}
+          placeholder="セット組成の意図、仕入れ先、販促メモなど..."
+          className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+        />
       </GlassCard>
 
       <div className="flex justify-end gap-2 pt-2">
-        {isEdit && <button className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25">削除</button>}
-        <button className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">キャンセル</button>
-        <button className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">{isEdit ? "更新" : "保存"}</button>
+        {isEdit && (
+          <button
+            onClick={handleDelete}
+            className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25"
+          >
+            削除
+          </button>
+        )}
+        <button
+          onClick={handleCancel}
+          className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+        >
+          キャンセル
+        </button>
+        <button
+          onClick={handleSave}
+          className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90"
+        >
+          {isEdit ? "更新" : "保存"}
+        </button>
       </div>
     </div>
   );

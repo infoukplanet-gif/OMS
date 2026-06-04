@@ -12,6 +12,7 @@ import {
   purchaseStatusBadge,
 } from "@/lib/state-machines/purchase";
 import { purchaseStore } from "@/lib/stores/purchase";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
@@ -54,11 +55,15 @@ const suppliers = [
 ];
 
 export default function PurchasingPage() {
-  // shared store seeding（最初にマウントされた画面が空ストアを埋める）。
+  // 発注ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  usePersistentStore({
+    store: purchaseStore,
+    domain: "purchases",
+    seed: INITIAL_PURCHASE_ORDERS,
+  });
+  // inventory は自分のオーナーページが永続化する。ここでは入荷 cascade の対象を
+  // 埋めるための防御的シードのみ。
   useEffect(() => {
-    if (purchaseStore.getState().length === 0) {
-      purchaseStore.setItems(INITIAL_PURCHASE_ORDERS);
-    }
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }
