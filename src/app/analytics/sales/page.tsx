@@ -7,6 +7,7 @@ import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { salesStore, type SalesEntry } from "@/lib/stores/sales";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { ArrowDown, ArrowUp, Download, Truck, TrendingDown, TrendingUp } from "lucide-react";
 
 type DailyRow = {
@@ -48,6 +49,13 @@ const EMPTY_LEDGER: readonly SalesEntry[] = [];
 export default function AnalyticsSalesPage() {
   const toast = useToast();
 
+  // 売上ドメインの正規オーナーページ: 確定売上台帳を restore → 変更を debounce 永続化。
+  // seed は空（台帳は出荷確定 cascade が salesStore.recognize で積み上げる）。
+  usePersistentStore({
+    store: salesStore,
+    domain: "sales",
+    seed: EMPTY_LEDGER,
+  });
   // 出荷確定で計上された確定売上台帳（出荷確定 cascade が salesStore.recognize で積む）
   const ledger = useSyncExternalStore(
     salesStore.subscribe,

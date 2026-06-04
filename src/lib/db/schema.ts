@@ -1,25 +1,34 @@
 /**
- * Drizzle schema（v1: orderStore snapshot/restore のみ）。
+ * Drizzle schema（v2: 全ドメイン共通の snapshot/restore）。
  *
- * 仕様: docs/prd/order-state-machine.md / project_stores_horizontal_v1
+ * 仕様: docs/prd/order-state-machine.md / project_stores_horizontal_v1 / project_persistence_e2e_v1
  *
- * v1 では orderStore 全体を単一 JSONB として保存する key-value 方式を採用する。
- * シナリオが「snapshot / restore」だけのため、行単位の細かい更新は不要。
- * workspace カラムで複数テナント拡張に備えるが、v1 では 'default' 固定。
+ * v1 は orders 専用の `order_snapshots` テーブルだったが、payment / shipment /
+ * inventory / product / purchase / return / sales も同じ「store 全体を JSONB で
+ * snapshot / restore する」形のため、ドメインを列で持つ単一テーブルに統一した。
  *
- * v2 で payment / shipment / inventory / purchase のスナップショットも追加する想定。
+ * - (workspace, domain) の複合主キーで 1 ストア = 1 行
+ * - workspace はマルチテナント拡張用（v2 は "default" 固定。本番 DB 接続前に
+ *   server action 認証 + セッション由来の workspace 化が必須 — 下記 actions の注記参照）
+ * - domain は SnapshotDomain（"orders" | "inventory" | ...）と一致させる
  */
 
-import { pgTable, text, jsonb, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, jsonb, timestamp, primaryKey } from "drizzle-orm/pg-core";
 
-export const orderSnapshotsTable = pgTable("order_snapshots", {
-  /** マルチテナント拡張用キー。v1 は "default" 固定。 */
-  workspace: text("workspace").primaryKey(),
-  /** orderStore.getState() の JSON 全体（OrderSeed[] 相当） */
-  data: jsonb("data").notNull(),
-  /** 監査用最終更新時刻 */
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const storeSnapshotsTable = pgTable(
+  "store_snapshots",
+  {
+    /** マルチテナント拡張用キー。v2 は "default" 固定。 */
+    workspace: text("workspace").notNull(),
+    /** ストア種別。SnapshotDomain と一致（"orders" | "inventory" | ...）。 */
+    domain: text("domain").notNull(),
+    /** store.getState() の JSON 全体（各ドメインの Record[] 相当）。 */
+    data: jsonb("data").notNull(),
+    /** 監査用最終更新時刻。 */
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.workspace, table.domain] })],
+);
 
-export type OrderSnapshotRow = typeof orderSnapshotsTable.$inferSelect;
-export type OrderSnapshotInsert = typeof orderSnapshotsTable.$inferInsert;
+export type StoreSnapshotRow = typeof storeSnapshotsTable.$inferSelect;
+export type StoreSnapshotInsert = typeof storeSnapshotsTable.$inferInsert;

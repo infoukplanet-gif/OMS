@@ -24,7 +24,7 @@ import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
-import { restoreOrders, snapshotOrders } from "./actions";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
   Search,
   Plus,
@@ -68,49 +68,23 @@ const fmtDate = (d: Date | undefined) =>
   d ? `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}` : "";
 
 export default function OrdersPage() {
-  // 共有 orderStore に subscribe して画面横断の状態を読む。
-  // 初回 mount:
-  //   1) 永続化されたスナップショットがあれば server action から取得して setItems
-  //   2) なければ INITIAL_ORDERS を seed
-  // 以降の orderStore 変更を 500ms debounce でサーバに snapshot する。
-  // DATABASE_URL 未設定時は restoreOrders=null / snapshotOrders=no-db で
-  // フォールバックして in-memory のみで動く（dev / e2e 継続性を維持）。
+  // 受注ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  // DATABASE_URL 未設定時は restore=null / snapshot=no-db でフォールバックし、
+  // in-memory のみで動く（dev / e2e 継続性を維持）。
+  usePersistentStore({
+    store: orderStore,
+    domain: "orders",
+    seed: initial,
+  });
+  // inventory / payment は各自のオーナーページが永続化する。ここでは受注画面から
+  // 先に入った場合に引当・返金 cascade が着地するための防御的シードのみ。
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const restored = await restoreOrders();
-      if (cancelled) return;
-      if (restored && restored.length > 0) {
-        orderStore.setItems(restored);
-      } else if (orderStore.getState().length === 0) {
-        orderStore.setItems(initial);
-      }
-    })();
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }
-    // 返金 cascade のため paymentStore も seed（受注画面から先に入った場合に備える）。
     if (paymentStore.getState().length === 0) {
       paymentStore.setItems(INITIAL_PAYMENTS);
     }
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // orderStore の変更を server action で永続化（debounce 500ms）。
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const unsub = orderStore.subscribe(() => {
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void snapshotOrders(orderStore.getState() as ReadonlyArray<OrderSeed>);
-      }, 500);
-    });
-    return () => {
-      if (timer !== null) clearTimeout(timer);
-      unsub();
-    };
   }, []);
   const storeItems = useSyncExternalStore(
     (cb) => orderStore.subscribe(cb),

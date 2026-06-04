@@ -11,6 +11,7 @@ import {
   type ReturnStatus,
 } from "@/lib/state-machines/return";
 import { returnStore, type ReturnRecord } from "@/lib/stores/return";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_RETURNS } from "@/lib/seeds/returns";
@@ -38,12 +39,15 @@ const refundBadge: Record<string, string> = {
 export default function ReturnsPage() {
   const toast = useToast();
 
-  // 返品 cascade のため return / inventory / payment を一括 seed。
-  // returns から先に入っても在庫戻し・返金が着地するよう他ドメインも揃える。
+  // 返品ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  usePersistentStore({
+    store: returnStore,
+    domain: "returns",
+    seed: INITIAL_RETURNS,
+  });
+  // inventory / payment は各自のオーナーページが永続化する。ここでは returns から
+  // 先に入っても在庫戻し・返金が着地するための防御的シードのみ。
   useEffect(() => {
-    if (returnStore.getState().length === 0) {
-      returnStore.setItems(INITIAL_RETURNS);
-    }
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }

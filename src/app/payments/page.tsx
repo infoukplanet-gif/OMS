@@ -18,6 +18,7 @@ import { downloadCsv } from "@/lib/export/csv";
 import { applyCancelOrderCascade } from "@/lib/cascades/cancel-order";
 import { extractCancelCandidates } from "@/lib/payments/cancel-candidates";
 import { paymentStore } from "@/lib/stores/payment";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { shipmentStore } from "@/lib/stores/shipment";
@@ -58,14 +59,16 @@ const TABS: { label: string; value: TabValue }[] = [
 export default function PaymentsPage() {
   const toast = useToast();
 
-  // shared paymentStore を購読。実 cascade（confirmPayment / revertToPaymentWait）と
-  // 在庫引当を画面横断で反映するためにシードする。
-  // orderStore も seed しないと、payments 画面から先に入った場合の cascade で
-  // 対象 order が見つからず silently no-op する（E2E で検出）。
+  // 入金ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  // 実 cascade（confirmPayment / revertToPaymentWait）と在庫引当を画面横断で反映する。
+  usePersistentStore({
+    store: paymentStore,
+    domain: "payments",
+    seed: INITIAL_PAYMENTS,
+  });
+  // inventory / orders は各自のオーナーページが永続化する。ここでは cascade の
+  // 対象が見つからず silently no-op するのを防ぐための防御的シードのみ。
   useEffect(() => {
-    if (paymentStore.getState().length === 0) {
-      paymentStore.setItems(INITIAL_PAYMENTS);
-    }
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }

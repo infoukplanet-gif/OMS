@@ -18,6 +18,7 @@ import { orderStore } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { salesStore } from "@/lib/stores/sales";
 import { shipmentStore, type ShipmentRecord } from "@/lib/stores/shipment";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { applyConfirmShipmentCascade } from "@/lib/cascades/confirm-shipment";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
@@ -60,13 +61,16 @@ const carriers = ["ヤマト運輸", "佐川急便", "日本郵便", "西濃運�
 export default function ShipmentsPage() {
   const toast = useToast();
 
-  // shipmentStore に subscribe して画面横断の状態を読む。
-  // 初回 mount で seed 投入。確定/キャンセル/トラッキング編集は store 経由。
-  // 他ドメインも一緒に seed（shipments から先に入った場合に cascade が動かない問題を回避）。
+  // 出荷ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  // 確定/キャンセル/トラッキング編集は store 経由。
+  usePersistentStore({
+    store: shipmentStore,
+    domain: "shipments",
+    seed: INITIAL_SHIPMENTS,
+  });
+  // orders / inventory は各自のオーナーページが永続化する。ここでは shipments から
+  // 先に入った場合に cascade が動かない問題を回避するための防御的シードのみ。
   useEffect(() => {
-    if (shipmentStore.getState().length === 0) {
-      shipmentStore.setItems(INITIAL_SHIPMENTS);
-    }
     if (orderStore.getState().length === 0) {
       orderStore.setItems(INITIAL_ORDERS);
     }

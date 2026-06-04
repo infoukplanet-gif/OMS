@@ -20,12 +20,22 @@ test.describe("critical path: 入金確認 → 受注確定 → 出荷指示作�
     await page.goto("/payments");
     await expect(page.getByRole("heading", { name: "入金管理" })).toBeVisible();
 
-    // ORD-2026-08843（小林 修・入金待ち 67500 円）行の入金登録ボタンを押す
+    // ORD-2026-08843（小林 修・入金待ち 67500 円）行の入金登録ボタンを押す。
+    // /payments は「キャンセル候補」テーブルと「入金一覧」テーブルの 2 つに
+    // 同一受注 ID が現れるため、入金登録ボタンを持つ行（＝入金一覧側）に限定する。
     const orderId = "ORD-2026-08843";
-    const row = page.locator("tr", { hasText: orderId });
+    const row = page
+      .locator("tr")
+      .filter({ hasText: orderId })
+      .filter({ has: page.getByRole("button", { name: "入金登録" }) });
     await expect(row).toBeVisible();
 
     await row.getByRole("button", { name: "入金登録" }).click();
+
+    // 入金登録ダイアログ（一部入金対応）が開く。初期値=全額なので確定ボタンを押す。
+    const dialog = page.locator("div.fixed.inset-0.z-50");
+    await expect(dialog.getByRole("heading", { name: "入金登録" })).toBeVisible();
+    await dialog.getByRole("button", { name: "入金登録" }).click();
 
     // cascade の証跡を toast で確認
     //   「受注確定」「出荷指示」「引当」のいずれかの文言が含まれているはず
@@ -34,8 +44,13 @@ test.describe("critical path: 入金確認 → 受注確定 → 出荷指示作�
     });
     await expect(toast.first()).toBeVisible({ timeout: 4000 });
 
-    // 入金登録した payment の status badge が「入金済み」に変わっている
-    await expect(row).toContainText("入金済み");
+    // 入金登録した payment の status badge が「入金済み」に変わっている。
+    // 入金完了で当該行の入金登録ボタンは消えるため、ステータス文言で行を取り直す。
+    const paidRow = page
+      .locator("tr")
+      .filter({ hasText: orderId })
+      .filter({ hasText: "入金済み" });
+    await expect(paidRow.first()).toBeVisible({ timeout: 5000 });
   });
 
   test("催促メール一括送信ボタンが期日超過の入金に対し mailQueue へ enqueue する", async ({

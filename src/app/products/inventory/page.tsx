@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
@@ -34,6 +34,7 @@ import {
 } from "@/lib/calculations/reorder-to-po";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { purchaseStore } from "@/lib/stores/purchase";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { downloadCsv } from "@/lib/export/csv";
 import {
   INITIAL_INVENTORY,
@@ -60,11 +61,12 @@ export default function InventoryPage() {
 
   // shared inventoryStore に subscribe して画面横断の在庫変更を読む。
   // 発注ページからの入荷登録（applyReceive cascade）が onHand に反映されるとここに即時反映される。
-  useEffect(() => {
-    if (inventoryStore.getState().length === 0) {
-      inventoryStore.setItems(INITIAL_INVENTORY);
-    }
-  }, []);
+  // 在庫ドメインの正規オーナーページ: 初回 restore → なければ seed、変更を debounce 永続化。
+  usePersistentStore({
+    store: inventoryStore,
+    domain: "inventory",
+    seed: INITIAL_INVENTORY,
+  });
   const records = useSyncExternalStore(
     (cb) => inventoryStore.subscribe(cb),
     () => inventoryStore.getState(),
