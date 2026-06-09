@@ -15,6 +15,7 @@ import { purchaseStore } from "@/lib/stores/purchase";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { runAutoReallocateOnReceipt } from "@/lib/cascades/run-auto-reallocate";
+import { runRecognizePayableOnReceipt } from "@/lib/cascades/run-recognize-payable";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
   INITIAL_PURCHASE_ORDERS,
@@ -40,6 +41,8 @@ type PurchaseOrder = SeededPurchaseOrder;
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 const lineKey = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
+const fmtYMD = (d: Date) =>
+  `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
 
 const tabs: { label: string; value: "all" | PurchaseOrderStatus }[] = [
   { label: "すべて", value: "all" },
@@ -180,11 +183,25 @@ export default function PurchasingPage() {
       reallocated = runAutoReallocateOnReceipt(lines).allocated;
     }
 
+    // 入荷の都度、受領分を金額按分して買掛金（仕入債務）を計上する
+    let accrued = 0;
+    if (result.before && result.after) {
+      accrued = runRecognizePayableOnReceipt({
+        poId: o.id,
+        supplier: o.supplier,
+        poAmount: o.amount,
+        before: result.before,
+        after: result.after,
+        accruedAt: fmtYMD(new Date()),
+      }).accrued;
+    }
+
     const totalQty = receipts.reduce((s, r) => s + r.qty, 0);
     const detail = [
       `${totalQty}個受領`,
       `在庫加算 ${stockAdded}SKU`,
       reallocated > 0 ? `欠品受注 ${reallocated}件 自動引当` : "",
+      accrued > 0 ? `買掛金 ${fmt(accrued)} 計上` : "",
       unknownCount > 0 ? `未登録SKU ${unknownCount}件` : "",
       result.after?.status === "仕入完了" ? "→ 仕入完了" : "→ 注残あり",
     ]

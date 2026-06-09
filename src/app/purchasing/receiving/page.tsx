@@ -10,6 +10,7 @@ import { Search, PackageCheck, Truck, CalendarClock, AlertTriangle, ArrowRight }
 import { purchaseStore } from "@/lib/stores/purchase";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { runAutoReallocateOnReceipt } from "@/lib/cascades/run-auto-reallocate";
+import { runRecognizePayableOnReceipt } from "@/lib/cascades/run-recognize-payable";
 import { purchaseStatusBadge } from "@/lib/state-machines/purchase";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
@@ -22,6 +23,7 @@ const RECEIVABLE = ["発行済", "注残あり"] as const;
 
 const fmtYMD = (d: Date) =>
   `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+const fmtYen = (n: number) => `¥${n.toLocaleString()}`;
 const parseYMD = (s?: string): Date | undefined => {
   if (!s) return undefined;
   const [y, m, d] = s.split("/").map(Number);
@@ -134,7 +136,11 @@ export default function ReceivingPage() {
   const toggleAll = () =>
     setSelected(allChecked ? new Set() : new Set(visibleReceivable.map((r) => r.key)));
 
-  /** 1明細を残数で入荷登録 → 在庫加算 cascade。 */
+  /** PO 総額を発注ストアから引く（買掛金計上の按分母数）。 */
+  const poAmountOf = (poId: string): number =>
+    Number((purchaseOrders.find((p) => p.id === poId) as SeededPurchaseOrder | undefined)?.amount ?? 0);
+
+  /** 1明細を残数で入荷登録 → 在庫加算・買掛金計上 cascade。 */
   const receiveRow = (r: PlanRow) => {
     if (r.remaining <= 0) return;
     const result = purchaseStore.applyReceive(r.poId, [
@@ -151,9 +157,21 @@ export default function ReceivingPage() {
       added = inventoryStore.applyReceive(lines).appliedCount;
       reallocated = runAutoReallocateOnReceipt(lines).allocated;
     }
+    let accrued = 0;
+    if (result.before && result.after) {
+      accrued = runRecognizePayableOnReceipt({
+        poId: r.poId,
+        supplier: r.supplier,
+        poAmount: poAmountOf(r.poId),
+        before: result.before,
+        after: result.after,
+        accruedAt: today,
+      }).accrued;
+    }
     const done = result.after?.status === "仕入完了" ? "・仕入完了" : "";
     const realloc = reallocated > 0 ? `・欠品受注${reallocated}件引当` : "";
-    toast.show(`${r.sku} ${r.remaining}個を入荷（在庫+${added}SKU${done}${realloc}）`, "success");
+    const payable = accrued > 0 ? `・買掛金${fmtYen(accrued)}計上` : "";
+    toast.show(`${r.sku} ${r.remaining}個を入荷（在庫+${added}SKU${done}${realloc}${payable}）`, "success");
   };
 
   /** 選択明細をPOごとにまとめて一括入荷登録。 */
@@ -161,14 +179,17 @@ export default function ReceivingPage() {
     const targets = visibleReceivable.filter((r) => selected.has(r.key));
     if (targets.length === 0) return;
     const byPo = new Map<string, { sku: string; warehouse: string; qty: number }[]>();
+    const supplierOf = new Map<string, string>();
     for (const r of targets) {
       const list = byPo.get(r.poId) ?? [];
       list.push({ sku: r.sku, warehouse: r.warehouse, qty: r.remaining });
       byPo.set(r.poId, list);
+      supplierOf.set(r.poId, r.supplier);
     }
     let receivedLines = 0;
     let stockAdded = 0;
     let reallocated = 0;
+    let accrued = 0;
     for (const [poId, receipts] of byPo) {
       const result = purchaseStore.applyReceive(poId, receipts);
       if (!result.applied) continue;
@@ -178,10 +199,21 @@ export default function ReceivingPage() {
         stockAdded += inventoryStore.applyReceive(lines).appliedCount;
         reallocated += runAutoReallocateOnReceipt(lines).allocated;
       }
+      if (result.before && result.after) {
+        accrued += runRecognizePayableOnReceipt({
+          poId,
+          supplier: supplierOf.get(poId) ?? "",
+          poAmount: poAmountOf(poId),
+          before: result.before,
+          after: result.after,
+          accruedAt: today,
+        }).accrued;
+      }
     }
     setSelected(new Set());
     const realloc = reallocated > 0 ? `・欠品受注${reallocated}件自動引当` : "";
-    toast.show(`${receivedLines}明細を一括入荷（在庫+${stockAdded}SKU${realloc}）`, "success");
+    const payable = accrued > 0 ? `・買掛金${fmtYen(accrued)}計上` : "";
+    toast.show(`${receivedLines}明細を一括入荷（在庫+${stockAdded}SKU${realloc}${payable}）`, "success");
   };
 
   /** 予定納期の手動登録。 */
