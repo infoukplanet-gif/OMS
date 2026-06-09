@@ -13,6 +13,7 @@ import {
 import { returnStore, type ReturnRecord } from "@/lib/stores/return";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { runAutoReallocateOnReceipt } from "@/lib/cascades/run-auto-reallocate";
 import { paymentStore } from "@/lib/stores/payment";
 import { INITIAL_RETURNS } from "@/lib/seeds/returns";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
@@ -139,12 +140,16 @@ export default function ReturnsPage() {
 
     let restockLine = "";
     if (result.effects.restockInventory) {
-      const res = inventoryStore.applyReceive(result.effects.restockInventory.lines);
-      const restocked = result.effects.restockInventory.lines.reduce((s, l) => s + l.qty, 0);
+      const lines = result.effects.restockInventory.lines;
+      const res = inventoryStore.applyReceive(lines);
+      const restocked = lines.reduce((s, l) => s + l.qty, 0);
       restockLine = ` / 在庫戻し ${restocked}点（${res.appliedCount}SKU）`;
       if (res.unknownReceipts.length > 0) {
         restockLine += `・未登録SKU ${res.unknownReceipts.length}件`;
       }
+      // 良品の在庫戻しで欠品受注を自動再引当（設定ON時）
+      const reallocated = runAutoReallocateOnReceipt(lines).allocated;
+      if (reallocated > 0) restockLine += `・欠品受注 ${reallocated}件自動引当`;
     }
     const refundLine = result.effects.refundPayment
       ? ` / 返金 ${yen(result.effects.refundPayment.amount)} を起票`

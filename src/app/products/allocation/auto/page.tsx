@@ -14,6 +14,10 @@ import {
   ORDER_BY_RULES,
   type OrderByRule,
 } from "@/lib/allocation/rules";
+import {
+  getAutoReallocateSettings,
+  setAutoReallocateSettings,
+} from "@/lib/inventory/auto-reallocate-settings";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -64,6 +68,8 @@ export default function AllocationAutoPage() {
   const [vipPriority, setVipPriority] = useState(true);
   const [reservePriority, setReservePriority] = useState(true);
   const [holdNotify, setHoldNotify] = useState(true);
+  // 入荷時の自動再引当（auto-reallocate-settings シングルトンと双方向）
+  const [autoReallocate, setAutoReallocate] = useState(getAutoReallocateSettings().enabled);
   const [runLog, setRunLog] = useState<RunLogEntry[]>(RECENT_LOG);
 
   const moveWarehouse = (index: number, dir: -1 | 1) => {
@@ -78,7 +84,11 @@ export default function AllocationAutoPage() {
 
   const saveRules = () => {
     setAllocationRules({ warehousePriority, allowSplit, orderBy });
-    toast.show("引当ルールを保存しました（拠点優先順・分割可否・引当順を反映）", "success");
+    setAutoReallocateSettings({ enabled: autoReallocate });
+    toast.show(
+      `引当ルールを保存しました（拠点優先順・分割可否・引当順／入荷時自動再引当: ${autoReallocate ? "ON" : "OFF"}）`,
+      "success",
+    );
   };
 
   // 引当は共有 orderStore/inventoryStore 上で実行する。両方を seed。
@@ -229,6 +239,7 @@ export default function AllocationAutoPage() {
             </div>
           </div>
           <Toggle label="複数倉庫に分割して引当を許可" checked={allowSplit} onChange={setAllowSplit} hint="ONの場合、1拠点で足りなくても優先順に複数拠点から合計で引き当てます。OFFは単一拠点でfull-cover優先。" />
+          <Toggle label="入荷時に欠品受注を自動再引当" checked={autoReallocate} onChange={setAutoReallocate} hint="ONの場合、発注入荷・入荷登録・返品の良品戻しで在庫が増えると、その商品で欠品滞留していた受注を自動で再引当します。OFFはこのページのマニュアル実行に委ねます。" />
           <Toggle label="VIP顧客を優先引当" checked={vipPriority} onChange={setVipPriority} hint="顧客ランクVIP/プラチナ受注を優先します。" />
           <Toggle label="予約商品を優先引当" checked={reservePriority} onChange={setReservePriority} hint="発売日前の予約受注を優先します。" />
           <Toggle label="保留発生時に通知メール" checked={holdNotify} onChange={setHoldNotify} hint="OFFにすると、欠品保留のみダッシュボードで確認します。" />

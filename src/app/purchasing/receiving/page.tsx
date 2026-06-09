@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Search, PackageCheck, Truck, CalendarClock, AlertTriangle, ArrowRight } from "lucide-react";
 import { purchaseStore } from "@/lib/stores/purchase";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { runAutoReallocateOnReceipt } from "@/lib/cascades/run-auto-reallocate";
 import { purchaseStatusBadge } from "@/lib/state-machines/purchase";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
@@ -144,11 +145,15 @@ export default function ReceivingPage() {
       return;
     }
     let added = 0;
+    let reallocated = 0;
     if (result.effects.receiveInventory) {
-      added = inventoryStore.applyReceive(result.effects.receiveInventory.lines).appliedCount;
+      const lines = result.effects.receiveInventory.lines;
+      added = inventoryStore.applyReceive(lines).appliedCount;
+      reallocated = runAutoReallocateOnReceipt(lines).allocated;
     }
     const done = result.after?.status === "仕入完了" ? "・仕入完了" : "";
-    toast.show(`${r.sku} ${r.remaining}個を入荷（在庫+${added}SKU${done}）`, "success");
+    const realloc = reallocated > 0 ? `・欠品受注${reallocated}件引当` : "";
+    toast.show(`${r.sku} ${r.remaining}個を入荷（在庫+${added}SKU${done}${realloc}）`, "success");
   };
 
   /** 選択明細をPOごとにまとめて一括入荷登録。 */
@@ -163,16 +168,20 @@ export default function ReceivingPage() {
     }
     let receivedLines = 0;
     let stockAdded = 0;
+    let reallocated = 0;
     for (const [poId, receipts] of byPo) {
       const result = purchaseStore.applyReceive(poId, receipts);
       if (!result.applied) continue;
       receivedLines += receipts.length;
       if (result.effects.receiveInventory) {
-        stockAdded += inventoryStore.applyReceive(result.effects.receiveInventory.lines).appliedCount;
+        const lines = result.effects.receiveInventory.lines;
+        stockAdded += inventoryStore.applyReceive(lines).appliedCount;
+        reallocated += runAutoReallocateOnReceipt(lines).allocated;
       }
     }
     setSelected(new Set());
-    toast.show(`${receivedLines}明細を一括入荷（在庫+${stockAdded}SKU）`, "success");
+    const realloc = reallocated > 0 ? `・欠品受注${reallocated}件自動引当` : "";
+    toast.show(`${receivedLines}明細を一括入荷（在庫+${stockAdded}SKU${realloc}）`, "success");
   };
 
   /** 予定納期の手動登録。 */

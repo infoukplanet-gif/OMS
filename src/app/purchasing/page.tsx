@@ -14,6 +14,7 @@ import {
 import { purchaseStore } from "@/lib/stores/purchase";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { runAutoReallocateOnReceipt } from "@/lib/cascades/run-auto-reallocate";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import {
   INITIAL_PURCHASE_ORDERS,
@@ -169,16 +170,21 @@ export default function PurchasingPage() {
 
     let stockAdded = 0;
     let unknownCount = 0;
+    let reallocated = 0;
     if (result.effects.receiveInventory) {
-      const cascade = inventoryStore.applyReceive(result.effects.receiveInventory.lines);
+      const lines = result.effects.receiveInventory.lines;
+      const cascade = inventoryStore.applyReceive(lines);
       stockAdded = cascade.appliedCount;
       unknownCount = cascade.unknownReceipts.length;
+      // 入荷で在庫が増えたので、この SKU で欠品滞留していた受注を自動再引当（設定ON時）
+      reallocated = runAutoReallocateOnReceipt(lines).allocated;
     }
 
     const totalQty = receipts.reduce((s, r) => s + r.qty, 0);
     const detail = [
       `${totalQty}個受領`,
       `在庫加算 ${stockAdded}SKU`,
+      reallocated > 0 ? `欠品受注 ${reallocated}件 自動引当` : "",
       unknownCount > 0 ? `未登録SKU ${unknownCount}件` : "",
       result.after?.status === "仕入完了" ? "→ 仕入完了" : "→ 注残あり",
     ]
