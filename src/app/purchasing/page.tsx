@@ -21,6 +21,8 @@ import {
   INITIAL_PURCHASE_ORDERS,
   type SeededPurchaseOrder,
 } from "@/lib/seeds/purchase-orders";
+import { PurchaseOrderIssueModal } from "@/components/documents/purchase-order-issue-modal";
+import type { PurchaseOrderSource } from "@/lib/documents/purchase-order-document";
 import {
   Search,
   Plus,
@@ -31,6 +33,7 @@ import {
   CheckCircle2,
   FileText,
   PackageCheck,
+  Printer,
   X,
 } from "lucide-react";
 
@@ -86,6 +89,8 @@ export default function PurchasingPage() {
   // 入荷登録ダイアログ: 対象発注書と明細ごとの受領数量（一部入荷に対応）
   const [receiveTarget, setReceiveTarget] = useState<PurchaseOrder | null>(null);
   const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({});
+  // 発注書発行（印刷ビュー）の対象
+  const [issueSource, setIssueSource] = useState<PurchaseOrderSource | null>(null);
   const toast = useToast();
 
   const filtered = useMemo(() => {
@@ -122,6 +127,27 @@ export default function PurchasingPage() {
       return;
     }
     toast.show(`${o.id} を発行済にしました`, "success");
+  }
+
+  /**
+   * 発注書（帳票）を発行する。発注レコードを印刷ビュー用のソースに射影し、
+   * 設定の帳票テンプレートを選んで印刷/PDF保存できるモーダルを開く。
+   */
+  function openIssueDocument(o: PurchaseOrder) {
+    const source: PurchaseOrderSource = {
+      id: o.id,
+      supplier: o.supplier,
+      date: o.date,
+      expected: o.expected,
+      amount: o.amount,
+      lines: o.lines.map((l) => ({
+        sku: l.sku,
+        name: SKU_NAMES[l.sku],
+        warehouse: l.warehouse,
+        orderedQty: l.orderedQty,
+      })),
+    };
+    setIssueSource(source);
   }
 
   /**
@@ -395,6 +421,15 @@ export default function PurchasingPage() {
                         <FileText className="h-3 w-3" />発行
                       </button>
                     )}
+                    {o.status !== "キャンセル" && (
+                      <button
+                        onClick={() => openIssueDocument(o)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-indigo-500/15 text-indigo-700 hover:bg-indigo-500/25 transition-colors"
+                        title="帳票テンプレートを選んで発注書を印刷／PDF保存"
+                      >
+                        <Printer className="h-3 w-3" />発注書
+                      </button>
+                    )}
                     {(o.status === "発行済" || o.status === "注残あり") && (
                       <button
                         onClick={() => handleReceive(o)}
@@ -508,6 +543,13 @@ export default function PurchasingPage() {
           </div>
         );
       })()}
+
+      {/* ---- 発注書発行モーダル（帳票テンプレート連動・印刷/PDF保存） ---------- */}
+      <PurchaseOrderIssueModal
+        open={issueSource !== null}
+        onClose={() => setIssueSource(null)}
+        source={issueSource}
+      />
     </div>
   );
 }

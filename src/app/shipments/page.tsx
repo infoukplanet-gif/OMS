@@ -33,6 +33,10 @@ import {
   FileText,
   CheckSquare,
 } from "lucide-react";
+import { ShipmentInstructionIssueModal } from "@/components/documents/shipment-instruction-issue-modal";
+import { DeliveryNoteIssueModal } from "@/components/documents/delivery-note-issue-modal";
+import type { ShipmentInstructionSource } from "@/lib/documents/shipment-instruction-document";
+import type { DeliveryNoteSource } from "@/lib/documents/delivery-note-document";
 
 type Shipment = ShipmentRecord & {
   customer: string;
@@ -90,6 +94,8 @@ export default function ShipmentsPage() {
   const [keyword, setKeyword] = useState("");
   const [carrierFilter, setCarrierFilter] = useState("all");
   const [shipDateFilter, setShipDateFilter] = useState("");
+  const [instructionModalSource, setInstructionModalSource] = useState<ShipmentInstructionSource | null>(null);
+  const [deliveryNoteModalSource, setDeliveryNoteModalSource] = useState<DeliveryNoteSource | null>(null);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -304,6 +310,46 @@ export default function ShipmentsPage() {
     setSelected([]);
   };
 
+  /** 選択中 or 一覧全件から出荷指示書発行用ソースを生成する。
+   * 複数選択の場合は最初の1件をモーダルに渡す（一括発行は1件ずつ順次UIで対応可能）。 */
+  function openInstructionModal() {
+    const targetId = selected.length > 0 ? selected[0] : null;
+    const record = targetId ? items.find((s) => s.id === targetId) : filtered[0];
+    if (!record) {
+      toast.show("対象の出荷レコードがありません", "error");
+      return;
+    }
+    const source: ShipmentInstructionSource = {
+      id: record.id,
+      customer: record.customer,
+      shipDate: record.shipDate,
+      carrier: record.carrier,
+      shop: record.shop,
+      items: record.items,
+      amount: record.amount,
+      trackingNumber: record.trackingNumber ?? undefined,
+    };
+    setInstructionModalSource(source);
+  }
+
+  function openDeliveryNoteModal() {
+    const targetId = selected.length > 0 ? selected[0] : null;
+    const record = targetId ? items.find((s) => s.id === targetId) : filtered[0];
+    if (!record) {
+      toast.show("対象の出荷レコードがありません", "error");
+      return;
+    }
+    const source: DeliveryNoteSource = {
+      id: record.id,
+      customer: record.customer,
+      shipDate: record.shipDate,
+      carrier: record.carrier,
+      shop: record.shop,
+      amount: record.amount,
+    };
+    setDeliveryNoteModalSource(source);
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -312,11 +358,11 @@ export default function ShipmentsPage() {
           <HelpHint>受注ステータスごとに出荷待ち→出荷済み→配送中→配達完了を管理。検索・配送業者・出荷予定日で絞込み、選択した受注を一括で出荷確定できます。</HelpHint>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => toast.show("出荷指示書を発行します", "info")} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80 transition-all")}>
+          <button onClick={openInstructionModal} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80 transition-all")}>
             <FileText className="h-4 w-4" />
             出荷指示書
           </button>
-          <button onClick={() => toast.show("納品書を発行します", "info")} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80 transition-all")}>
+          <button onClick={openDeliveryNoteModal} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-white/60 backdrop-blur-xl border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] text-gray-700 hover:bg-white/80 transition-all")}>
             <FileDown className="h-4 w-4" />
             納品書
           </button>
@@ -495,7 +541,7 @@ export default function ShipmentsPage() {
                 <button onClick={() => progressShipment("markDelivered", "配達完了")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-teal-500/15 text-teal-700 hover:bg-teal-500/25 transition-colors">
                   配達完了にする
                 </button>
-                <button onClick={() => toast.show(`${selected.length} 件の出荷指示書を発行します`, "info")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors">
+                <button onClick={openInstructionModal} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 transition-colors">
                   出荷指示書
                 </button>
                 <button
@@ -521,6 +567,17 @@ export default function ShipmentsPage() {
           </div>
         </div>
       </GlassCard>
+
+      <ShipmentInstructionIssueModal
+        open={instructionModalSource !== null}
+        onClose={() => setInstructionModalSource(null)}
+        source={instructionModalSource}
+      />
+      <DeliveryNoteIssueModal
+        open={deliveryNoteModalSource !== null}
+        onClose={() => setDeliveryNoteModalSource(null)}
+        source={deliveryNoteModalSource}
+      />
     </div>
   );
 }
