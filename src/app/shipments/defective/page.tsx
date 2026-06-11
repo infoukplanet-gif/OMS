@@ -1,44 +1,66 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
-import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { useToast, PrimaryButton, SecondaryButton, Modal } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Search, Plus, AlertTriangle, ArrowRightLeft, CheckCircle2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { defectiveStore } from "@/lib/stores/defective";
+import { runDefectiveTransfer } from "@/lib/cascades/run-transfer-defective";
+import { INITIAL_DEFECTIVE } from "@/lib/seeds/defective";
+import type { DefectiveRecord, DefectiveStatus } from "@/lib/state-machines/defective";
 
-type Row = {
-  id: string;
-  order: string;
-  product: string;
-  sku: string;
-  qty: number;
-  reason: string;
-  from: string;
-  to: string;
-  registeredAt: string;
-  registeredBy: string;
-  status: "承認待ち" | "振替待ち" | "振替完了" | "却下";
-};
-
-const ROWS: Row[] = [
-  { id: "DF-001", order: "ORD-2026-00842", product: "Tシャツ ホワイト M", sku: "TS-WH-M", qty: 2, reason: "検品不良（汚れ）", from: "東京本社倉庫", to: "返品倉庫", registeredAt: "2026-04-25 09:24", registeredBy: "佐藤 健", status: "振替待ち" },
-  { id: "DF-002", order: "ORD-2026-00838", product: "スニーカー ブラック 27cm", sku: "SN-BK-27", qty: 1, reason: "配送中破損", from: "東京本社倉庫", to: "返品倉庫", registeredAt: "2026-04-24 14:08", registeredBy: "鈴木 美咲", status: "振替完了" },
-  { id: "DF-003", order: "ORD-2026-00835", product: "ジャケット ネイビー L", sku: "JK-NV-L", qty: 1, reason: "色違い納品", from: "大阪倉庫", to: "返品倉庫", registeredAt: "2026-04-24 11:42", registeredBy: "田中 花子", status: "承認待ち" },
-  { id: "DF-004", order: "ORD-2026-00829", product: "ワイヤレスイヤホン Pro", sku: "WEP-001", qty: 3, reason: "充電不良ロット", from: "九州物流センター", to: "メーカー返却", registeredAt: "2026-04-23 16:18", registeredBy: "高橋 翔", status: "振替待ち" },
-  { id: "DF-005", order: "ORD-2026-00812", product: "USB-Cケーブル 2m", sku: "UCB-002", qty: 5, reason: "包装破れ", from: "東京本社倉庫", to: "アウトレット在庫", registeredAt: "2026-04-22 10:00", registeredBy: "佐藤 健", status: "振替完了" },
-];
-
-const STATUS_BADGE: Record<Row["status"], string> = {
+const STATUS_BADGE: Record<DefectiveStatus, string> = {
   "承認待ち": "bg-blue-500/15 text-blue-700",
   "振替待ち": "bg-amber-500/15 text-amber-700",
   "振替完了": "bg-emerald-500/15 text-emerald-700",
   "却下": "bg-red-500/15 text-red-700",
 };
 
+const FROM_WAREHOUSES = ["東京本社倉庫", "大阪倉庫", "九州物流センター", "名古屋配送センター"];
+const TO_ROUTES = ["返品倉庫", "メーカー返却", "アウトレット在庫", "廃棄"];
+
+const BLANK_FORM = {
+  order: "",
+  product: "",
+  sku: "",
+  qty: 1,
+  reason: "",
+  warehouse: "東京本社倉庫",
+  route: "返品倉庫",
+  registeredBy: "",
+};
+
+function nowString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${y}-${mo}-${day} ${h}:${mi}`;
+}
+
 export default function ShipmentsDefectivePage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(ROWS);
+
+  // shipments/defective が defective ストアの正規オーナー（永続化はここで 1 回だけ張る）。
+  usePersistentStore({
+    store: defectiveStore,
+    domain: "defective",
+    seed: INITIAL_DEFECTIVE,
+  });
+
+  const rows = useSyncExternalStore(
+    (cb) => defectiveStore.subscribe(cb),
+    () => defectiveStore.getState(),
+    () => INITIAL_DEFECTIVE,
+  );
+
+  const [newModalOpen, setNewModalOpen] = useState(false);
+  const [form, setForm] = useState(BLANK_FORM);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("すべて");
 
@@ -51,10 +73,69 @@ export default function ShipmentsDefectivePage() {
     });
   }, [rows, keyword, statusFilter]);
 
-  const execute = (id: string) => {
-    setRows(rows.map((r) => (r.id === id ? { ...r, status: "振替完了" } : r)));
-    toast.show(`${id} の振替を実行しました（在庫数を更新）`, "success");
+  // 承認待ち → 振替待ち（承認）/ 却下。状態機械経由（直接書き換えない）。
+  const approve = (id: string) => {
+    const res = defectiveStore.applyTransition(id, "approve");
+    if (res.applied) toast.show(`${id} を承認しました（振替待ち）`, "success");
+    else toast.show(`${id} は承認できない状態です`, "error");
   };
+
+  const reject = (id: string) => {
+    const res = defectiveStore.applyTransition(id, "reject");
+    if (res.applied) toast.show(`${id} を却下しました`, "info");
+    else toast.show(`${id} は却下できない状態です`, "error");
+  };
+
+  // 振替待ち → 振替完了。cascade glue 経由で良品 onHand を実減算する。
+  const execute = (id: string) => {
+    const res = runDefectiveTransfer({ id });
+    if (!res.applied) {
+      toast.show(`${id} は振替実行できない状態です（承認後に実行してください）`, "error");
+      return;
+    }
+    if (res.unknownInventory) {
+      toast.show(
+        `${id} を振替完了にしました（対象在庫が見つからず onHand は未更新）`,
+        "info",
+      );
+      return;
+    }
+    toast.show(
+      `${id} の振替を実行しました（良品在庫を ${res.qty}点 減算）`,
+      "success",
+    );
+  };
+
+  function handleNewSubmit() {
+    if (!form.order.trim()) { toast.show("受注番号を入力してください", "error"); return; }
+    if (!form.product.trim()) { toast.show("商品名を入力してください", "error"); return; }
+    if (!form.sku.trim()) { toast.show("SKUを入力してください", "error"); return; }
+    if (form.qty < 1) { toast.show("数量は1以上を入力してください", "error"); return; }
+    if (!form.reason.trim()) { toast.show("振替理由を入力してください", "error"); return; }
+    const id = `DF-${String(rows.length + 1).padStart(3, "0")}`;
+    const newRow: DefectiveRecord = {
+      id,
+      order: form.order.trim(),
+      product: form.product.trim(),
+      sku: form.sku.trim(),
+      warehouse: form.warehouse,
+      qty: form.qty,
+      reason: form.reason.trim(),
+      route: form.route,
+      source: "manual",
+      registeredAt: nowString(),
+      registeredBy: form.registeredBy.trim() || "—",
+      status: "承認待ち",
+    };
+    const res = defectiveStore.register(newRow);
+    if (!res.applied) {
+      toast.show(`${id} は既に登録済みです`, "error");
+      return;
+    }
+    toast.show(`${id} を登録しました（承認待ち）`, "success");
+    setNewModalOpen(false);
+    setForm(BLANK_FORM);
+  }
 
   const stats = {
     waiting: rows.filter((r) => r.status === "振替待ち" || r.status === "承認待ち").length,
@@ -71,7 +152,7 @@ export default function ShipmentsDefectivePage() {
             <h1 className="text-2xl font-bold text-gray-800">不良品振替</h1>
             <HelpHint>
               不良品を良品倉庫から返品倉庫・メーカー返却・アウトレット在庫へ振り替えます。{"\n"}
-              振替実行時に在庫数を自動更新し、メーカー返品・廃棄処理の起票にも連携できます。
+              承認後に振替を実行すると、振替元倉庫の良品在庫数（onHand）を数量分だけ自動で減算します。
             </HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">
@@ -79,7 +160,7 @@ export default function ShipmentsDefectivePage() {
             <span className="font-semibold">{stats.qty}点</span>
           </p>
         </div>
-        <PrimaryButton onClick={() => toast.show("新規振替登録モーダルを開きました")}>
+        <PrimaryButton onClick={() => { setForm(BLANK_FORM); setNewModalOpen(true); }}>
           <Plus className="h-4 w-4" />新規振替登録
         </PrimaryButton>
       </div>
@@ -134,7 +215,12 @@ export default function ShipmentsDefectivePage() {
           <tbody>
             {filtered.map((r) => (
               <tr key={r.id} className="border-t border-white/30 hover:bg-white/40">
-                <td className="px-4 py-3 font-mono text-xs text-gray-500">{r.id}</td>
+                <td className="px-4 py-3 font-mono text-xs text-gray-500">
+                  {r.id}
+                  {r.source === "stocktake" && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-700 text-[10px] font-medium">棚卸減耗</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-medium text-blue-600">{r.order}</td>
                 <td className="px-4 py-3">
                   <p className="text-gray-800">{r.product}</p>
@@ -143,9 +229,9 @@ export default function ShipmentsDefectivePage() {
                 <td className="px-4 py-3 text-right tabular-nums text-gray-700">{r.qty}</td>
                 <td className="px-4 py-3 text-gray-700 text-xs">{r.reason}</td>
                 <td className="px-4 py-3 text-gray-700 text-xs">
-                  <span>{r.from}</span>
+                  <span>{r.warehouse}</span>
                   <ArrowRightLeft className="inline-block h-3 w-3 mx-1 text-gray-400" />
-                  <span className="font-medium">{r.to}</span>
+                  <span className="font-medium">{r.route}</span>
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-500">
                   <p className="tabular-nums">{r.registeredAt}</p>
@@ -155,12 +241,27 @@ export default function ShipmentsDefectivePage() {
                   <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", STATUS_BADGE[r.status])}>{r.status}</span>
                 </td>
                 <td className="px-4 py-3 text-center">
-                  {r.status === "振替待ち" || r.status === "承認待ち" ? (
+                  {r.status === "承認待ち" ? (
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        onClick={() => approve(r.id)}
+                        className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
+                      >
+                        承認
+                      </button>
+                      <button
+                        onClick={() => reject(r.id)}
+                        className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/15 text-red-700 hover:bg-red-500/25"
+                      >
+                        却下
+                      </button>
+                    </div>
+                  ) : r.status === "振替待ち" ? (
                     <button
                       onClick={() => execute(r.id)}
-                      className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
+                      className="px-3 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
                     >
-                      実行
+                      振替実行
                     </button>
                   ) : (
                     <CheckCircle2 className="inline-block h-4 w-4 text-emerald-500" />
@@ -179,12 +280,11 @@ export default function ShipmentsDefectivePage() {
         </div>
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-700">
           {[
-            "良品在庫を −数量、不良品在庫を +数量",
-            "メーカー返却起票（メーカー返却ルートの場合）",
-            "返金処理の自動キュー投入（顧客起因の場合）",
-            "ロット不良タグの自動付与",
-            "監査ログ出力（操作者・日時・理由を保存）",
-            "卸先には不良ロット通知メールを自動送信",
+            "振替実行時に振替元倉庫の良品在庫（onHand）を −数量",
+            "棚卸の負差異（減耗）はこの台帳に「棚卸減耗」として記録",
+            "承認 → 振替実行の二段階フロー（承認待ち／振替待ち）",
+            "対象在庫が見つからない場合は台帳のみ更新し在庫は据え置き",
+            "振替元・振替先・操作者・日時・理由を台帳に保存",
           ].map((s) => (
             <li key={s} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/50">
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
@@ -193,6 +293,109 @@ export default function ShipmentsDefectivePage() {
           ))}
         </ul>
       </GlassCard>
+
+      {/* 新規振替登録モーダル */}
+      <Modal
+        open={newModalOpen}
+        onClose={() => setNewModalOpen(false)}
+        title="新規振替登録"
+        footer={
+          <>
+            <SecondaryButton onClick={() => setNewModalOpen(false)}>キャンセル</SecondaryButton>
+            <PrimaryButton onClick={handleNewSubmit}>
+              <Plus className="h-4 w-4" />登録
+            </PrimaryButton>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <DF label="受注番号" required>
+              <input
+                value={form.order}
+                onChange={(e) => setForm((f) => ({ ...f, order: e.target.value }))}
+                placeholder="ORD-2026-XXXXX"
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+            <DF label="SKU" required>
+              <input
+                value={form.sku}
+                onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}
+                placeholder="TS-WH-M"
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+            <DF label="商品名" required>
+              <input
+                value={form.product}
+                onChange={(e) => setForm((f) => ({ ...f, product: e.target.value }))}
+                placeholder="Tシャツ ホワイト M"
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+            <DF label="数量" required>
+              <input
+                type="number"
+                min={1}
+                value={form.qty}
+                onChange={(e) => setForm((f) => ({ ...f, qty: Math.max(1, Number(e.target.value)) }))}
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+            <DF label="振替元倉庫">
+              <select
+                value={form.warehouse}
+                onChange={(e) => setForm((f) => ({ ...f, warehouse: e.target.value }))}
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                {FROM_WAREHOUSES.map((w) => (
+                  <option key={w}>{w}</option>
+                ))}
+              </select>
+            </DF>
+            <DF label="振替先">
+              <select
+                value={form.route}
+                onChange={(e) => setForm((f) => ({ ...f, route: e.target.value }))}
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                {TO_ROUTES.map((d) => (
+                  <option key={d}>{d}</option>
+                ))}
+              </select>
+            </DF>
+            <DF label="振替理由" required>
+              <input
+                value={form.reason}
+                onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+                placeholder="検品不良・配送破損・色違いなど"
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+            <DF label="担当者">
+              <input
+                value={form.registeredBy}
+                onChange={(e) => setForm((f) => ({ ...f, registeredBy: e.target.value }))}
+                placeholder="佐藤 健（省略可）"
+                className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </DF>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function DF({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium text-gray-700">
+        {label}
+        {required && <span className="ml-1 text-xs text-red-500 font-semibold">必須</span>}
+      </label>
+      {children}
     </div>
   );
 }
