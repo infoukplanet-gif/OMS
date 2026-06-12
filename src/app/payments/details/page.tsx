@@ -1,65 +1,111 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { DatePicker } from "@/components/ui/date-picker";
-import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import {
+  PAYMENT_STATUSES,
+  paymentStatusBadge,
+} from "@/lib/state-machines/payment";
+import { paymentStore } from "@/lib/stores/payment";
+import { INITIAL_PAYMENTS, type SeededPayment } from "@/lib/seeds/payments";
+import { downloadCsv } from "@/lib/export/csv";
 import { Search, Download, X } from "lucide-react";
-
-type Detail = {
-  id: string;
-  order: string;
-  customer: string;
-  amount: number;
-  paid: number;
-  method: string;
-  paidAt: string;
-  bank: string;
-  status: "入金済" | "未入金" | "一部入金" | "過剰入金";
-};
-
-const DATA: Detail[] = [
-  { id: "P-001", order: "ORD-2026-00851", customer: "山田太郎", amount: 32400, paid: 32400, method: "クレカ", paidAt: "2026-04-25", bank: "Stripe", status: "入金済" },
-  { id: "P-002", order: "ORD-2026-00849", customer: "田中一郎", amount: 154000, paid: 0, method: "銀行振込", paidAt: "—", bank: "—", status: "未入金" },
-  { id: "P-003", order: "ORD-2026-00838", customer: "井上智", amount: 28500, paid: 25000, method: "銀行振込", paidAt: "2026-04-22", bank: "三井住友銀行", status: "一部入金" },
-  { id: "P-004", order: "ORD-2026-00830", customer: "山田太郎", amount: 18200, paid: 18200, method: "銀行振込", paidAt: "2026-04-25", bank: "三井住友銀行", status: "入金済" },
-  { id: "P-005", order: "ORD-2026-00820", customer: "佐藤花子", amount: 12400, paid: 12800, method: "クレカ", paidAt: "2026-04-15", bank: "Stripe", status: "過剰入金" },
-];
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
+/** DatePicker の Date を seed の支払期日（"YYYY-MM-DD"）と同じ書式に揃える。 */
+const fmtYmd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** 状態フィルターの選択肢: SM の3状態 + 過剰入金フラグ */
+const STATUS_OPTIONS = ["すべて", ...PAYMENT_STATUSES, "過剰入金"] as const;
+
+/** 期日超過フィルター */
+const OVERDUE_OPTIONS = ["すべて", "超過あり", "超過なし"] as const;
+
 export default function PaymentDetailsPage() {
-  const toast = useToast();
+  // 入金ドメインの永続化オーナーは payments/page。ここは購読のみ＋防御的シード。
+  useEffect(() => {
+    if (paymentStore.getState().length === 0) {
+      paymentStore.setItems(INITIAL_PAYMENTS);
+    }
+  }, []);
+  const storeItems = useSyncExternalStore(
+    (cb) => paymentStore.subscribe(cb),
+    () => paymentStore.getState(),
+    () => INITIAL_PAYMENTS,
+  );
+  const payments = storeItems as ReadonlyArray<SeededPayment>;
+
   const [keyword, setKeyword] = useState("");
+  const [dueFrom, setDueFrom] = useState<Date | undefined>(undefined);
+  const [dueTo, setDueTo] = useState<Date | undefined>(undefined);
   const [methodFilter, setMethodFilter] = useState("すべて");
-  const [statusFilter, setStatusFilter] = useState("すべて");
-  const [bankFilter, setBankFilter] = useState("すべて");
+  const [statusFilter, setStatusFilter] = useState<string>("すべて");
+  const [overdueFilter, setOverdueFilter] = useState<string>("すべて");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
+
+  // 支払方法の選択肢は実データから導出（ハードコードの選択肢ズレを防ぐ）
+  const methodOptions = useMemo(
+    () => ["すべて", ...new Set(payments.map((p) => p.method))],
+    [payments],
+  );
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
     const min = minAmount ? Number(minAmount) : 0;
     const max = maxAmount ? Number(maxAmount) : Infinity;
-    return DATA.filter((d) => {
-      if (k && !d.order.toLowerCase().includes(k) && !d.customer.toLowerCase().includes(k)) return false;
-      if (methodFilter !== "すべて" && d.method !== methodFilter) return false;
-      if (statusFilter !== "すべて" && d.status !== statusFilter) return false;
-      if (bankFilter !== "すべて" && !d.bank.includes(bankFilter)) return false;
-      if (d.amount < min || d.amount > max) return false;
+    const from = dueFrom ? fmtYmd(dueFrom) : "";
+    const to = dueTo ? fmtYmd(dueTo) : "";
+    return payments.filter((p) => {
+      if (k && !p.order.toLowerCase().includes(k) && !p.customer.toLowerCase().includes(k)) return false;
+      if (from && p.due < from) return false;
+      if (to && p.due > to) return false;
+      if (methodFilter !== "すべて" && p.method !== methodFilter) return false;
+      if (statusFilter === "過剰入金") {
+        if (!p.overpaid) return false;
+      } else if (statusFilter !== "すべて" && p.status !== statusFilter) {
+        return false;
+      }
+      if (overdueFilter === "超過あり" && p.daysOverdue <= 0) return false;
+      if (overdueFilter === "超過なし" && p.daysOverdue > 0) return false;
+      if (p.orderTotal < min || p.orderTotal > max) return false;
       return true;
     });
-  }, [keyword, methodFilter, statusFilter, bankFilter, minAmount, maxAmount]);
+  }, [payments, keyword, dueFrom, dueTo, methodFilter, statusFilter, overdueFilter, minAmount, maxAmount]);
 
   const clearAll = () => {
     setKeyword("");
+    setDueFrom(undefined);
+    setDueTo(undefined);
     setMethodFilter("すべて");
     setStatusFilter("すべて");
-    setBankFilter("すべて");
+    setOverdueFilter("すべて");
     setMinAmount("");
     setMaxAmount("");
+  };
+
+  const exportCsv = () => {
+    downloadCsv(
+      "入金詳細検索",
+      ["伝票ID", "受注番号", "顧客", "受注額", "入金額", "支払方法", "支払期日", "超過日数", "状態", "過剰入金"],
+      filtered.map((p) => [
+        p.id,
+        p.order,
+        p.customer,
+        p.orderTotal,
+        p.paidAmount,
+        p.method,
+        p.due,
+        p.daysOverdue,
+        p.status,
+        p.overpaid ? "あり" : "",
+      ]),
+    );
   };
 
   return (
@@ -68,15 +114,19 @@ export default function PaymentDetailsPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-gray-800">入金確認 詳細検索</h1>
-            <HelpHint>入金状況を多軸で絞り込み検索します。期間・支払方法・金額・入金元など複合条件で検索可能。</HelpHint>
+            <HelpHint>入金状況を多軸で絞り込み検索します。支払期日・支払方法・金額・期日超過など複合条件で検索可能。入金管理ページと同じ共有データを表示しています。</HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">
             ヒット: <span className="font-semibold">{filtered.length}件</span> ／ 合計入金額:{" "}
-            <span className="font-semibold text-emerald-700">{fmt(filtered.reduce((s, d) => s + d.paid, 0))}</span>
+            <span className="font-semibold text-emerald-700">{fmt(filtered.reduce((s, p) => s + p.paidAmount, 0))}</span>
+            {" "}／ 未回収残:{" "}
+            <span className="font-semibold text-red-700">
+              {fmt(filtered.reduce((s, p) => s + Math.max(0, p.orderTotal - p.paidAmount), 0))}
+            </span>
           </p>
         </div>
         <button
-          onClick={() => toast.show("検索結果をCSVエクスポート")}
+          onClick={exportCsv}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
         >
           <Download className="h-4 w-4" />結果をCSV
@@ -104,37 +154,37 @@ export default function PaymentDetailsPage() {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">入金日 (開始)</label>
-            <DatePicker placeholder="開始日" />
+            <label className="text-sm font-medium text-gray-700">支払期日 (開始)</label>
+            <DatePicker placeholder="開始日" value={dueFrom} onChange={setDueFrom} />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">入金日 (終了)</label>
-            <DatePicker placeholder="終了日" />
+            <label className="text-sm font-medium text-gray-700">支払期日 (終了)</label>
+            <DatePicker placeholder="終了日" value={dueTo} onChange={setDueTo} />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">支払方法</label>
             <select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value)} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-              {["すべて", "銀行振込", "クレカ", "代引", "コンビニ", "ペイディ"].map((o) => <option key={o}>{o}</option>)}
+              {methodOptions.map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">入金状態</label>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-              {["すべて", "入金済", "未入金", "一部入金", "過剰入金"].map((o) => <option key={o}>{o}</option>)}
+              {STATUS_OPTIONS.map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">入金元</label>
-            <select value={bankFilter} onChange={(e) => setBankFilter(e.target.value)} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
-              {["すべて", "三井住友銀行", "みずほ銀行", "三菱UFJ", "Stripe", "Amazon Pay"].map((o) => <option key={o}>{o}</option>)}
+            <label className="text-sm font-medium text-gray-700">期日超過</label>
+            <select value={overdueFilter} onChange={(e) => setOverdueFilter(e.target.value)} className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+              {OVERDUE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">金額（下限）</label>
+            <label className="text-sm font-medium text-gray-700">受注額（下限）</label>
             <input type="number" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} placeholder="0" className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-gray-700">金額（上限）</label>
+            <label className="text-sm font-medium text-gray-700">受注額（上限）</label>
             <input type="number" value={maxAmount} onChange={(e) => setMaxAmount(e.target.value)} placeholder="" className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
           </div>
         </div>
@@ -149,36 +199,42 @@ export default function PaymentDetailsPage() {
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500">受注額</th>
               <th className="px-3 py-3 text-right text-xs font-medium text-gray-500">入金額</th>
               <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">支払方法</th>
-              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">入金日</th>
-              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">入金元</th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">支払期日</th>
+              <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">超過日数</th>
               <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">状態</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((d) => (
-              <tr key={d.id} className="border-t border-white/30 hover:bg-white/40">
-                <td className="px-3 py-2.5 font-medium text-blue-600">{d.order}</td>
-                <td className="px-3 py-2.5 text-gray-800">{d.customer}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{fmt(d.amount)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 font-medium">{fmt(d.paid)}</td>
-                <td className="px-3 py-2.5 text-center text-xs">{d.method}</td>
-                <td className="px-3 py-2.5 text-xs text-gray-500">{d.paidAt}</td>
-                <td className="px-3 py-2.5 text-xs text-gray-600">{d.bank}</td>
+            {filtered.map((p) => (
+              <tr key={p.id} className="border-t border-white/30 hover:bg-white/40">
+                <td className="px-3 py-2.5 font-medium text-blue-600">{p.order}</td>
+                <td className="px-3 py-2.5 text-gray-800">{p.customer}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{fmt(p.orderTotal)}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 font-medium">{fmt(p.paidAmount)}</td>
+                <td className="px-3 py-2.5 text-center text-xs">{p.method}</td>
+                <td className="px-3 py-2.5 text-xs text-gray-500">{p.due}</td>
+                <td className={cn("px-3 py-2.5 text-center text-xs tabular-nums", p.daysOverdue > 0 ? "text-red-600 font-semibold" : "text-gray-400")}>
+                  {p.daysOverdue > 0 ? `${p.daysOverdue}日` : "—"}
+                </td>
                 <td className="px-3 py-2.5 text-center">
-                  <span
-                    className={cn(
-                      "px-2 py-0.5 rounded-full text-xs font-medium",
-                      d.status === "入金済" && "bg-emerald-500/15 text-emerald-700",
-                      d.status === "未入金" && "bg-red-500/15 text-red-700",
-                      d.status === "一部入金" && "bg-yellow-500/15 text-yellow-700",
-                      d.status === "過剰入金" && "bg-purple-500/15 text-purple-700"
-                    )}
-                  >
-                    {d.status}
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", paymentStatusBadge[p.status])}>
+                    {p.status}
                   </span>
+                  {p.overpaid && (
+                    <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/15 text-purple-700">
+                      過剰
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-3 py-10 text-center text-sm text-gray-400">
+                  条件に一致する入金伝票がありません
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </GlassCard>
