@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
-import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { useToast, PrimaryButton, Modal, SecondaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { mailQueue, type MailJob } from "@/lib/mail/queue";
 import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
@@ -30,6 +30,17 @@ type Pending = ShipmentRecord & {
   shipDate?: string;
   shop?: string;
 };
+
+type CsvResult = { success: number; failed: number; skipped: number; fileName: string };
+
+function parseCsvLine(line: string): { orderId: string; trackingNumber: string } | null {
+  const cols = line.split(",").map((c) => c.replace(/^"|"$/g, "").trim());
+  if (cols.length < 2) return null;
+  const orderId = cols[0];
+  const trackingNumber = cols[1];
+  if (!orderId || !trackingNumber) return null;
+  return { orderId, trackingNumber };
+}
 
 export default function ShipmentsTrackingPage() {
   const toast = useToast();
@@ -86,6 +97,72 @@ export default function ShipmentsTrackingPage() {
   }), [targets, drafts]);
 
   const setDraft = (id: string, value: string) => setDrafts((d) => ({ ...d, [id]: value }));
+
+  const csvFileInputRef = useRef<HTMLInputElement>(null);
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvResult, setCsvResult] = useState<CsvResult | null>(null);
+
+  function handleCsvFileSelected(file: File) {
+    if (!file.name.endsWith(".csv")) {
+      toast.show("CSVファイル（.csv）を選択してください", "error");
+      return;
+    }
+    setCsvImporting(true);
+    setCsvResult(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string) ?? "";
+        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        const dataLines =
+          lines[0]?.toLowerCase().includes("受注") || lines[0]?.toLowerCase().includes("order")
+            ? lines.slice(1)
+            : lines;
+
+        let success = 0;
+        let failed = 0;
+        let skipped = 0;
+        const jobs: MailJob[] = [];
+
+        for (const line of dataLines) {
+          const parsed = parseCsvLine(line);
+          if (!parsed) { failed += 1; continue; }
+          const { orderId, trackingNumber } = parsed;
+          const existing = shipmentStore.getState().find((s) => s.id === orderId);
+          if (!existing || existing.status !== "出荷済み") { failed += 1; continue; }
+          if (existing.trackingNumber && existing.trackingNumber.trim().length > 0) {
+            skipped += 1;
+            continue;
+          }
+          const result = shipmentStore.applyTransition(orderId, "markInTransit", { trackingNumber });
+          if (!result.applied) { failed += 1; continue; }
+          if (result.effects.sendMail) jobs.push(result.effects.sendMail);
+          success += 1;
+        }
+
+        const mailResult = mailQueue.enqueueAll(jobs, getAutoMailEnabled());
+        if (mailResult.enqueued > 0) {
+          toast.show(`配送通知メール ${mailResult.enqueued}件 をenqueueしました`, "info");
+        }
+
+        setCsvResult({ success, failed, skipped, fileName: file.name });
+        if (success > 0) {
+          setDrafts({});
+        }
+      } catch {
+        toast.show("CSVの読み込み中にエラーが発生しました", "error");
+      } finally {
+        setCsvImporting(false);
+        if (csvFileInputRef.current) csvFileInputRef.current.value = "";
+      }
+    };
+    reader.onerror = () => {
+      toast.show("ファイルの読み込みに失敗しました", "error");
+      setCsvImporting(false);
+    };
+    reader.readAsText(file, "UTF-8");
+  }
 
   /**
    * 1件反映: markInTransit で 出荷済み → 配送中 へ遷移。
@@ -163,7 +240,7 @@ export default function ShipmentsTrackingPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => toast.show("CSV取込モーダルを開きました")}
+            onClick={() => { setCsvModalOpen(true); setCsvResult(null); }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
           >
             <Upload className="h-4 w-4" />CSV一括登録
@@ -298,6 +375,55 @@ export default function ShipmentsTrackingPage() {
           </tbody>
         </table>
       </GlassCard>
+      <Modal
+        open={csvModalOpen}
+        onClose={() => { setCsvModalOpen(false); setCsvResult(null); }}
+        title="追跡番号 CSV一括登録"
+        footer={
+          <SecondaryButton onClick={() => { setCsvModalOpen(false); setCsvResult(null); }}>閉じる</SecondaryButton>
+        }
+      >
+        <input
+          ref={csvFileInputRef}
+          type="file"
+          accept=".csv"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCsvFileSelected(f); }}
+        />
+        <div className="space-y-4">
+          <div
+            onClick={() => csvFileInputRef.current?.click()}
+            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleCsvFileSelected(f); }}
+            onDragOver={(e) => e.preventDefault()}
+            className={cn(
+              "flex flex-col items-center justify-center gap-3 p-10 rounded-xl border-2 border-dashed border-blue-300/60 bg-blue-500/5 hover:bg-blue-500/10 transition-colors cursor-pointer",
+              csvImporting && "opacity-60 pointer-events-none",
+            )}
+          >
+            <Upload className="h-8 w-8 text-blue-500" />
+            <p className="text-sm font-medium text-gray-700">CSVファイルをドラッグ＆ドロップ</p>
+            <p className="text-xs text-gray-500">または クリックしてファイルを選択 (.csv)</p>
+            {csvImporting && <p className="text-xs text-blue-600">処理中...</p>}
+          </div>
+          <p className="text-xs text-gray-400">
+            フォーマット: 1列目=受注番号、2列目=追跡番号。ヘッダー行は自動スキップ。
+            <br />対象ステータスは「出荷済み」のみ。取込と同時に「配送中」へ遷移し配送通知メールを送信します。
+          </p>
+          {csvResult && (
+            <div className={cn(
+              "rounded-xl p-4 border text-sm",
+              csvResult.success > 0 ? "bg-emerald-500/10 border-emerald-300/40 text-emerald-800" : "bg-red-500/10 border-red-300/40 text-red-800",
+            )}>
+              <p className="font-semibold mb-1">{csvResult.fileName} の取込完了</p>
+              <ul className="text-xs space-y-0.5">
+                <li>成功: {csvResult.success}件</li>
+                {csvResult.failed > 0 && <li>失敗（受注不存在・ステータス不一致）: {csvResult.failed}件</li>}
+                {csvResult.skipped > 0 && <li>スキップ（既存追跡番号あり）: {csvResult.skipped}件</li>}
+              </ul>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

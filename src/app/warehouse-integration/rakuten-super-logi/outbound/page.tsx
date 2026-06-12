@@ -6,7 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Clock, RefreshCw, Search, Send, Truck } from "lucide-react";
+import { CheckCircle2, Clock, Loader2, RefreshCw, Search, Send, Truck } from "lucide-react";
 
 type Outbound = {
   id: string;
@@ -47,15 +47,42 @@ export default function RsrLogiOutboundPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Outbound["status"]>("all");
+  const [items, setItems] = useState(data);
+  const [retrying, setRetrying] = useState(false);
+  const [sending, setSending] = useState(false);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
-    return data.filter((d) => {
+    return items.filter((d) => {
       if (k && !`${d.id} ${d.orderNo} ${d.customer} ${d.trackingNo}`.toLowerCase().includes(k)) return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       return true;
     });
-  }, [keyword, statusFilter]);
+  }, [items, keyword, statusFilter]);
+
+  function handleRetryFailed() {
+    if (retrying) return;
+    setRetrying(true);
+    setTimeout(() => {
+      setRetrying(false);
+      setItems((prev) =>
+        prev.map((d) => (d.status === "失敗" ? { ...d, status: "指示送信" as const } : d))
+      );
+      toast.show("失敗キューを再送しました", "success");
+    }, 1500);
+  }
+
+  function handleImmediateSend() {
+    if (sending) return;
+    setSending(true);
+    setTimeout(() => {
+      setSending(false);
+      setItems((prev) =>
+        prev.map((d) => (d.status === "保留" || d.status === "指示送信" ? { ...d, status: "ピッキング中" as const } : d))
+      );
+      toast.show("出荷指示を即時送信しました", "success");
+    }, 1800);
+  }
 
   return (
     <div className="space-y-5">
@@ -68,11 +95,17 @@ export default function RsrLogiOutboundPage() {
           <p className="text-sm text-gray-500 mt-1">楽天店受注をRSLに自動委託し、ピッキング・梱包・発送状況をリアルタイム確認。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("失敗キューを再送します", "info")}>
-            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />失敗を再送</span>
+          <SecondaryButton onClick={handleRetryFailed} disabled={retrying}>
+            <span className="inline-flex items-center gap-1.5">
+              <RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />
+              {retrying ? "再送中..." : "失敗を再送"}
+            </span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("選択受注の指示を即時送信しました", "success")}>
-            <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />即時送信</span>
+          <PrimaryButton onClick={handleImmediateSend} disabled={sending}>
+            <span className="inline-flex items-center gap-1.5">
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {sending ? "送信中..." : "即時送信"}
+            </span>
           </PrimaryButton>
         </div>
       </div>
@@ -80,19 +113,19 @@ export default function RsrLogiOutboundPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">本日指示</div>
-          <div className="text-2xl font-bold text-gray-800 mt-1">{data.filter((d) => d.cutoff.startsWith("2026/04/30")).length}</div>
+          <div className="text-2xl font-bold text-gray-800 mt-1">{items.filter((d) => d.cutoff.startsWith("2026/04/30")).length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">処理中</div>
-          <div className="text-2xl font-bold text-violet-600 mt-1">{data.filter((d) => d.status === "ピッキング中" || d.status === "梱包中").length}</div>
+          <div className="text-2xl font-bold text-violet-600 mt-1">{items.filter((d) => d.status === "ピッキング中" || d.status === "梱包中").length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">発送済</div>
-          <div className="text-2xl font-bold text-emerald-600 mt-1">{data.filter((d) => d.status === "発送済").length}</div>
+          <div className="text-2xl font-bold text-emerald-600 mt-1">{items.filter((d) => d.status === "発送済").length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">失敗・保留</div>
-          <div className="text-2xl font-bold text-red-600 mt-1">{data.filter((d) => d.status === "失敗" || d.status === "保留").length}</div>
+          <div className="text-2xl font-bold text-red-600 mt-1">{items.filter((d) => d.status === "失敗" || d.status === "保留").length}</div>
         </GlassCard>
       </div>
 
@@ -124,7 +157,7 @@ export default function RsrLogiOutboundPage() {
 
       <GlassCard className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/40 bg-white/40 text-xs text-gray-500">
-          {filtered.length} 件 / 全 {data.length} 件
+          {filtered.length} 件 / 全 {items.length} 件
         </div>
         <table className="w-full text-sm">
           <thead>

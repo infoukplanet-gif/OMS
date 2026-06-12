@@ -9,6 +9,7 @@ import {
   getProductAutoCreateSettings,
   setProductAutoCreateSettings,
 } from "@/lib/products/auto-create-settings";
+import { Modal, SecondaryButton } from "@/components/ui/interactive";
 import { Save, Settings2, ImageIcon, Bell, History, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
 type Rule = {
@@ -51,6 +52,15 @@ export default function ProductAutoCreatePage() {
   const [skipConflict, setSkipConflict] = useState(initial.skipConflict);
   const [autoCategorize, setAutoCategorize] = useState(initial.autoCategorize);
   const [defaultMargin, setDefaultMargin] = useState(initial.defaultMargin);
+
+  // ルール別詳細設定モーダル
+  const [ruleDetailOpen, setRuleDetailOpen] = useState(false);
+  const [selectedRule, setSelectedRule] = useState<Rule | null>(null);
+
+  const openRuleDetail = (r: Rule) => {
+    setSelectedRule(r);
+    setRuleDetailOpen(true);
+  };
 
   const toggleRule = (id: string) => setRules(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
 
@@ -161,7 +171,7 @@ export default function ProductAutoCreatePage() {
                   <td className={cn("px-4 py-3 text-right tabular-nums text-xs", r.duplicates > 0 ? "text-amber-700" : "text-gray-400")}>{r.duplicates}</td>
                   <td className="px-4 py-3 text-center">
                     <button
-                      onClick={() => toast.show(`${r.name} の詳細設定を開きました`)}
+                      onClick={() => openRuleDetail(r)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                     >
                       設定
@@ -241,6 +251,97 @@ export default function ProductAutoCreatePage() {
           ))}
         </ul>
       </GlassCard>
+
+      {/* ルール別詳細設定モーダル */}
+      <Modal
+        open={ruleDetailOpen}
+        onClose={() => setRuleDetailOpen(false)}
+        title={selectedRule ? `詳細設定: ${selectedRule.name}` : "詳細設定"}
+        footer={
+          <>
+            <SecondaryButton onClick={() => setRuleDetailOpen(false)}>閉じる</SecondaryButton>
+            <button
+              onClick={() => {
+                toast.show(`${selectedRule?.name} の設定を保存しました`, "success");
+                setRuleDetailOpen(false);
+              }}
+              className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 backdrop-blur-xl border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all"
+            >
+              保存
+            </button>
+          </>
+        }
+      >
+        {selectedRule && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">取得元:</span>
+              <span className="text-sm font-medium text-gray-800">{selectedRule.source}</span>
+              <span className={cn(
+                "ml-auto px-2 py-0.5 rounded-full text-xs font-medium",
+                selectedRule.enabled ? "bg-emerald-500/15 text-emerald-700" : "bg-gray-400/15 text-gray-500",
+              )}>
+                {selectedRule.enabled ? "有効" : "無効"}
+              </span>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-gray-600">フィールドマッピング</label>
+              <div className="rounded-xl border border-white/50 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-white/50">
+                      <th className="px-3 py-2 text-left text-gray-500">モール項目</th>
+                      <th className="px-3 py-2 text-center text-gray-500">→</th>
+                      <th className="px-3 py-2 text-left text-gray-500">自社マスタ項目</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      ["商品ID / SKU", "商品コード"],
+                      ["商品名", "商品名"],
+                      ["カテゴリ", "カテゴリ（変換マップ適用）"],
+                      ["販売価格", "販売価格"],
+                      ["商品画像URL", "メイン画像"],
+                    ].map(([from, to]) => (
+                      <tr key={from} className="border-t border-white/30">
+                        <td className="px-3 py-2 text-gray-700">{from}</td>
+                        <td className="px-3 py-2 text-center text-gray-400">→</td>
+                        <td className="px-3 py-2 text-gray-700">{to}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">コード生成パターン</label>
+                <select className="w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                  <option>モールID をそのまま使用</option>
+                  <option>プレフィックス付き</option>
+                  <option>ハッシュ生成</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">コードプレフィックス</label>
+                <input
+                  type="text"
+                  placeholder="例: RK-"
+                  className="w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">備考・メモ</label>
+              <textarea
+                rows={2}
+                placeholder="このルールの注意点など"
+                className="w-full px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
-import { Upload, Download, FileText, FileSpreadsheet, CheckCircle2, Check, AlertCircle, Eye, X } from "lucide-react";
+import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ImportMode = "new" | "update" | "upsert";

@@ -40,23 +40,31 @@ const Toggle = ({ label, defaultChecked }: { label: string; defaultChecked?: boo
 
 interface ProductFormProps {
   mode: "create" | "edit";
+  /** edit モード時: URL の [id] セグメント（商品コードに対応）。 */
+  productCode?: string;
 }
 
-export function ProductForm({ mode }: ProductFormProps) {
+export function ProductForm({ mode, productCode }: ProductFormProps) {
   const isEdit = mode === "edit";
   const toast = useToast();
   const router = useRouter();
   const [skus, setSkus] = useState([1, 2]);
 
+  // edit モードで既存商品データを store から初期値としてロードする。
+  // store への初回アクセスは render 時（SSR ではなく CSR 専用コンポーネント）に行う。
+  const existing = isEdit && productCode
+    ? productStore.findByCode(productCode)
+    : undefined;
+
   // 商品マスタの必須項目（コード/商品名/カテゴリ/単価/原価/状態）を controlled で管理し、
   // 保存ボタンで productStore.upsert に流す。
   // 残りの装飾フィールドは v1 では非保存のままにしておき、v2 で順次拡張する。
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState<string>("オーディオ");
-  const [price, setPrice] = useState<string>("");
-  const [cost, setCost] = useState<string>("");
-  const [status, setStatus] = useState<ProductRecord["status"]>("販売中");
+  const [code, setCode] = useState(existing?.code ?? "");
+  const [name, setName] = useState(existing?.name ?? "");
+  const [category, setCategory] = useState<string>(existing?.category ?? "オーディオ");
+  const [price, setPrice] = useState<string>(existing?.price != null ? String(existing.price) : "");
+  const [cost, setCost] = useState<string>(existing?.cost != null ? String(existing.cost) : "");
+  const [status, setStatus] = useState<ProductRecord["status"]>(existing?.status ?? "販売中");
 
   const handleSave = () => {
     const trimmedCode = code.trim();
@@ -105,7 +113,12 @@ export function ProductForm({ mode }: ProductFormProps) {
           </button>
         </div>
       </div>
-      {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 商品一覧 &gt; <span className="text-blue-600">ワイヤレスイヤホン Pro</span> &gt; 編集</div>}
+      {isEdit && (
+        <div className="text-xs text-gray-500">
+          ダッシュボード &gt; 商品一覧 &gt;{" "}
+          <span className="text-blue-600">{existing?.name ?? productCode ?? "商品"}</span> &gt; 編集
+        </div>
+      )}
 
       {/* 基本情報 */}
       <GlassCard>

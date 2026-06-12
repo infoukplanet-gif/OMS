@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Upload, FileText, CheckCircle2, AlertCircle, History, Download } from "lucide-react";
+import { shipmentStore } from "@/lib/stores/shipment";
 
 type ImportLog = {
   id: number;
@@ -25,17 +26,113 @@ const HISTORY: ImportLog[] = [
   { id: 4, at: "2026-04-23 16:00", by: "田中 花子", source: "shipment_notify.csv", records: 0, success: 0, failed: 0, status: "failed" },
 ];
 
+/**
+ * CSV 1行をパースして受注番号・追跡番号を抽出する。
+ * 各フォーマットの列順は配送業者仕様に合わせた簡易マッピング。
+ */
+function parseCsvLine(line: string): { orderId: string; trackingNumber: string } | null {
+  const cols = line.split(",").map((c) => c.replace(/^"|"$/g, "").trim());
+  if (cols.length < 2) return null;
+  // 汎用: 1列目=受注番号, 2列目=追跡番号
+  const orderId = cols[0];
+  const trackingNumber = cols[1];
+  if (!orderId || !trackingNumber) return null;
+  return { orderId, trackingNumber };
+}
+
 export default function ShipmentsNotificationImportPage() {
   const toast = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState("ヤマトB2 配送結果CSV");
   const [skipDuplicate, setSkipDuplicate] = useState(true);
   const [autoNotifyMall, setAutoNotifyMall] = useState(true);
   const [sendCustomerEmail, setSendCustomerEmail] = useState(true);
   const [dryRun, setDryRun] = useState(false);
+  const [importing, setImporting] = useState(false);
 
-  const handleFile = () => {
-    toast.show(dryRun ? "シミュレーション実行を開始しました" : "出荷通知の取込を開始しました", "success");
-  };
+  function handleFileSelected(file: File) {
+    if (!file.name.endsWith(".csv")) {
+      toast.show("CSVファイル（.csv）を選択してください", "error");
+      return;
+    }
+    setImporting(true);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = (e.target?.result as string) ?? "";
+        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        // ヘッダー行スキップ（1行目がラベルなら飛ばす）
+        const dataLines = lines[0]?.toLowerCase().includes("受注") || lines[0]?.toLowerCase().includes("order")
+          ? lines.slice(1)
+          : lines;
+
+        let success = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        for (const line of dataLines) {
+          const parsed = parseCsvLine(line);
+          if (!parsed) { failed += 1; continue; }
+          const { orderId, trackingNumber } = parsed;
+          const existing = shipmentStore.getState().find((s) => s.id === orderId);
+          if (!existing) { failed += 1; continue; }
+          if (skipDuplicate && existing.trackingNumber && existing.trackingNumber.trim().length > 0) {
+            skipped += 1;
+            continue;
+          }
+          if (!dryRun) {
+            const next = shipmentStore.getState().map((s) =>
+              s.id === orderId ? { ...s, trackingNumber } : s,
+            );
+            shipmentStore.setItems(next);
+          }
+          success += 1;
+        }
+
+        const mode = dryRun ? "[シミュレーション] " : "";
+        const detail = [
+          `成功 ${success}件`,
+          failed > 0 ? `失敗 ${failed}件` : "",
+          skipped > 0 ? `重複スキップ ${skipped}件` : "",
+        ]
+          .filter(Boolean)
+          .join(" / ");
+        toast.show(`${mode}${file.name} の取込完了: ${detail}`, success > 0 ? "success" : "error");
+
+        if (autoNotifyMall && !dryRun && success > 0) {
+          toast.show(`モール通知キュー: ${success}件 をスケジュール済み`, "info");
+        }
+        if (sendCustomerEmail && !dryRun && success > 0) {
+          toast.show(`発送完了メール: ${success}件 をキュー追加済み`, "info");
+        }
+      } catch {
+        toast.show("CSVの読み込み中にエラーが発生しました", "error");
+      } finally {
+        setImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    };
+    reader.onerror = () => {
+      toast.show("ファイルの読み込みに失敗しました", "error");
+      setImporting(false);
+    };
+    reader.readAsText(file, "UTF-8");
+  }
+
+  function handleDropZoneClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelected(file);
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) handleFileSelected(file);
+  }
 
   return (
     <div className="space-y-5">
@@ -92,17 +189,32 @@ export default function ShipmentsNotificationImportPage() {
       </GlassCard>
 
       <GlassCard>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv"
+          className="hidden"
+          onChange={handleInputChange}
+        />
         <div
-          onClick={handleFile}
-          className="flex flex-col items-center justify-center gap-3 p-12 rounded-xl border-2 border-dashed border-blue-300/60 bg-blue-500/5 hover:bg-blue-500/10 transition-colors cursor-pointer"
+          onClick={handleDropZoneClick}
+          onDrop={handleDrop}
+          onDragOver={(e) => e.preventDefault()}
+          className={cn(
+            "flex flex-col items-center justify-center gap-3 p-12 rounded-xl border-2 border-dashed border-blue-300/60 bg-blue-500/5 hover:bg-blue-500/10 transition-colors cursor-pointer",
+            importing && "opacity-60 pointer-events-none",
+          )}
         >
           <Upload className="h-10 w-10 text-blue-500" />
           <p className="text-base font-medium text-gray-700">CSVファイルをドラッグ＆ドロップ</p>
-          <p className="text-xs text-gray-500">または下のボタンからファイル選択</p>
-          <PrimaryButton onClick={handleFile}>
-            <Upload className="h-4 w-4" />ファイルを選択
+          <p className="text-xs text-gray-500">または下のボタンからファイル選択 (.csv)</p>
+          <PrimaryButton onClick={handleDropZoneClick} disabled={importing}>
+            <Upload className="h-4 w-4" />{importing ? "取込中..." : "ファイルを選択"}
           </PrimaryButton>
         </div>
+        <p className="text-xs text-gray-400 mt-3">
+          フォーマット: 1列目=受注番号、2列目=追跡番号（ヘッダー行は自動スキップ）。文字コード UTF-8 推奨。
+        </p>
       </GlassCard>
 
       <GlassCard>

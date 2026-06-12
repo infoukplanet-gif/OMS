@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, Plus, Search, Trash2 } from "lucide-react";
 
 type SkuMap = {
   id: string;
@@ -43,6 +43,40 @@ export default function RsrLogiSetupPage() {
   const [companyId, setCompanyId] = useState("RAK-OMS-CORP-0042");
   const [warehouseId, setWarehouseId] = useState("RSL-CHIBA-A");
   const [contractType, setContractType] = useState("通常契約");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [applying, setApplying] = useState(false);
+
+  function handleSave() {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("RSL初期登録を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 1200);
+  }
+
+  function handleBulkApply() {
+    if (applying) return;
+    const unregisteredCount = items.filter((i) => i.status === "未登録").length;
+    if (unregisteredCount === 0) {
+      toast.show("未登録SKUはありません", "info");
+      return;
+    }
+    setApplying(true);
+    setTimeout(() => {
+      setApplying(false);
+      const now = new Date();
+      const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}`;
+      setItems((prev) =>
+        prev.map((i) => (i.status === "未登録" ? { ...i, status: "申請中" as const, registeredAt: dateStr } : i))
+      );
+      toast.show(`${unregisteredCount}件の未登録SKUを一括申請しました`, "success");
+    }, 1500);
+  }
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -63,7 +97,13 @@ export default function RsrLogiSetupPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">RSL利用開始時の各種登録情報と、商品コードのRSL SKUマッピングをここで管理します。</p>
         </div>
-        <PrimaryButton onClick={() => toast.show("RSL初期登録を保存しました", "success")}>保存</PrimaryButton>
+        <PrimaryButton onClick={handleSave} disabled={saving}>
+          {saving ? (
+            <span className="inline-flex items-center gap-1.5"><Loader2 className="h-4 w-4 animate-spin" />保存中...</span>
+          ) : saved ? (
+            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" />保存済</span>
+          ) : "保存"}
+        </PrimaryButton>
       </div>
 
       <GlassCard>
@@ -131,8 +171,11 @@ export default function RsrLogiSetupPage() {
             <option value="保留">保留</option>
           </select>
           <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); }}>クリア</SecondaryButton>
-          <SecondaryButton onClick={() => toast.show("一括RSL登録申請を送信しました", "info")}>
-            <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />未登録を一括申請</span>
+          <SecondaryButton onClick={handleBulkApply} disabled={applying}>
+            <span className="inline-flex items-center gap-1.5">
+              {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {applying ? "申請中..." : "未登録を一括申請"}
+            </span>
           </SecondaryButton>
         </div>
       </GlassCard>

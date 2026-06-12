@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 import { salesStore, type SalesEntry } from "@/lib/stores/sales";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { ArrowDown, ArrowUp, Download, Truck, TrendingDown, TrendingUp } from "lucide-react";
@@ -123,6 +124,25 @@ export default function AnalyticsSalesPage() {
   };
   const sortIcon = (key: SortKey) => sortKey === key ? (sortDir === "desc" ? <ArrowDown className="h-3 w-3 inline" /> : <ArrowUp className="h-3 w-3 inline" />) : null;
 
+  function handleCsvExport() {
+    const headers = ["日付", "店舗", "チャネル", "受注件数", "売上金額", "粗利", "粗利率(%)", "キャンセル", "返品額", "新規顧客", "リピート率(%)"] as const;
+    const rows = filtered.map((d) => [
+      d.date,
+      d.shop,
+      d.channel,
+      d.orders,
+      d.amount,
+      d.gross,
+      Math.round((d.gross / d.amount) * 100),
+      d.cancelled,
+      d.returnAmount,
+      d.newCustomers,
+      d.repeatRate,
+    ] as const);
+    downloadCsv(`売上分析_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show("売上分析をCSVでダウンロードしました", "success");
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -133,7 +153,7 @@ export default function AnalyticsSalesPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">日々の販売動向と粗利推移、キャンセル・返品の発生量を統合可視化します。</p>
         </div>
-        <SecondaryButton onClick={() => toast.show("売上分析をCSVで書き出しました", "success")}>
+        <SecondaryButton onClick={handleCsvExport}>
           <span className="inline-flex items-center gap-1.5"><Download className="h-4 w-4" />CSV書き出し</span>
         </SecondaryButton>
       </div>

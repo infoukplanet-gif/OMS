@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { ArrowRight, Box, CheckCircle2, ClipboardList, Inbox, RefreshCw, Truck, Undo2 } from "lucide-react";
+import { ArrowRight, Box, CheckCircle2, ClipboardList, Inbox, Loader2, RefreshCw, Truck, Undo2, XCircle } from "lucide-react";
 
 const subPages = [
   { href: "/warehouse-integration/rakuten-super-logi/setup", title: "初期登録", desc: "店舗情報・連携キー・契約倉庫の登録", icon: ClipboardList, color: "text-blue-600" },
@@ -16,15 +17,49 @@ const subPages = [
   { href: "/warehouse-integration/rakuten-super-logi/return", title: "返品処理", desc: "返品入荷・検品・在庫戻し", icon: Undo2, color: "text-rose-600" },
 ];
 
-const recentEvents = [
+const INITIAL_EVENTS = [
   { time: "2026/04/30 10:30", action: "出荷指示送信", count: 145, result: "成功" },
   { time: "2026/04/30 10:00", action: "在庫数取得", count: 22130, result: "成功" },
   { time: "2026/04/30 09:30", action: "出荷実績取込", count: 132, result: "成功" },
   { time: "2026/04/30 06:00", action: "入荷予定送信", count: 8, result: "成功" },
 ];
 
+type ConnStatus = "正常" | "確認中" | "エラー";
+
 export default function RsrLogiHomePage() {
   const toast = useToast();
+  const [connStatus, setConnStatus] = useState<ConnStatus>("正常");
+  const [lastSync, setLastSync] = useState("10:30");
+  const [syncing, setSyncing] = useState(false);
+  const [events, setEvents] = useState(INITIAL_EVENTS);
+
+  function handleConnectionTest() {
+    setConnStatus("確認中");
+    setTimeout(() => {
+      setConnStatus("正常");
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      setLastSync(timeStr);
+      toast.show("接続テスト完了：RSLサーバー正常応答", "success");
+    }, 1500);
+  }
+
+  function handleFullSync() {
+    if (syncing) return;
+    setSyncing(true);
+    setTimeout(() => {
+      setSyncing(false);
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${timeStr}`;
+      setLastSync(timeStr);
+      setEvents((prev) => [
+        { time: dateStr, action: "全件同期", count: 22130, result: "成功" },
+        ...prev,
+      ]);
+      toast.show("全データの同期が完了しました", "success");
+    }, 2000);
+  }
 
   return (
     <div className="space-y-5">
@@ -37,9 +72,16 @@ export default function RsrLogiHomePage() {
           <p className="text-sm text-gray-500 mt-1">楽天店の在庫・出荷・入荷・返品をRSLに完全委託。OMSと自動同期します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("接続テストを開始しました", "info")}>接続テスト</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("全データを今すぐ同期しました", "success")}>
-            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />全件同期</span>
+          <SecondaryButton onClick={handleConnectionTest} disabled={connStatus === "確認中"}>
+            {connStatus === "確認中" ? (
+              <span className="inline-flex items-center gap-1.5"><Loader2 className="h-4 w-4 animate-spin" />確認中</span>
+            ) : "接続テスト"}
+          </SecondaryButton>
+          <PrimaryButton onClick={handleFullSync} disabled={syncing}>
+            <span className="inline-flex items-center gap-1.5">
+              <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />
+              {syncing ? "同期中..." : "全件同期"}
+            </span>
           </PrimaryButton>
         </div>
       </div>
@@ -48,10 +90,14 @@ export default function RsrLogiHomePage() {
         <GlassCard className="p-4">
           <div className="flex items-center justify-between">
             <div className="text-xs text-gray-500">接続状態</div>
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            {connStatus === "正常" && <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+            {connStatus === "確認中" && <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />}
+            {connStatus === "エラー" && <XCircle className="h-4 w-4 text-red-600" />}
           </div>
-          <div className="text-2xl font-bold text-emerald-600 mt-1">正常</div>
-          <div className="text-xs text-gray-500 mt-0.5">最終同期 10:30</div>
+          <div className={cn("text-2xl font-bold mt-1", connStatus === "正常" ? "text-emerald-600" : connStatus === "確認中" ? "text-blue-600" : "text-red-600")}>
+            {connStatus}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">最終同期 {lastSync}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">RSL在庫数</div>
@@ -102,7 +148,7 @@ export default function RsrLogiHomePage() {
             </tr>
           </thead>
           <tbody>
-            {recentEvents.map((e, i) => (
+            {events.map((e, i) => (
               <tr key={i} className="border-t border-white/30 hover:bg-white/40">
                 <td className="px-3 py-2.5 text-xs text-gray-500">{e.time}</td>
                 <td className="px-3 py-2.5 text-gray-800">{e.action}</td>

@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 import { ArrowDown, ArrowUp, Download, Search } from "lucide-react";
 
 type Product = {
@@ -90,6 +91,25 @@ export default function AnalyticsProductsPage() {
 
   const sortIcon = (key: SortKey) => sortKey === key ? (sortDir === "desc" ? <ArrowDown className="h-3 w-3 inline" /> : <ArrowUp className="h-3 w-3 inline" />) : null;
 
+  function handleCsvExport() {
+    const headers = ["商品コード", "商品名", "カテゴリ", "店舗", "販売数", "売上金額", "粗利", "粗利率(%)", "返品数", "ABCランク", "前期比(%)"] as const;
+    const rows = filtered.map((d) => [
+      d.code,
+      d.name,
+      d.category,
+      d.shop,
+      d.qty,
+      d.amount,
+      d.gross,
+      d.grossRate,
+      d.returns,
+      d.rank,
+      d.trendRate,
+    ] as const);
+    downloadCsv(`商品別分析_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show("商品別分析をCSVでダウンロードしました", "success");
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -100,7 +120,7 @@ export default function AnalyticsProductsPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">売れ筋・死筋の特定、粗利改善、返品率の高い商品の特定にご利用ください。</p>
         </div>
-        <SecondaryButton onClick={() => toast.show("商品別分析をCSVで書き出しました", "success")}>
+        <SecondaryButton onClick={handleCsvExport}>
           <span className="inline-flex items-center gap-1.5"><Download className="h-4 w-4" />CSV書き出し</span>
         </SecondaryButton>
       </div>

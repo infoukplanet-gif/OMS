@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
-import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Plus, Pencil, Search, RotateCcw, AlertTriangle, Banknote } from "lucide-react";
 
@@ -38,7 +37,6 @@ const STATUS_BADGE: Record<Ret["status"], string> = {
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function PurchasingReturnsPage() {
-  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("未完了のみ");
   const [reasonFilter, setReasonFilter] = useState("すべて");
@@ -141,7 +139,7 @@ export default function PurchasingReturnsPage() {
                   <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", STATUS_BADGE[r.status])}>{r.status}</span>
                 </td>
                 <td className="px-3 py-2.5">
-                  <Link href={`/purchasing/returns/${r.id}/edit`} onClick={(e) => { e.preventDefault(); toast.show(`${r.id} の編集画面を開きます`); }} className="inline-flex p-1 rounded-lg hover:bg-white/60 text-gray-400 hover:text-blue-600">
+                  <Link href={`/purchasing/returns/${r.id}/edit`} className="inline-flex p-1 rounded-lg hover:bg-white/60 text-gray-400 hover:text-blue-600">
                     <Pencil className="h-3.5 w-3.5" />
                   </Link>
                 </td>

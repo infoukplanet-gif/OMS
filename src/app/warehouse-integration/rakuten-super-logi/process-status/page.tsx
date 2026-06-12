@@ -51,16 +51,52 @@ export default function RsrLogiProcessStatusPage() {
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | ProcessLog["type"]>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | ProcessLog["status"]>("all");
+  const [items, setItems] = useState(data);
+  const [lastChecked, setLastChecked] = useState("10:08");
+  const [refreshing, setRefreshing] = useState(false);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
-    return data.filter((d) => {
+    return items.filter((d) => {
       if (k && !`${d.id} ${d.job}`.toLowerCase().includes(k)) return false;
       if (typeFilter !== "all" && d.type !== typeFilter) return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
       return true;
     });
-  }, [keyword, typeFilter, statusFilter]);
+  }, [items, keyword, typeFilter, statusFilter]);
+
+  function handleRefresh() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+      const now = new Date();
+      const ts = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      setLastChecked(ts);
+      toast.show("処理状況を再読込しました", "info");
+    }, 1000);
+  }
+
+  function handleRetry(id: string) {
+    setItems((prev) =>
+      prev.map((d) =>
+        d.id === id
+          ? { ...d, status: "実行中" as const, endAt: "—", duration: "実行中", failed: 0, done: 0, detail: "再実行中..." }
+          : d
+      )
+    );
+    setTimeout(() => {
+      setItems((prev) =>
+        prev.map((d) => {
+          if (d.id !== id || d.status !== "実行中") return d;
+          const now = new Date();
+          const ts = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+          return { ...d, status: "完了" as const, endAt: ts, duration: "1m 08s", done: d.total, detail: "再実行完了" };
+        })
+      );
+      toast.show(`ジョブを再実行しました`, "success");
+    }, 2000);
+  }
 
   return (
     <div className="space-y-5">
@@ -72,8 +108,11 @@ export default function RsrLogiProcessStatusPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">出荷・入荷・在庫・返品・棚卸の各バッチ進捗を統合監視。</p>
         </div>
-        <SecondaryButton onClick={() => toast.show("処理状況を再読込しました", "info")}>
-          <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />更新</span>
+        <SecondaryButton onClick={handleRefresh} disabled={refreshing}>
+          <span className="inline-flex items-center gap-1.5">
+            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+            {refreshing ? "読込中..." : `更新 (${lastChecked})`}
+          </span>
         </SecondaryButton>
       </div>
 
@@ -129,7 +168,7 @@ export default function RsrLogiProcessStatusPage() {
 
       <GlassCard className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/40 bg-white/40 text-xs text-gray-500">
-          {filtered.length} 件 / 全 {data.length} 件
+          {filtered.length} 件 / 全 {items.length} 件
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -147,7 +186,7 @@ export default function RsrLogiProcessStatusPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((d) => (
+            {filtered.map((d: ProcessLog) => (
               <tr key={d.id} className="border-t border-white/30 hover:bg-white/40">
                 <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{d.id}</td>
                 <td className="px-3 py-2.5 font-medium text-gray-800">{d.job}</td>
@@ -185,9 +224,11 @@ export default function RsrLogiProcessStatusPage() {
                 <td className="px-3 py-2.5 text-xs text-gray-600">{d.detail}</td>
                 <td className="px-3 py-2.5 text-center">
                   {d.status === "失敗" ? (
-                    <button onClick={() => toast.show(`${d.id} を再実行しました`, "success")} className="px-3 py-1 rounded-lg text-xs font-medium bg-orange-500/15 text-orange-700 hover:bg-orange-500/25 inline-flex items-center gap-1">
+                    <button onClick={() => handleRetry(d.id)} className="px-3 py-1 rounded-lg text-xs font-medium bg-orange-500/15 text-orange-700 hover:bg-orange-500/25 inline-flex items-center gap-1">
                       <RefreshCw className="h-3 w-3" />再送
                     </button>
+                  ) : d.status === "実行中" ? (
+                    <span className="text-xs text-blue-600 flex items-center gap-1"><Clock className="h-3 w-3" />実行中</span>
                   ) : (
                     <button onClick={() => toast.show(`${d.id} の詳細を表示します`, "info")} className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25">
                       詳細

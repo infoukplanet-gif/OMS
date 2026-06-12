@@ -63,7 +63,9 @@ type AuditLog = {
   detail?: string;
 };
 
-const ENTRIES: BlacklistEntry[] = [
+const SEVERITY_LADDER: Severity[] = ["観察", "注意", "警告", "完全ブロック"];
+
+const INITIAL_ENTRIES: BlacklistEntry[] = [
   {
     id: "BL-001",
     code: "CUS-0099",
@@ -226,10 +228,11 @@ export default function BlacklistPage() {
   const [statusTab, setStatusTab] = useState<(typeof STATUS_OPTIONS)[number]>("有効");
   const [showAddModal, setShowAddModal] = useState(false);
   const [selected, setSelected] = useState<BlacklistEntry | null>(null);
+  const [entries, setEntries] = useState<BlacklistEntry[]>(INITIAL_ENTRIES);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
-    return ENTRIES.filter((e) => {
+    return entries.filter((e) => {
       if (statusTab === "有効" && e.status !== "active") return false;
       if (statusTab === "解除済み" && e.status === "active") return false;
       if (
@@ -244,23 +247,34 @@ export default function BlacklistPage() {
       if (severity !== "すべて" && e.severity !== severity) return false;
       return true;
     });
-  }, [keyword, reason, severity, statusTab]);
+  }, [keyword, reason, severity, statusTab, entries]);
 
   const totals = {
-    active: ENTRIES.filter((e) => e.status === "active").length,
-    fullyBlocked: ENTRIES.filter((e) => e.status === "active" && e.severity === "完全ブロック").length,
-    expiringSoon: ENTRIES.filter((e) => e.status === "active" && e.expiresAt && isExpiringSoon(e.expiresAt))
+    active: entries.filter((e) => e.status === "active").length,
+    fullyBlocked: entries.filter((e) => e.status === "active" && e.severity === "完全ブロック").length,
+    expiringSoon: entries.filter((e) => e.status === "active" && e.expiresAt && isExpiringSoon(e.expiresAt))
       .length,
-    released: ENTRIES.filter((e) => e.status === "released").length,
+    released: entries.filter((e) => e.status === "released").length,
   };
 
   const release = (entry: BlacklistEntry) => {
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entry.id ? { ...e, status: "released" as const } : e))
+    );
     toast.show(`${entry.name} さんのブラックリスト登録を解除しました`, "success");
     setSelected(null);
   };
 
   const escalate = (entry: BlacklistEntry) => {
-    toast.show(`${entry.name} さんの重要度を引き上げました（要保存）`);
+    const idx = SEVERITY_LADDER.indexOf(entry.severity);
+    if (idx < 0 || idx >= SEVERITY_LADDER.length - 1) {
+      toast.show(`${entry.name} さんは既に最高重要度です`, "error");
+      return;
+    }
+    const next = SEVERITY_LADDER[idx + 1];
+    setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, severity: next } : e)));
+    setSelected((cur) => (cur && cur.id === entry.id ? { ...cur, severity: next } : cur));
+    toast.show(`${entry.name} さんの重要度を「${next}」に引き上げました`, "success");
   };
 
   return (

@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
+import { useToast } from "@/components/ui/interactive";
 import {
   TrendingUp,
   TrendingDown,
@@ -75,6 +78,20 @@ const categories = [
 
 const periods = ["今日", "今週", "今月", "3ヶ月", "カスタム"];
 
+function buildReportRows() {
+  const rows: [string, string, string, string, string][] = [];
+  for (const p of topProducts) {
+    rows.push([
+      String(p.rank),
+      p.name,
+      String(p.sold),
+      p.revenue,
+      p.change,
+    ]);
+  }
+  return rows;
+}
+
 /**
  * 受注ステータス分布（直近30日のスナップショット想定）
  * 状態定義は src/lib/state-machines/order.ts の ORDER_STATUSES に従う。
@@ -97,6 +114,16 @@ const orderStatusTotal = ORDER_STATUSES.reduce(
 );
 
 export default function AnalyticsPage() {
+  const toast = useToast();
+  const [activePeriod, setActivePeriod] = useState(2);
+
+  function handleExport() {
+    const headers = ["順位", "商品名", "販売数", "売上金額", "前月比"] as const;
+    const rows = buildReportRows();
+    downloadCsv(`分析レポート_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show("レポートをCSVでダウンロードしました", "success");
+  }
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -107,9 +134,10 @@ export default function AnalyticsPage() {
             {periods.map((p, i) => (
               <button
                 key={p}
+                onClick={() => setActivePeriod(i)}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs transition-all",
-                  i === 2
+                  i === activePeriod
                     ? "bg-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_6px_rgba(0,0,0,0.06)] text-gray-800 font-medium"
                     : "text-gray-500 hover:text-gray-700 hover:bg-white/40"
                 )}
@@ -118,12 +146,15 @@ export default function AnalyticsPage() {
               </button>
             ))}
           </div>
-          <button className={cn(
-            "px-4 py-2 rounded-xl text-sm font-medium",
-            "bg-white/60 backdrop-blur-xl border border-white/50",
-            "shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]",
-            "text-gray-700 hover:bg-white/80 transition-all"
-          )}>
+          <button
+            onClick={handleExport}
+            className={cn(
+              "px-4 py-2 rounded-xl text-sm font-medium",
+              "bg-white/60 backdrop-blur-xl border border-white/50",
+              "shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]",
+              "text-gray-700 hover:bg-white/80 transition-all"
+            )}
+          >
             レポートエクスポート
           </button>
         </div>

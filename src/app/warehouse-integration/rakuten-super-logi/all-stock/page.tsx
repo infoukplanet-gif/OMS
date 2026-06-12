@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 import { AlertCircle, Download, RefreshCw, Search } from "lucide-react";
 
 type Stock = {
@@ -39,8 +40,33 @@ export default function RsrLogiAllStockPage() {
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("2026/04/30 10:30");
 
-  const filtered = useMemo(() => {
+  function handleResync() {
+    if (syncing) return;
+    setSyncing(true);
+    setTimeout(() => {
+      setSyncing(false);
+      const now = new Date();
+      const ts = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      setLastUpdated(ts);
+      toast.show("RSL在庫を再同期しました", "success");
+    }, 1800);
+  }
+
+  function handleCsvExport() {
+    const headers = ["SKU", "RSL SKU", "商品名", "カテゴリ", "利用可能", "引当済", "入荷予定", "不良品", "合計", "ロケーション", "最終更新"] as const;
+    const rows = filtered.map((d) => [
+      d.sku, d.rslSku, d.name, d.category,
+      d.available, d.allocated, d.inbound, d.defective, d.total,
+      d.location, d.lastUpdated,
+    ] as const);
+    downloadCsv(`RSL在庫一覧_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+    toast.show("在庫CSVをダウンロードしました", "success");
+  }
+
+  const filtered = (() => {
     const k = keyword.trim().toLowerCase();
     return data.filter((d) => {
       if (k && !`${d.sku} ${d.rslSku} ${d.name}`.toLowerCase().includes(k)) return false;
@@ -48,7 +74,7 @@ export default function RsrLogiAllStockPage() {
       if (lowStockOnly && d.available > 50) return false;
       return true;
     });
-  }, [keyword, category, lowStockOnly]);
+  })();
 
   return (
     <div className="space-y-5">
@@ -61,10 +87,13 @@ export default function RsrLogiAllStockPage() {
           <p className="text-sm text-gray-500 mt-1">RSL倉庫の現在在庫をリアルタイム取得。低在庫アラートと棚ロケーションも確認できます。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("RSL在庫を再同期しました", "success")}>
-            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />再同期</span>
+          <SecondaryButton onClick={handleResync} disabled={syncing}>
+            <span className="inline-flex items-center gap-1.5">
+              <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />
+              {syncing ? "同期中..." : "再同期"}
+            </span>
           </SecondaryButton>
-          <SecondaryButton onClick={() => toast.show("在庫CSVを書き出しました", "success")}>
+          <SecondaryButton onClick={handleCsvExport}>
             <span className="inline-flex items-center gap-1.5"><Download className="h-4 w-4" />CSV</span>
           </SecondaryButton>
         </div>
@@ -74,6 +103,7 @@ export default function RsrLogiAllStockPage() {
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">SKU総数</div>
           <div className="text-2xl font-bold text-gray-800 mt-1">{data.length}</div>
+          <div className="text-xs text-gray-400 mt-0.5">最終同期 {lastUpdated}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">利用可能在庫</div>

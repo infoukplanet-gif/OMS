@@ -102,6 +102,8 @@ export default function OrdersPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 25;
 
   /**
    * 選択中の受注のキャンセル概要を算出する（確認ダイアログ表示用）。
@@ -145,10 +147,34 @@ export default function OrdersPage() {
     return c;
   }, [items]);
 
+  // ページネーション: フィルタが変わったら安全にクランプ（useEffect不使用）
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // CSVエクスポート: 表示中（filtered）データを Blob でダウンロード
+  const exportCsv = () => {
+    const header = ["受注番号", "店舗", "顧客名", "点数", "合計", "支払方法", "ステータス", "受注日時"].join(",");
+    const rows = filtered.map((o) =>
+      [o.id, o.shop, o.customer, o.items, o.amount, o.payment, o.status, o.date]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(",")
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `受注一覧_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.show(`${filtered.length} 件をCSVエクスポートしました`, "success");
+  };
+
   const toggleSelect = (id: string) =>
     setSelected((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   const toggleAll = () =>
-    setSelected((p) => (p.length === filtered.length ? [] : filtered.map((o) => o.id)));
+    setSelected((p) => (p.length === paged.length ? [] : paged.map((o) => o.id)));
 
   const hasFilter = keyword || shopFilter !== "all" || paymentFilter !== "all" || dateFrom || dateTo;
   const toast = useToast();
@@ -436,7 +462,7 @@ export default function OrdersPage() {
             <thead>
               <tr className="bg-white/50 border-b border-white/40">
                 <th className="w-10 px-3 py-3">
-                  <input type="checkbox" checked={filtered.length > 0 && selected.length === filtered.length} onChange={toggleAll} className="rounded border-gray-300" />
+                  <input type="checkbox" checked={paged.length > 0 && paged.every((o) => selected.includes(o.id))} onChange={toggleAll} className="rounded border-gray-300" />
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">受注番号</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">店舗</th>
@@ -450,7 +476,7 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((order) => (
+              {paged.map((order) => (
                 <tr key={order.id} className={cn("border-t border-white/30 transition-colors", selected.includes(order.id) ? "bg-blue-500/5" : "hover:bg-white/40")}>
                   <td className="px-3 py-3">
                     <input type="checkbox" checked={selected.includes(order.id)} onChange={() => toggleSelect(order.id)} className="rounded border-gray-300" />
@@ -499,7 +525,7 @@ export default function OrdersPage() {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {paged.length === 0 && (
                 <tr>
                   <td colSpan={10} className="px-3 py-12 text-center text-sm text-gray-400">該当する受注がありません</td>
                 </tr>
@@ -545,24 +571,29 @@ export default function OrdersPage() {
                 >
                   キャンセル
                 </button>
-                <button onClick={() => toast.show(`${selected.length} 件をエクスポートしました`, "success")} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-500/15 text-gray-600 hover:bg-gray-500/25 transition-colors">エクスポート</button>
+                <button onClick={exportCsv} className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-500/15 text-gray-600 hover:bg-gray-500/25 transition-colors">CSVエクスポート</button>
               </div>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 whitespace-nowrap">{filtered.length} 件 / 全 {items.length} 件</span>
+            <span className="text-sm text-gray-500 whitespace-nowrap">
+              {filtered.length === 0 ? "0" : `${(safePage - 1) * PAGE_SIZE + 1}–${Math.min(safePage * PAGE_SIZE, filtered.length)}`} / {filtered.length} 件（全 {items.length} 件）
+            </span>
             <div className="flex gap-1">
               <button
-                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
                 aria-label="前のページ"
-                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 transition-colors"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
+              <span className="flex items-center px-2 text-xs text-gray-500">{safePage}/{totalPages}</span>
               <button
-                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
                 aria-label="次のページ"
-                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 transition-colors"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>

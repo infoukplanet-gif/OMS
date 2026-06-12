@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { orderStore } from "@/lib/stores/orders";
 import { ChevronDown, Printer, MoreHorizontal, Package, MapPin, CreditCard, StickyNote, Check, Copy, X, Trash2, Download, Mail } from "lucide-react";
 
 const orderItems = [
@@ -43,14 +45,23 @@ function formatNow() {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// /orders/details はデモ用の固定URLページ。orderStore の先頭 ID をメモ保存の対象に使う。
+const DEMO_ORDER_ID = "ORD-2026-08851";
+
 export default function OrderDetailPage() {
+  const toast = useToast();
   const [currentStatus, setCurrentStatus] = useState<StatusKey>("出荷待ち");
   const [timeline, setTimeline] = useState<TimelineEntry[]>(initialTimeline);
   const [statusOpen, setStatusOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
   const statusRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
+
+  // orderStore から既存メモを初期値として取得（存在すれば）
+  const [memo, setMemo] = useState<string>(() => {
+    const o = orderStore.getState().find((x) => x.id === DEMO_ORDER_ID);
+    return typeof o?.memo === "string" ? o.memo : "";
+  });
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -61,11 +72,10 @@ export default function OrderDetailPage() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2200);
-    return () => clearTimeout(t);
-  }, [toast]);
+  function saveMemo() {
+    orderStore.patch(DEMO_ORDER_ID, { memo });
+    toast.show("メモを保存しました", "success");
+  }
 
   function handleStatusChange(next: StatusKey) {
     if (next === currentStatus) {
@@ -75,27 +85,21 @@ export default function OrderDetailPage() {
     setCurrentStatus(next);
     setTimeline((prev) => [...prev, { status: next, date: formatNow(), by: "田中" }]);
     setStatusOpen(false);
-    setToast(`ステータスを「${next}」に変更しました`);
+    toast.show(`ステータスを「${next}」に変更しました`, "success");
   }
 
   function handlePrint() {
-    setToast("印刷ダイアログを開きます");
+    toast.show("印刷ダイアログを開きます", "info");
     setTimeout(() => window.print(), 200);
   }
 
   function handleMore(action: string) {
     setMoreOpen(false);
-    setToast(`${action} を実行しました`);
+    toast.show(`${action} を実行しました`, "success");
   }
 
   return (
     <div className="space-y-5">
-      {toast && (
-        <div className="fixed top-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-gray-900/90 text-white text-sm shadow-lg backdrop-blur-xl border border-white/20 flex items-center gap-2">
-          <Check className="h-4 w-4 text-emerald-400" />
-          {toast}
-        </div>
-      )}
 
       <div>
         <p className="text-xs text-gray-500 mb-1">ダッシュボード &gt; 受注一覧 &gt; 受注詳細</p>
@@ -254,10 +258,16 @@ export default function OrderDetailPage() {
 
           <GlassCard>
             <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2"><StickyNote className="h-4 w-4 text-gray-400" />社内メモ</h3>
-            <textarea rows={3} placeholder="メモを入力..." className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500/20 resize-none" />
+            <textarea
+              rows={3}
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="メモを入力..."
+              className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500/20 resize-none"
+            />
             <button
               type="button"
-              onClick={() => setToast("メモを保存しました")}
+              onClick={saveMemo}
               className="mt-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 transition-colors"
             >
               保存

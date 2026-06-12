@@ -85,6 +85,8 @@ export default function CustomersPage() {
   const [sortKey, setSortKey] = useState<SortKey>("lastPurchase");
   const [sortDesc, setSortDesc] = useState(true);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -137,6 +139,30 @@ export default function CustomersPage() {
     return result;
   }, [keyword, rank, purchaseFilter, amountFilter, periodFilter, vipOnly, sortKey, sortDesc, allCustomers]);
 
+  // ページネーション（フィルタ変更時は safePage で自動クランプ）
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // CSVエクスポート（filtered 全件）
+  const exportCsv = () => {
+    const header = ["顧客コード", "顧客名", "カナ", "メール", "電話番号", "都道府県", "ランク", "購入回数", "累計金額", "最終購入日", "登録日"].join(",");
+    const rows = filtered.map((c) =>
+      [c.code, c.name, c.kana, c.email, c.phone, c.prefecture, c.rank, c.purchases, c.total, c.lastPurchase, c.registered]
+        .map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`)
+        .join(",")
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `顧客一覧_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.show(`${filtered.length} 件をCSVエクスポートしました`, "success");
+  };
+
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDesc(!sortDesc);
     else {
@@ -180,7 +206,7 @@ export default function CustomersPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+          <button onClick={exportCsv} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
             <Download className="h-4 w-4" />CSVエクスポート
           </button>
           <Link
@@ -367,7 +393,7 @@ export default function CustomersPage() {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((c) => (
+                  paged.map((c) => (
                     <tr
                       key={c.id}
                       onClick={() => setSelectedCustomer(c)}
@@ -425,20 +451,23 @@ export default function CustomersPage() {
           </div>
           <div className="flex items-center justify-between px-4 py-3 border-t border-white/40 bg-white/30">
             <span className="text-sm text-gray-500">
-              {filtered.length === 0 ? "0" : `1-${filtered.length}`} / {filtered.length} 件
+              {filtered.length === 0 ? "0" : `${(safePage - 1) * PAGE_SIZE + 1}–${Math.min(safePage * PAGE_SIZE, filtered.length)}`} / {filtered.length} 件
             </span>
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
                 aria-label="前のページ"
-                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 transition-colors"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400 hover:bg-white/70 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
+              <span className="text-xs text-gray-500 px-1">{safePage}/{totalPages}</span>
               <button
-                onClick={() => toast.show("ページネーションは v2 で実装予定", "info")}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
                 aria-label="次のページ"
-                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 transition-colors"
+                className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
