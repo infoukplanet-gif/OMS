@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -136,22 +136,18 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
   const toast = useToast();
   const router = useRouter();
   const [shippingAddresses, setShippingAddresses] = useState([1, 2]);
-  const [tags, setTags] = useState<string[]>(isEdit ? ["リピーター", "ギフト購入多"] : []);
+
+  // 編集モードでは recordId から prefill（ストアはシード済み singleton なので
+  // SSR/CSR とも初期レンダーで同じ値が読める＝lazy 初期化で hydration ズレなし）
+  const prefill = isEdit && recordId ? customerStore.findById(recordId) : undefined;
+  const [tags, setTags] = useState<string[]>(() => {
+    if (prefill && Array.isArray(prefill.tags)) return prefill.tags as string[];
+    return isEdit ? ["リピーター", "ギフト購入多"] : [];
+  });
 
   // 必須フィールドを controlled で管理する
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-
-  // 編集モードでは recordId から prefill
-  useEffect(() => {
-    if (!isEdit || !recordId) return;
-    const record = customerStore.findById(recordId);
-    if (record) {
-      setCode(record.code);
-      setName(record.name);
-      setTags(Array.isArray(record.tags) ? (record.tags as string[]) : isEdit ? ["リピーター", "ギフト購入多"] : []);
-    }
-  }, [isEdit, recordId]);
+  const [code, setCode] = useState(() => prefill?.code ?? "");
+  const [name, setName] = useState(() => prefill?.name ?? "");
 
   const addAddress = () => {
     if (shippingAddresses.length < 5) setShippingAddresses([...shippingAddresses, shippingAddresses.length + 1]);
@@ -162,7 +158,7 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
     setTags((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
 
   // 既存の表示用データ（編集モードのプレースホルダー用）
-  const existingRecord = isEdit && recordId ? customerStore.findById(recordId) : undefined;
+  const existingRecord = prefill;
   const d = existingRecord
     ? {
         code: existingRecord.code,

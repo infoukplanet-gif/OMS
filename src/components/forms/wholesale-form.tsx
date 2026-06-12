@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -128,24 +128,20 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
   const router = useRouter();
   const [contacts, setContacts] = useState([1]);
   const [shippingPoints, setShippingPoints] = useState([1]);
-  const [tags, setTags] = useState<string[]>(isEdit ? ["大口取引", "EDI連携"] : []);
+
+  // 編集モードでは recordId から prefill（ストアはシード済み singleton なので
+  // SSR/CSR とも初期レンダーで同じ値が読める＝lazy 初期化で hydration ズレなし）
+  const prefill = isEdit && recordId ? wholesaleStore.findById(recordId) : undefined;
+  const [tags, setTags] = useState<string[]>(() => {
+    if (prefill && Array.isArray(prefill.tags)) return prefill.tags as string[];
+    return isEdit ? ["大口取引", "EDI連携"] : [];
+  });
 
   // 必須フィールドを controlled で管理
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
+  const [code, setCode] = useState(() => prefill?.code ?? "");
+  const [name, setName] = useState(() => prefill?.name ?? "");
 
-  // 編集モードでは recordId から prefill
-  useEffect(() => {
-    if (!isEdit || !recordId) return;
-    const record = wholesaleStore.findById(recordId);
-    if (record) {
-      setCode(record.code);
-      setName(record.name);
-      setTags(Array.isArray(record.tags) ? (record.tags as string[]) : ["大口取引", "EDI連携"]);
-    }
-  }, [isEdit, recordId]);
-
-  const existingRecord = isEdit && recordId ? wholesaleStore.findById(recordId) : undefined;
+  const existingRecord = prefill;
   const d = existingRecord
     ? { code: existingRecord.code, name: existingRecord.name, contact: String(existingRecord.contact ?? "") }
     : isEdit

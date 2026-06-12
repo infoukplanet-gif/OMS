@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -69,21 +69,15 @@ export function SupplierForm({ mode, recordId }: SupplierFormProps) {
   const toast = useToast();
   const router = useRouter();
 
+  // 編集モードでは recordId から prefill（ストアはシード済み singleton なので
+  // SSR/CSR とも初期レンダーで同じ値が読める＝lazy 初期化で hydration ズレなし）
+  const prefill = isEdit && recordId ? supplierStore.findById(recordId) : undefined;
+
   // 必須フィールドを controlled で管理
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
+  const [code, setCode] = useState(() => prefill?.code ?? "");
+  const [name, setName] = useState(() => prefill?.name ?? "");
 
-  // 編集モードでは recordId から prefill
-  useEffect(() => {
-    if (!isEdit || !recordId) return;
-    const record = supplierStore.findById(recordId);
-    if (record) {
-      setCode(record.code);
-      setName(record.name);
-    }
-  }, [isEdit, recordId]);
-
-  const existingRecord = isEdit && recordId ? supplierStore.findById(recordId) : undefined;
+  const existingRecord = prefill;
   const d = existingRecord
     ? { code: existingRecord.code, name: existingRecord.name, contact: String(existingRecord.contact ?? "") }
     : isEdit
