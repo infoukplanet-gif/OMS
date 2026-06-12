@@ -69,6 +69,9 @@ export default function MailAutoPage() {
       it.queueTrigger ? { ...it, enabled: enabled[it.queueTrigger] } : it,
     );
   });
+  const [sendStart, setSendStart] = useState("09:00");
+  const [sendEnd, setSendEnd] = useState("20:00");
+  const [afterHours, setAfterHours] = useState("翌営業日の開始時刻に送信");
 
   const updateItem = (id: string, patch: Partial<Trigger>) =>
     setItems((prev) =>
@@ -97,6 +100,9 @@ export default function MailAutoPage() {
           <SecondaryButton
             onClick={() => {
               setItems(initial);
+              setSendStart("09:00");
+              setSendEnd("20:00");
+              setAfterHours("翌営業日の開始時刻に送信");
               resetAutoMailEnabled();
               toast.show("初期値に戻しました（v1 トリガーは全 ON）", "info");
             }}
@@ -105,6 +111,10 @@ export default function MailAutoPage() {
           </SecondaryButton>
           <PrimaryButton
             onClick={() => {
+              if (sendStart >= sendEnd) {
+                toast.show("送信開始時刻は送信終了時刻より前に設定してください", "error");
+                return;
+              }
               syncQueueEnabledFromItems(items);
               toast.show("自動送信設定を保存しました（v1 トリガーは即時反映）", "success");
             }}
@@ -142,15 +152,15 @@ export default function MailAutoPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">送信開始時刻（営業時間）</span>
-            <input type="time" defaultValue="09:00" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="time" value={sendStart} onChange={(e) => setSendStart(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">送信終了時刻</span>
-            <input type="time" defaultValue="20:00" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="time" value={sendEnd} onChange={(e) => setSendEnd(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">時間外キューの扱い</span>
-            <select className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={afterHours} onChange={(e) => setAfterHours(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               <option>翌営業日の開始時刻に送信</option>
               <option>そのまま即時送信</option>
               <option>キューに保留</option>
@@ -228,7 +238,12 @@ export default function MailAutoPage() {
                   <input
                     type="text"
                     placeholder="例: ops@example.com"
-                    defaultValue={item.cc || item.bcc || ""}
+                    value={item.cc ?? item.bcc ?? ""}
+                    onChange={(e) => {
+                      const field =
+                        item.cc === undefined && item.bcc !== undefined ? "bcc" : "cc";
+                      updateItem(item.id, { [field]: e.target.value });
+                    }}
                     disabled={!item.enabled}
                     className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 disabled:opacity-50"
                   />

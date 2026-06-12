@@ -36,6 +36,7 @@ export default function PaymentEmailConfirmPage() {
   const toast = useToast();
   const [rows, setRows] = useState<Pending[]>(INITIAL);
   const [template, setTemplate] = useState("入金確認メール（標準）");
+  const [sender, setSender] = useState("OMSサポート <support@example.com>");
 
   const toggle = (id: string) => setRows(rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)));
   const toggleAll = (v: boolean) => setRows(rows.map((r) => ({ ...r, selected: v })));
@@ -47,7 +48,11 @@ export default function PaymentEmailConfirmPage() {
       toast.show("送信対象が選択されていません");
       return;
     }
-    toast.show(`${selected.length}件にメールを送信しました`, "success");
+    if (!sender.includes("@")) {
+      toast.show("差出人のメールアドレス形式が不正です", "error");
+      return;
+    }
+    toast.show(`${selected.length}件にメールを送信しました（${template}）`, "success");
   };
 
   return (
@@ -86,7 +91,8 @@ export default function PaymentEmailConfirmPage() {
             <label className="text-sm font-medium text-gray-700">差出人</label>
             <input
               type="text"
-              defaultValue="OMSサポート <support@example.com>"
+              value={sender}
+              onChange={(e) => setSender(e.target.value)}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             />
           </div>

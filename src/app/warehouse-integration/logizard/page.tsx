@@ -25,6 +25,7 @@ export default function LogizardPage() {
   const [centerCode, setCenterCode] = useState("CENTER-TKY-001");
   const [apiKey, setApiKey] = useState("lzd_xxxx_yyyyyyyyyyyyyyyy");
   const [syncInterval, setSyncInterval] = useState("15分");
+  const [notifyEmail, setNotifyEmail] = useState("ops@example.com");
   const [autoShip, setAutoShip] = useState(true);
   const [autoStock, setAutoStock] = useState(true);
   const [autoInbound, setAutoInbound] = useState(true);
@@ -156,7 +157,7 @@ export default function LogizardPage() {
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">通知メール（エラー時）</span>
-            <input type="email" defaultValue="ops@example.com" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="email" value={notifyEmail} onChange={(e) => setNotifyEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
         </div>
       </GlassCard>

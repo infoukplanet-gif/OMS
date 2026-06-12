@@ -58,6 +58,7 @@ export default function SettingsApiPage() {
   const [allowCors, setAllowCors] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState("https://hooks.example.com/oms/events");
   const [webhookEnabled, setWebhookEnabled] = useState(true);
+  const [maxPayload, setMaxPayload] = useState(10);
 
   const toggleReveal = (id: string) => setReveal((p) => ({ ...p, [id]: !p[id] }));
   const updateKey = (id: string, patch: Partial<ApiKey>) =>
@@ -231,7 +232,7 @@ export default function SettingsApiPage() {
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">最大ペイロードサイズ（MB）</span>
-            <input type="number" defaultValue={10} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={maxPayload} onChange={(e) => setMaxPayload(Number(e.target.value))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 md:col-span-2">
             <span className="text-xs text-gray-500">Webhook通知URL（受注/在庫イベント）</span>

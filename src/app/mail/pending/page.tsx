@@ -64,6 +64,9 @@ export default function MailPendingPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  const [retryInterval, setRetryInterval] = useState(30);
+  const [retryMaxCount, setRetryMaxCount] = useState(3);
+  const [notifyEmail, setNotifyEmail] = useState("ops@example.com");
 
   const pending = useMemo(
     () => mails.filter((m) => m.status === "送信待ち" || m.status === "保留"),
@@ -309,20 +312,41 @@ export default function MailPendingPage() {
           <h2 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
             自動リトライ設定 <HelpHint>送信失敗時の自動リトライ間隔・最大回数を設定。SMTP の一時障害や宛先不明時の再送制御に利用します。</HelpHint>
           </h2>
-          <SecondaryButton onClick={() => toast.show("自動リトライ設定を更新しました", "success")}>保存</SecondaryButton>
+          <SecondaryButton
+            onClick={() => {
+              if (retryInterval < 1) {
+                toast.show("リトライ間隔は1分以上で設定してください", "error");
+                return;
+              }
+              if (retryMaxCount < 0) {
+                toast.show("最大リトライ回数は0以上で設定してください", "error");
+                return;
+              }
+              if (!notifyEmail.includes("@")) {
+                toast.show("通知先メールアドレスの形式が不正です", "error");
+                return;
+              }
+              toast.show(
+                `自動リトライ設定を更新しました（間隔${retryInterval}分・最大${retryMaxCount}回）`,
+                "success",
+              );
+            }}
+          >
+            保存
+          </SecondaryButton>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
           <label className="space-y-1">
             <span className="text-xs text-gray-500">リトライ間隔（分）</span>
-            <input type="number" defaultValue={30} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={retryInterval} onChange={(e) => setRetryInterval(Number(e.target.value))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">最大リトライ回数</span>
-            <input type="number" defaultValue={3} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={retryMaxCount} onChange={(e) => setRetryMaxCount(Number(e.target.value))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">最大失敗時の通知先</span>
-            <input type="email" defaultValue="ops@example.com" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="email" value={notifyEmail} onChange={(e) => setNotifyEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
         </div>
       </GlassCard>

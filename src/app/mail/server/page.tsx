@@ -21,6 +21,8 @@ type Smtp = {
   lastChecked: string;
   daily: number;
   monthly: number;
+  password: string; // モックマスク値のみ保持（実秘密情報は扱わない）
+  timeoutSec: number;
 };
 
 const initialSmtp: Smtp[] = [
@@ -38,6 +40,8 @@ const initialSmtp: Smtp[] = [
     lastChecked: "2026/04/30 09:30",
     daily: 8240,
     monthly: 124530,
+    password: "********",
+    timeoutSec: 30,
   },
   {
     id: "smtp-fallback",
@@ -53,6 +57,8 @@ const initialSmtp: Smtp[] = [
     lastChecked: "2026/04/30 08:00",
     daily: 0,
     monthly: 1230,
+    password: "********",
+    timeoutSec: 30,
   },
   {
     id: "smtp-newsletter",
@@ -68,6 +74,8 @@ const initialSmtp: Smtp[] = [
     lastChecked: "2026/04/29 22:00",
     daily: 0,
     monthly: 5400,
+    password: "********",
+    timeoutSec: 30,
   },
 ];
 
@@ -137,7 +145,28 @@ export default function MailServerPage() {
           <div className="px-3 py-3 border-b border-white/40 bg-white/40 flex items-center justify-between">
             <div className="text-sm font-semibold text-gray-800">送信サーバ一覧</div>
             <button
-              onClick={() => toast.show("新規 SMTP サーバを追加します", "info")}
+              onClick={() => {
+                const newServer: Smtp = {
+                  id: `smtp-${Date.now()}`,
+                  name: "新規SMTPサーバ",
+                  host: "",
+                  port: 587,
+                  username: "",
+                  encryption: "tls",
+                  fromAddress: "",
+                  fromName: "",
+                  isPrimary: false,
+                  status: "warning",
+                  lastChecked: "未接続",
+                  daily: 0,
+                  monthly: 0,
+                  password: "",
+                  timeoutSec: 30,
+                };
+                setServers((prev) => [...prev, newServer]);
+                setActiveId(newServer.id);
+                toast.show("新規 SMTP サーバを追加しました。接続情報を入力してください", "success");
+              }}
               className="p-1 rounded-lg hover:bg-white/60 text-blue-700"
             >
               <Plus className="h-4 w-4" />
@@ -232,7 +261,8 @@ export default function MailServerPage() {
                 <span className="text-xs text-gray-500">パスワード</span>
                 <input
                   type="password"
-                  defaultValue="********"
+                  value={active.password}
+                  onChange={(e) => update({ password: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono"
                 />
               </label>
@@ -250,7 +280,12 @@ export default function MailServerPage() {
               </label>
               <label className="space-y-1">
                 <span className="text-xs text-gray-500">タイムアウト（秒）</span>
-                <input type="number" defaultValue={30} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+                <input
+                  type="number"
+                  value={active.timeoutSec}
+                  onChange={(e) => update({ timeoutSec: Number(e.target.value) })}
+                  className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                />
               </label>
               <label className="space-y-1">
                 <span className="text-xs text-gray-500">送信元アドレス</span>
