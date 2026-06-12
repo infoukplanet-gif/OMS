@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
+import { setFieldMappings, upsertFieldMapping, removeFieldMapping } from "@/lib/settings/field-conversion-settings";
 
 type Mapping = {
   id: string;
@@ -64,7 +65,7 @@ export default function FieldConversionPage() {
         </div>
         <div className="flex gap-2">
           <SecondaryButton onClick={() => toast.show("マッピング設定をエクスポートしました", "success")}>エクスポート</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("項目変換設定を保存しました", "success")}>保存</PrimaryButton>
+          <PrimaryButton onClick={() => { setFieldMappings(items); toast.show("項目変換設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -104,7 +105,11 @@ export default function FieldConversionPage() {
             {sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <SecondaryButton onClick={() => { setKeyword(""); setSourceFilter("all"); }}>クリア</SecondaryButton>
-          <SecondaryButton onClick={() => toast.show("新規マッピングを追加します", "info")}>
+          <SecondaryButton onClick={() => {
+            const newItem: Mapping = { id: `m-${Date.now()}`, source: "楽天RMS", sourceField: "", target: "OMS受注", targetField: "", transform: "そのまま", defaultValue: "—", required: false, enabled: true };
+            upsertFieldMapping(newItem);
+            setItems((prev) => [...prev, newItem]);
+          }}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />新規追加</span>
           </SecondaryButton>
         </div>
@@ -167,7 +172,7 @@ export default function FieldConversionPage() {
                   </label>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { setItems((p) => p.filter((x) => x.id !== i.id)); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { removeFieldMapping(i.id); setItems((p) => p.filter((x) => x.id !== i.id)); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

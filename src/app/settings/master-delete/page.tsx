@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
+import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Upload, AlertTriangle, Download, Trash2 } from "lucide-react";
+import { Upload, AlertTriangle, CheckCircle, Download, Trash2 } from "lucide-react";
 
 const restrictions = [
   {
@@ -34,9 +35,53 @@ const restrictions = [
   },
 ];
 
+function parseCsvCodes(text: string): string[] {
+  return text
+    .split(/[\r\n,]+/)
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter((s) => s.length > 0);
+}
+
 export default function MasterDeletePage() {
+  const toast = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [target, setTarget] = useState("");
   const [agreed, setAgreed] = useState(false);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [codes, setCodes] = useState<string[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleFile = (file: File) => {
+    if (!file.name.endsWith(".csv") && !file.name.endsWith(".txt")) {
+      toast.show("CSVまたはTXTファイルを選択してください", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = (e.target?.result as string) ?? "";
+      const parsed = parseCsvCodes(text);
+      setFileName(file.name);
+      setCodes(parsed);
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDelete = () => {
+    if (!target || !agreed || codes.length === 0) return;
+    const targetLabel = target === "product" ? "商品マスタ" : target === "set" ? "セット商品マスタ" : target === "supplier" ? "仕入先マスタ" : "卸先マスタ";
+    toast.show(`${targetLabel}から ${codes.length} 件を削除しました`, "success");
+    setFileName(null);
+    setCodes([]);
+    setAgreed(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   return (
     <div className="space-y-5">
@@ -102,11 +147,37 @@ export default function MasterDeletePage() {
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">コードCSVファイル</label>
-            <div className="flex flex-col items-center justify-center gap-2 p-8 rounded-xl border-2 border-dashed border-gray-300/50 bg-white/30 hover:bg-white/50 transition-colors cursor-pointer">
-              <Upload className="h-8 w-8 text-gray-400" />
-              <p className="text-sm text-gray-600">CSVファイルをドラッグ＆ドロップ または クリックして選択</p>
-              <p className="text-xs text-gray-400">削除対象のコードを記載したCSVファイル</p>
+            <div
+              onDrop={handleDrop}
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                "flex flex-col items-center justify-center gap-2 p-8 rounded-xl border-2 border-dashed transition-colors cursor-pointer",
+                isDragOver ? "border-blue-400 bg-blue-50/60" : "border-gray-300/50 bg-white/30 hover:bg-white/50"
+              )}
+            >
+              {fileName ? (
+                <>
+                  <CheckCircle className="h-8 w-8 text-emerald-500" />
+                  <p className="text-sm font-medium text-gray-800">{fileName}</p>
+                  <p className="text-xs text-emerald-600">{codes.length} 件のコードを読み込みました</p>
+                </>
+              ) : (
+                <>
+                  <Upload className="h-8 w-8 text-gray-400" />
+                  <p className="text-sm text-gray-600">CSVファイルをドラッグ＆ドロップ または クリックして選択</p>
+                  <p className="text-xs text-gray-400">削除対象のコードを記載したCSVファイル</p>
+                </>
+              )}
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.txt"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            />
           </div>
 
           <label className="flex items-center gap-2 cursor-pointer">
@@ -122,16 +193,17 @@ export default function MasterDeletePage() {
 
         <div className="flex justify-end mt-5">
           <button
-            disabled={!target || !agreed}
+            onClick={handleDelete}
+            disabled={!target || !agreed || codes.length === 0}
             className={cn(
               "flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all",
-              target && agreed
+              target && agreed && codes.length > 0
                 ? "bg-red-500/80 border border-red-400/50 text-white hover:bg-red-500/90"
                 : "bg-gray-200 text-gray-400 cursor-not-allowed"
             )}
           >
             <Trash2 className="h-4 w-4" />
-            削除するCSVファイルをアップロード
+            {codes.length > 0 ? `${codes.length} 件を削除する` : "CSVファイルをアップロード"}
           </button>
         </div>
       </GlassCard>

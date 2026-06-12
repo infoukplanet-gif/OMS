@@ -4,6 +4,7 @@ import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { setDefaultsSettings, resetDefaultsSettings } from "@/lib/settings/defaults-settings";
 
 type FieldDef = {
   key: string;
@@ -100,15 +101,24 @@ export default function DefaultsPage() {
         <div className="flex gap-2">
           <SecondaryButton
             onClick={() => {
-              setOrderVals(Object.fromEntries(orderFields.map((f) => [f.key, f.defaultValue])));
-              setProductVals(Object.fromEntries(productFields.map((f) => [f.key, f.defaultValue])));
-              setCustomerVals(Object.fromEntries(customerFields.map((f) => [f.key, f.defaultValue])));
-              setPurchaseVals(Object.fromEntries(purchaseFields.map((f) => [f.key, f.defaultValue])));
+              const defaults = Object.fromEntries(orderFields.map((f) => [f.key, f.defaultValue]));
+              const productDefaults = Object.fromEntries(productFields.map((f) => [f.key, f.defaultValue]));
+              const customerDefaults = Object.fromEntries(customerFields.map((f) => [f.key, f.defaultValue]));
+              const purchaseDefaults = Object.fromEntries(purchaseFields.map((f) => [f.key, f.defaultValue]));
+              setOrderVals(defaults);
+              setProductVals(productDefaults);
+              setCustomerVals(customerDefaults);
+              setPurchaseVals(purchaseDefaults);
+              resetDefaultsSettings();
+              toast.show("既定値を初期値に戻しました", "info");
             }}
           >
             初期値に戻す
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("既定値設定を保存しました", "success")}>変更を保存</PrimaryButton>
+          <PrimaryButton onClick={() => {
+            setDefaultsSettings({ order: orderVals, product: productVals, customer: customerVals, purchase: purchaseVals });
+            toast.show("既定値設定を保存しました", "success");
+          }}>変更を保存</PrimaryButton>
         </div>
       </div>
 

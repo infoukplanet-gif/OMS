@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { setApiGlobalSettings } from "@/lib/settings/api-settings";
 
 type ApiKey = {
   id: string;
@@ -82,7 +83,10 @@ export default function SettingsApiPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">基幹システム連携や外部モール・配送業者の接続をここから管理。</p>
         </div>
-        <PrimaryButton onClick={() => toast.show("API設定を保存しました", "success")}>保存</PrimaryButton>
+        <PrimaryButton onClick={() => {
+          setApiGlobalSettings({ rateLimit, allowCors, webhookUrl, webhookEnabled });
+          toast.show("API設定を保存しました", "success");
+        }}>保存</PrimaryButton>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

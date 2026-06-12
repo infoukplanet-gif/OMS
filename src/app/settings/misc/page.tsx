@@ -5,6 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { setMiscSettings, resetMiscSettings } from "@/lib/settings/misc-settings";
 
 type Toggle = { key: string; label: string; hint?: string; enabled: boolean };
 
@@ -56,8 +57,34 @@ export default function MiscSettingsPage() {
           <p className="text-sm text-gray-500 mt-1">システム動作・表示形式・バックアップ・連絡先を一元管理します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("設定をエクスポートしました", "success")}>エクスポート</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("システム設定を保存しました", "success")}>変更を保存</PrimaryButton>
+          <SecondaryButton onClick={() => {
+            resetMiscSettings();
+            toast.show("設定をエクスポートしました", "success");
+          }}>エクスポート</SecondaryButton>
+          <PrimaryButton onClick={() => {
+            const toggleMap = Object.fromEntries(toggles.map((t) => [t.key, t.enabled]));
+            setMiscSettings({
+              toggles: toggleMap,
+              pageSize,
+              sort,
+              thousands,
+              dateFormat,
+              timezone,
+              language,
+              currency,
+              theme,
+              backupTime,
+              orderRetention,
+              logRetention,
+              purgeDays,
+              backupTarget,
+              adminEmail,
+              supportTel,
+              emergency,
+              companyCode,
+            });
+            toast.show("システム設定を保存しました", "success");
+          }}>変更を保存</PrimaryButton>
         </div>
       </div>
 

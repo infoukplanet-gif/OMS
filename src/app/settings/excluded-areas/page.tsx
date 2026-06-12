@@ -5,7 +5,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { MapPin, Search, Trash2 } from "lucide-react";
+import { MapPin, Plus, Search, Trash2 } from "lucide-react";
+import { setAreaRules, upsertAreaRule, removeAreaRule } from "@/lib/settings/excluded-areas-settings";
 
 type AreaRule = {
   id: string;
@@ -60,8 +61,8 @@ export default function ExcludedAreasPage() {
           <p className="text-sm text-gray-500 mt-1">対象地域・追加送料・代引可否を業者別に設定し、受注画面に反映します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("除外地域をCSVでインポートします", "info")}>CSVインポート</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("配送除外地域設定を保存しました", "success")}>保存</PrimaryButton>
+          <SecondaryButton onClick={() => toast.show("CSVインポートは次バージョンで対応予定", "info")}>CSVインポート</SecondaryButton>
+          <PrimaryButton onClick={() => { setAreaRules(rules); toast.show("配送除外地域設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -103,7 +104,13 @@ export default function ExcludedAreasPage() {
             {carriers.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <SecondaryButton onClick={() => { setKeyword(""); setCarrierFilter("all"); }}>クリア</SecondaryButton>
-          <SecondaryButton onClick={() => toast.show("新規地域ルールを追加します", "info")}>新規追加</SecondaryButton>
+          <SecondaryButton onClick={() => {
+            const newRule: AreaRule = { id: `ar-${Date.now()}`, prefecture: "北海道", zipPattern: "", reason: "離島・遠隔地", carriers: ["ヤマト"], surcharge: 0, cod: false, enabled: true };
+            upsertAreaRule(newRule);
+            setRules((prev) => [...prev, newRule]);
+          }}>
+            <span className="inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />新規追加</span>
+          </SecondaryButton>
         </div>
       </GlassCard>
 
@@ -160,7 +167,7 @@ export default function ExcludedAreasPage() {
                   </label>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { setRules((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { removeAreaRule(r.id); setRules((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

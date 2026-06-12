@@ -3,6 +3,13 @@
 import { useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
+import {
+  setOrderDefaults,
+  setOrderFees,
+  setOrderConversions,
+  setOrderDateRules,
+  setExcludedAreas as persistExcludedAreas,
+} from "@/lib/settings/order-rules-settings";
 import { cn } from "@/lib/utils";
 
 const tabs = ["規定値設定", "支払方法別手数料", "支払発送変換", "日付自動登録", "除外地域"] as const;
@@ -122,22 +129,31 @@ export default function OrderRulesPage() {
     );
   };
 
-  // 保存ハンドラ。v1 はトーストのみ（永続化は v2 で server action + DB）。
-  const handleSaveDefaults = () => toast.show("規定値設定を保存しました", "success");
+  const handleSaveDefaults = () => {
+    setOrderDefaults(defaults);
+    toast.show("規定値設定を保存しました", "success");
+  };
   const handleSaveFees = () => {
     setEditingFee(null);
+    setOrderFees(fees);
     toast.show("手数料設定を保存しました", "success");
   };
-  const handleSaveConversions = () => toast.show("変換ルールを保存しました", "success");
+  const handleSaveConversions = () => {
+    setOrderConversions(conversions);
+    toast.show("変換ルールを保存しました", "success");
+  };
   const handleSaveDateRules = () => {
     setEditingRule(null);
+    setOrderDateRules(dateRules);
     toast.show("日付自動登録ルールを保存しました", "success");
   };
-  const handleSaveAreas = () =>
+  const handleSaveAreas = () => {
+    persistExcludedAreas(Array.from(excludedAreas));
     toast.show(
       `除外地域を保存しました（${excludedAreas.size}件）`,
       excludedAreas.size > 0 ? "info" : "success",
     );
+  };
 
   const excludedSummary = useMemo(() => {
     if (excludedAreas.size === 0) return "除外なし";

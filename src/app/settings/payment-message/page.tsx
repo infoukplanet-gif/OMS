@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CreditCard } from "lucide-react";
+import { setPaymentMessages, resetPaymentMessages } from "@/lib/settings/payment-message-settings";
 
 type Message = {
   id: string;
@@ -116,8 +117,8 @@ export default function PaymentMessagePage() {
           <p className="text-sm text-gray-500 mt-1">受注確認メール・発送通知・伝票印字での表示文面を支払方法別にカスタマイズします。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => setItems(initial)}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("支払方法別メッセージを保存しました", "success")}>保存</PrimaryButton>
+          <SecondaryButton onClick={() => { resetPaymentMessages(); setItems(initial); toast.show("初期値に戻しました", "info"); }}>初期値に戻す</SecondaryButton>
+          <PrimaryButton onClick={() => { setPaymentMessages(items); toast.show("支払方法別メッセージを保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>
 

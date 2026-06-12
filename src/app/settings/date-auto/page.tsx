@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Calendar, Plus, Trash2 } from "lucide-react";
+import { setDateAutoRules, setDateAutoGlobal, resetDateAutoSettings } from "@/lib/settings/date-auto-settings";
 
 type Rule = {
   id: string;
@@ -53,8 +54,12 @@ export default function SettingsDateAutoPage() {
           <p className="text-sm text-gray-500 mt-1">営業日換算・休業日スキップ・週末繰越のロジックも個別設定できます。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => setRules(initialRules)}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("日付自動登録設定を保存しました", "success")}>保存</PrimaryButton>
+          <SecondaryButton onClick={() => { resetDateAutoSettings(); setRules(initialRules); setDefaultUnit("営業日"); setHolidayCalendar("japan"); toast.show("初期値に戻しました", "info"); }}>初期値に戻す</SecondaryButton>
+          <PrimaryButton onClick={() => {
+            setDateAutoRules(rules);
+            setDateAutoGlobal({ defaultUnit, holidayCalendar });
+            toast.show("日付自動登録設定を保存しました", "success");
+          }}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -113,7 +118,10 @@ export default function SettingsDateAutoPage() {
           <h2 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
             <Calendar className="h-4 w-4 text-blue-600" />日付計算ルール
           </h2>
-          <SecondaryButton onClick={() => toast.show("新規ルールを追加します", "info")}>
+          <SecondaryButton onClick={() => {
+            const newId = `r${Date.now()}`;
+            setRules((prev) => [...prev, { id: newId, field: "発送予定日", trigger: "受注確定", basis: "受注日", offsetDays: 1, offsetUnit: "営業日", skipHolidays: false, carryWeekend: "no", enabled: true }]);
+          }}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />ルール追加</span>
           </SecondaryButton>
         </div>
