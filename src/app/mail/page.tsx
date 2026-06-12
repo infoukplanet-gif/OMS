@@ -1,11 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import type { MailRecord } from "@/lib/state-machines/mail";
+import { mailStore } from "@/lib/stores/mail";
+import { MAIL_SEEDS } from "@/lib/seeds/mail";
+import { syncMailQueueIntoStore } from "@/lib/mail/log-bridge";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,6 +19,8 @@ import {
   Edit,
   Mail,
   MoreHorizontal,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -25,34 +32,6 @@ import {
 
 type TabValue = "pending" | "history" | "templates";
 
-type PendingStatus = "待機中" | "キャンセル済" | "送信済";
-type HistoryStatus = "送信済" | "エラー";
-
-type PendingMail = {
-  id: string;
-  to: string;
-  customer: string;
-  subject: string;
-  body: string;
-  type: string;
-  scheduled: string;
-  priority: "高" | "通常" | "低";
-  trigger: string;
-  status: PendingStatus;
-};
-
-type HistoryMail = {
-  id: string;
-  to: string;
-  customer: string;
-  subject: string;
-  body: string;
-  type: string;
-  sent: string;
-  status: HistoryStatus;
-  retry: number;
-};
-
 type TemplateItem = {
   name: string;
   type: string;
@@ -63,28 +42,7 @@ type TemplateItem = {
   body: string;
 };
 
-// ---------- 初期データ ----------
-
-const INITIAL_PENDING: PendingMail[] = [
-  { id: "Q-20260430-0042", to: "yamada@example.com", customer: "山田 太郎", subject: "【ご注文ありがとうございます】ORD-2026-08423", body: "山田 太郎 様\n\nこの度はご注文いただきありがとうございます。\nご注文番号：ORD-2026-08423\nご注文内容を確認次第、発送の準備を進めます。\n\n引き続きよろしくお願いいたします。", type: "サンクスメール", scheduled: "2026/04/30 10:00", priority: "通常", trigger: "受注確認", status: "待機中" },
-  { id: "Q-20260430-0041", to: "sato@example.com", customer: "佐藤 花子", subject: "【出荷完了のお知らせ】ORD-2026-08418", body: "佐藤 花子 様\n\nご注文の商品が出荷されました。\nご注文番号：ORD-2026-08418\n配送業者：ヤマト運輸\n到着予定：2026/05/02\n\nお届けをお待ちください。", type: "出荷通知", scheduled: "2026/04/30 10:00", priority: "通常", trigger: "出荷完了", status: "待機中" },
-  { id: "Q-20260430-0040", to: "tanaka@example.com", customer: "田中 一郎", subject: "【入金確認のお願い】ORD-2026-08410", body: "田中 一郎 様\n\nご注文番号：ORD-2026-08410 のご入金がまだ確認できておりません。\n\nお支払期限：2026/05/03\n\nご確認のほどよろしくお願いいたします。", type: "入金確認", scheduled: "2026/04/30 11:00", priority: "高", trigger: "入金待ち3日", status: "待機中" },
-  { id: "Q-20260430-0039", to: "watanabe@example.com", customer: "渡辺 美咲", subject: "【発送のお知らせ】ORD-2026-08405", body: "渡辺 美咲 様\n\nご注文の商品を発送いたしました。\nご注文番号：ORD-2026-08405\n到着予定：2026/05/01\n\nよろしくお願いいたします。", type: "出荷通知", scheduled: "2026/04/30 11:30", priority: "通常", trigger: "出荷完了", status: "待機中" },
-  { id: "Q-20260430-0038", to: "kimura@example.com", customer: "木村 健", subject: "【商品到着確認のお願い】ORD-2026-08395", body: "木村 健 様\n\n商品はお手元に届きましたでしょうか。\nご注文番号：ORD-2026-08395\n\n万が一、未着・破損などございましたらご連絡ください。", type: "フォロー", scheduled: "2026/04/30 14:00", priority: "低", trigger: "発送後3日", status: "待機中" },
-  { id: "Q-20260430-0037", to: "ito@example.com", customer: "伊藤 さくら", subject: "【ご注文ありがとうございます】ORD-2026-08394", body: "伊藤 さくら 様\n\nご注文いただきありがとうございます。\nご注文番号：ORD-2026-08394\n\n準備が整い次第、発送いたします。", type: "サンクスメール", scheduled: "2026/04/30 14:00", priority: "通常", trigger: "受注確認", status: "待機中" },
-  { id: "Q-20260430-0036", to: "kobayashi@example.com", customer: "小林 大輔", subject: "【入金確認のお願い】ORD-2026-08390", body: "小林 大輔 様\n\nご注文番号：ORD-2026-08390 のご入金を確認できておりません。\nお支払期限：2026/05/01 を過ぎますとキャンセルとなります。\n\nご対応をお願いいたします。", type: "入金確認", scheduled: "2026/04/30 15:00", priority: "高", trigger: "入金待ち5日", status: "待機中" },
-  { id: "Q-20260430-0035", to: "yoshida@example.com", customer: "吉田 あゆみ", subject: "【再発送のお知らせ】ORD-2026-08385", body: "吉田 あゆみ 様\n\nご迷惑をおかけしております。\nORD-2026-08385 の商品を再発送いたしました。\n到着予定：2026/05/02\n\n何かご不明な点はご連絡ください。", type: "出荷通知", scheduled: "2026/04/30 16:00", priority: "通常", trigger: "再発送", status: "待機中" },
-];
-
-const INITIAL_HISTORY: HistoryMail[] = [
-  { id: "M-20260430-0125", to: "takahashi@example.com", customer: "高橋 涼", subject: "【ご注文ありがとうございます】ORD-2026-08380", body: "高橋 涼 様\n\nご注文いただきありがとうございます。\nご注文番号：ORD-2026-08380\n\n発送の準備が完了しましたら改めてご連絡いたします。", type: "サンクスメール", sent: "2026/04/30 09:32", status: "送信済", retry: 0 },
-  { id: "M-20260430-0124", to: "watanabe2@example.com", customer: "渡部 雄一", subject: "【出荷完了のお知らせ】ORD-2026-08376", body: "渡部 雄一 様\n\nご注文の商品が出荷されました。\nご注文番号：ORD-2026-08376\n配送業者：佐川急便\n到着予定：2026/05/01\n\nよろしくお願いいたします。", type: "出荷通知", sent: "2026/04/30 09:18", status: "送信済", retry: 0 },
-  { id: "M-20260430-0123", to: "ito2@example.com", customer: "伊藤 真理子", subject: "【入金確認のお願い】ORD-2026-08370", body: "伊藤 真理子 様\n\nORD-2026-08370 のご入金確認ができておりません。\nお支払期限：2026/05/01\n\nご確認をお願いいたします。", type: "入金確認", sent: "2026/04/30 09:00", status: "エラー", retry: 2 },
-  { id: "M-20260430-0122", to: "suzuki@example.com", customer: "鈴木 翼", subject: "【発送遅延のお詫び】ORD-2026-08365", body: "鈴木 翼 様\n\nこの度は商品の発送が遅延しておりまして、大変申し訳ございません。\nORD-2026-08365 の発送は2026/05/03を予定しております。\n\nご迷惑をおかけして誠に申し訳ございません。", type: "お詫び", sent: "2026/04/30 08:45", status: "送信済", retry: 0 },
-  { id: "M-20260430-0121", to: "matsumoto@example.com", customer: "松本 由香", subject: "【ご注文ありがとうございます】ORD-2026-08360", body: "松本 由香 様\n\nご注文いただきありがとうございます。\nご注文番号：ORD-2026-08360\n\nご確認よろしくお願いいたします。", type: "サンクスメール", sent: "2026/04/30 08:20", status: "送信済", retry: 0 },
-  { id: "M-20260429-0418", to: "invalid@example", customer: "—", subject: "【受注確認】ORD-2026-08355", body: "（送信エラーにより本文を取得できませんでした）", type: "サンクスメール", sent: "2026/04/29 22:30", status: "エラー", retry: 3 },
-  { id: "M-20260429-0417", to: "yamamoto@example.com", customer: "山本 健司", subject: "【発送通知】ORD-2026-08348", body: "山本 健司 様\n\nご注文の商品を発送いたしました。\nご注文番号：ORD-2026-08348\n到着予定：2026/04/30\n\nよろしくお願いいたします。", type: "出荷通知", sent: "2026/04/29 22:00", status: "送信済", retry: 0 },
-];
+// ---------- 初期データ（テンプレートのみページローカル） ----------
 
 const INITIAL_TEMPLATES: TemplateItem[] = [
   { name: "サンクスメール（自動）", type: "自動送信", trigger: "受注確認", updated: "2026/04/01", uses: 1245, subject: "【ご注文ありがとうございます】ORD-XXXX", body: "{{customer_name}} 様\n\nご注文いただきありがとうございます。\nご注文番号：{{order_id}}\n\n発送準備が整い次第ご連絡いたします。" },
@@ -118,6 +76,20 @@ const priorityBadge: Record<string, string> = {
   通常: "bg-gray-500/15 text-gray-700",
   低: "bg-gray-400/10 text-gray-500",
 };
+
+const statusBadge: Record<string, string> = {
+  送信待ち: "bg-blue-500/15 text-blue-700",
+  保留: "bg-amber-500/15 text-amber-700",
+  送信済: "bg-emerald-500/15 text-emerald-700",
+  エラー: "bg-red-500/15 text-red-700",
+  キャンセル済: "bg-gray-400/10 text-gray-500",
+};
+
+/** 表示・状態遷移に使う現在時刻（YYYY/MM/DD HH:mm） */
+function formatNow(): string {
+  const now = new Date();
+  return `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
 
 // ---------- テンプレート編集モーダル ----------
 
@@ -232,12 +204,12 @@ function BodyPreviewModal({ mailId, subject, to, body, sentAt, onClose }: BodyPr
   );
 }
 
-// ---------- 保留メール編集モーダル ----------
+// ---------- 送信待ちメール編集モーダル ----------
 
 type EditPendingModalProps = {
-  mail: PendingMail;
+  mail: MailRecord;
   onClose: () => void;
-  onSave: (updated: PendingMail) => void;
+  onSave: (id: string, patch: { subject: string; body: string; scheduled: string }) => void;
 };
 
 function EditPendingModal({ mail, onClose, onSave }: EditPendingModalProps) {
@@ -254,7 +226,7 @@ function EditPendingModal({ mail, onClose, onSave }: EditPendingModalProps) {
       footer={
         <>
           <SecondaryButton onClick={onClose}>キャンセル</SecondaryButton>
-          <PrimaryButton onClick={() => onSave({ ...mail, subject, body, scheduled })}>
+          <PrimaryButton onClick={() => onSave(mail.id, { subject, body, scheduled })}>
             保存
           </PrimaryButton>
         </>
@@ -303,17 +275,25 @@ export default function MailPage() {
   const toast = useToast();
   const router = useRouter();
 
+  // 永続化（domain "mails" の正規オーナーページはここのみ）
+  usePersistentStore({ store: mailStore, domain: "mails", seed: MAIL_SEEDS });
+
+  // 共有ストア購読（mail/pending・mail/history と同一データ）
+  const mails = useSyncExternalStore(mailStore.subscribe, mailStore.getState, mailStore.getState);
+
+  // セッション内の自動キュー（cascade enqueue 分）を冪等同期。
+  // restore/seed の setItems 後にも再実行されるよう mails を依存に持つ（register が id 重複を弾くので収束する）。
+  useEffect(() => {
+    syncMailQueueIntoStore();
+  }, [mails]);
+
   const [tab, setTab] = useState<TabValue>("pending");
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // 送信待ちデータ（ページ内可変）
-  const [pendingMails, setPendingMails] = useState<PendingMail[]>(INITIAL_PENDING);
-  // 送信履歴データ（ページ内可変）
-  const [historyMails, setHistoryMails] = useState<HistoryMail[]>(INITIAL_HISTORY);
-  // テンプレートデータ（ページ内可変）
+  // テンプレートデータ（ページ内可変・ストア対象外）
   const [templateItems, setTemplateItems] = useState<TemplateItem[]>(INITIAL_TEMPLATES);
 
   // チェックボックス選択
@@ -321,15 +301,26 @@ export default function MailPage() {
 
   // モーダル状態
   const [bodyPreview, setBodyPreview] = useState<{ mailId: string; subject: string; to: string; body: string; sentAt?: string } | null>(null);
-  const [editPending, setEditPending] = useState<PendingMail | null>(null);
+  const [editPending, setEditPending] = useState<MailRecord | null>(null);
   const [editTemplate, setEditTemplate] = useState<TemplateItem | null>(null);
+
+  // ---------- ステータス別ビュー ----------
+
+  const pendingMails = useMemo(
+    () => mails.filter((m) => m.status === "送信待ち" || m.status === "保留"),
+    [mails],
+  );
+
+  const historyMails = useMemo(
+    () => mails.filter((m) => m.status === "送信済" || m.status === "エラー" || m.status === "キャンセル済"),
+    [mails],
+  );
 
   // ---------- フィルタリング ----------
 
   const filteredPending = useMemo(() => {
     const k = keyword.trim().toLowerCase();
     return pendingMails.filter((p) => {
-      if (p.status === "キャンセル済") return false;
       if (k && !`${p.to} ${p.subject} ${p.customer}`.toLowerCase().includes(k)) return false;
       if (typeFilter !== "all" && p.type !== typeFilter) return false;
       if (priorityFilter !== "all" && p.priority !== priorityFilter) return false;
@@ -349,20 +340,21 @@ export default function MailPage() {
 
   // ---------- KPIs ----------
 
+  const today = formatNow().slice(0, 10);
   const kpis = [
-    { label: "本日送信済", value: historyMails.filter((h) => h.sent.startsWith("2026/04/30") && h.status === "送信済").length, hint: "本日中に送信完了したメール件数", color: "text-emerald-600" },
-    { label: "送信待ち", value: pendingMails.filter((p) => p.status === "待機中").length, hint: "送信キューに待機中のメール件数", color: "text-blue-600" },
-    { label: "本日エラー", value: historyMails.filter((h) => h.status === "エラー").length, hint: "送信失敗（要リトライ・要対応）", color: "text-red-600" },
+    { label: "本日送信済", value: mails.filter((m) => m.status === "送信済" && (m.sentAt?.startsWith(today) || m.sentAt?.startsWith("2026/04/30"))).length, hint: "本日中に送信完了したメール件数", color: "text-emerald-600" },
+    { label: "送信待ち", value: mails.filter((m) => m.status === "送信待ち").length, hint: "送信キューに待機中のメール件数", color: "text-blue-600" },
+    { label: "エラー", value: mails.filter((m) => m.status === "エラー").length, hint: "送信失敗（要リトライ・要対応）", color: "text-red-600" },
     { label: "登録テンプレート", value: templateItems.length, hint: "自動・手動を含む登録済みテンプレート数", color: "text-gray-700" },
   ];
 
   // ---------- ハンドラ ----------
 
-  // 送信キュー再読込（表示リセット）
+  // 自動キュー再同期
   const handleReload = useCallback(() => {
-    setPendingMails(INITIAL_PENDING);
+    const added = syncMailQueueIntoStore();
     setSelectedPending(new Set());
-    toast.show("送信キューを再読込しました", "info");
+    toast.show(added > 0 ? `自動キューを同期しました（${added} 件追加）` : "送信キューは最新です", "info");
   }, [toast]);
 
   // 選択チェックボックス
@@ -383,53 +375,60 @@ export default function MailPage() {
     }
   }, [selectedPending.size, filteredPending]);
 
-  // 選択キャンセル
-  const handleBulkCancel = useCallback(() => {
-    if (selectedPending.size === 0) {
-      toast.show("キャンセルするメールを選択してください", "error");
-      return;
-    }
-    setPendingMails((prev) =>
-      prev.map((m) =>
-        selectedPending.has(m.id) ? { ...m, status: "キャンセル済" as PendingStatus } : m
-      )
-    );
-    toast.show(`${selectedPending.size} 件の送信をキャンセルしました`, "info");
-    setSelectedPending(new Set());
-  }, [selectedPending, toast]);
+  // 選択メールへ一括遷移を適用する共通処理
+  const applyBulk = useCallback(
+    (action: "send" | "hold" | "cancel", successMessage: (n: number) => string) => {
+      if (selectedPending.size === 0) {
+        toast.show("対象のメールを選択してください", "error");
+        return;
+      }
+      const now = formatNow();
+      let applied = 0;
+      for (const id of selectedPending) {
+        if (mailStore.applyTransition(id, action, now).applied) applied++;
+      }
+      if (applied > 0) {
+        toast.show(successMessage(applied), action === "send" ? "success" : "info");
+      } else {
+        toast.show("選択したメールには適用できませんでした", "error");
+      }
+      setSelectedPending(new Set());
+    },
+    [selectedPending, toast],
+  );
 
-  // 選択即時送信
-  const handleBulkSend = useCallback(() => {
-    if (selectedPending.size === 0) {
-      toast.show("即時送信するメールを選択してください", "error");
-      return;
-    }
-    const now = new Date();
-    const sentAt = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const sentIds = new Set(selectedPending);
-    const newHistory: HistoryMail[] = pendingMails
-      .filter((m) => sentIds.has(m.id))
-      .map((m) => ({ id: m.id.replace("Q-", "M-"), to: m.to, customer: m.customer, subject: m.subject, body: m.body, type: m.type, sent: sentAt, status: "送信済" as HistoryStatus, retry: 0 }));
-    setPendingMails((prev) =>
-      prev.map((m) => sentIds.has(m.id) ? { ...m, status: "送信済" as PendingStatus } : m)
-    );
-    setHistoryMails((prev) => [...newHistory, ...prev]);
-    toast.show(`${sentIds.size} 件を即時送信しました`, "success");
-    setSelectedPending(new Set());
-  }, [selectedPending, pendingMails, toast]);
+  const handleBulkSend = useCallback(() => applyBulk("send", (n) => `${n} 件を即時送信しました`), [applyBulk]);
+  const handleBulkHold = useCallback(() => applyBulk("hold", (n) => `${n} 件を保留にしました`), [applyBulk]);
+  const handleBulkCancel = useCallback(() => applyBulk("cancel", (n) => `${n} 件の送信をキャンセルしました`), [applyBulk]);
 
-  // 履歴 再送
+  // 保留 → 送信待ちへ再開
+  const handleResume = useCallback((id: string) => {
+    if (mailStore.applyTransition(id, "resume").applied) {
+      toast.show(`${id} を送信待ちに戻しました`, "info");
+    }
+  }, [toast]);
+
+  // 履歴 再送（エラーのみ）
   const handleRetry = useCallback((id: string) => {
-    setHistoryMails((prev) =>
-      prev.map((m) => m.id === id ? { ...m, status: "送信済" as HistoryStatus, retry: m.retry + 1 } : m)
-    );
-    toast.show(`${id} を再送しました`, "success");
+    if (mailStore.applyTransition(id, "resend", formatNow()).applied) {
+      toast.show(`${id} を再送しました`, "success");
+    } else {
+      toast.show("このメールは再送できません", "error");
+    }
+  }, [toast]);
+
+  // 送信待ちメール編集の保存
+  const handlePendingSave = useCallback((id: string, patch: { subject: string; body: string; scheduled: string }) => {
+    if (mailStore.patch(id, patch)) {
+      toast.show(`${id} を更新しました`, "success");
+    }
+    setEditPending(null);
   }, [toast]);
 
   // CSV書き出し
   const handleCsvDownload = useCallback(() => {
     const headers = ["送信ID", "宛先", "顧客名", "件名", "種類", "送信日時", "状態", "再送回数"];
-    const rows = filteredHistory.map((m) => [m.id, m.to, m.customer, m.subject, m.type, m.sent, m.status, String(m.retry)]);
+    const rows = filteredHistory.map((m) => [m.id, m.to, m.customer, m.subject, m.type, m.sentAt ?? "—", m.status, String(m.retry)]);
     const csvContent = [headers, ...rows].map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
     const bom = "﻿";
     const blob = new Blob([bom + csvContent], { type: "text/csv;charset=utf-8;" });
@@ -549,6 +548,7 @@ export default function MailPage() {
               <option value="all">状態: すべて</option>
               <option value="送信済">送信済</option>
               <option value="エラー">エラー</option>
+              <option value="キャンセル済">キャンセル済</option>
             </select>
           )}
           <SecondaryButton onClick={() => { setKeyword(""); setTypeFilter("all"); setPriorityFilter("all"); setStatusFilter("all"); }}>
@@ -562,12 +562,15 @@ export default function MailPage() {
         <GlassCard className="p-0 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-white/40 bg-white/40">
             <div className="text-xs text-gray-500">
-              {filteredPending.length} 件 / 全 {pendingMails.filter((p) => p.status === "待機中").length} 件
+              {filteredPending.length} 件 / 全 {pendingMails.length} 件
               {selectedPending.size > 0 && <span className="ml-2 text-blue-600 font-medium">{selectedPending.size} 件選択中</span>}
             </div>
             <div className="flex items-center gap-2">
               <SecondaryButton onClick={handleBulkCancel}>
                 <span className="inline-flex items-center gap-1.5"><Trash2 className="h-4 w-4" />キャンセル</span>
+              </SecondaryButton>
+              <SecondaryButton onClick={handleBulkHold}>
+                <span className="inline-flex items-center gap-1.5"><Pause className="h-4 w-4" />保留</span>
               </SecondaryButton>
               <PrimaryButton onClick={handleBulkSend}>
                 <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />即時送信</span>
@@ -591,6 +594,7 @@ export default function MailPage() {
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">トリガー</th>
                 <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">種類</th>
                 <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">優先度</th>
+                <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">状態</th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">送信予定</th>
                 <th className="px-3 py-3 text-center text-xs font-medium text-gray-500">操作</th>
               </tr>
@@ -619,20 +623,33 @@ export default function MailPage() {
                   <td className="px-3 py-2.5 text-center">
                     <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", priorityBadge[m.priority])}>{m.priority}</span>
                   </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", statusBadge[m.status])}>{m.status}</span>
+                  </td>
                   <td className="px-3 py-2.5 text-gray-500 text-xs">{m.scheduled}</td>
                   <td className="px-3 py-2.5 text-center">
-                    <button
-                      onClick={() => setEditPending(m)}
-                      className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center gap-1"
-                    >
-                      <Edit className="h-3 w-3" />編集
-                    </button>
+                    <div className="inline-flex items-center gap-1">
+                      {m.status === "保留" && (
+                        <button
+                          onClick={() => handleResume(m.id)}
+                          className="px-3 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 inline-flex items-center gap-1"
+                        >
+                          <Play className="h-3 w-3" />再開
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setEditPending(m)}
+                        className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center gap-1"
+                      >
+                        <Edit className="h-3 w-3" />編集
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {filteredPending.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-sm text-gray-400">該当するメールがありません</td>
+                  <td colSpan={10} className="px-3 py-8 text-center text-sm text-gray-400">該当するメールがありません</td>
                 </tr>
               )}
             </tbody>
@@ -674,15 +691,15 @@ export default function MailPage() {
                   <td className="px-3 py-2.5 text-center">
                     <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", typeBadge[m.type] ?? "bg-gray-500/15 text-gray-600")}>{m.type}</span>
                   </td>
-                  <td className="px-3 py-2.5 text-gray-500 text-xs">{m.sent}</td>
+                  <td className="px-3 py-2.5 text-gray-500 text-xs">{m.sentAt ?? "—"}</td>
                   <td className="px-3 py-2.5 text-center">
                     <span
                       className={cn(
                         "px-2 py-0.5 rounded-full text-xs font-medium inline-flex items-center gap-1",
-                        m.status === "送信済" ? "bg-emerald-500/15 text-emerald-700" : "bg-red-500/15 text-red-700"
+                        statusBadge[m.status]
                       )}
                     >
-                      {m.status === "送信済" ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+                      {m.status === "送信済" ? <CheckCircle2 className="h-3 w-3" /> : m.status === "エラー" ? <AlertCircle className="h-3 w-3" /> : null}
                       {m.status}
                     </span>
                   </td>
@@ -697,7 +714,7 @@ export default function MailPage() {
                       </button>
                     ) : (
                       <button
-                        onClick={() => setBodyPreview({ mailId: m.id, subject: m.subject, to: m.to, body: m.body, sentAt: m.sent })}
+                        onClick={() => setBodyPreview({ mailId: m.id, subject: m.subject, to: m.to, body: m.body, sentAt: m.sentAt ?? undefined })}
                         className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                       >
                         本文
@@ -781,11 +798,7 @@ export default function MailPage() {
         <EditPendingModal
           mail={editPending}
           onClose={() => setEditPending(null)}
-          onSave={(updated) => {
-            setPendingMails((prev) => prev.map((m) => m.id === updated.id ? updated : m));
-            setEditPending(null);
-            toast.show(`${updated.id} を更新しました`, "success");
-          }}
+          onSave={handlePendingSave}
         />
       )}
 
