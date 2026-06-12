@@ -29,7 +29,7 @@ const initialSchedule: ScheduleRule[] = [
   { id: "rule-review", trigger: "レビュー依頼", windowStart: "18:00", windowEnd: "21:00", daysOfWeek: [4, 5, 6], blackoutMessage: "保留", outsideAction: "hold", enabled: false },
 ];
 
-const holidays = [
+const initialHolidays = [
   { date: "2026/05/03", name: "憲法記念日" },
   { date: "2026/05/04", name: "みどりの日" },
   { date: "2026/05/05", name: "こどもの日" },
@@ -38,12 +38,19 @@ const holidays = [
   { date: "2026/09/21", name: "敬老の日" },
 ];
 
+/** DatePicker の Date を休業日の表記（YYYY/MM/DD）に揃える。 */
+const fmtYmd = (d: Date) =>
+  `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+
 export default function MailSchedulePage() {
   const toast = useToast();
   const [rules, setRules] = useState(initialSchedule);
   const [defaultStart, setDefaultStart] = useState("09:00");
   const [defaultEnd, setDefaultEnd] = useState("20:00");
   const [holidayMode, setHolidayMode] = useState("skip");
+  const [holidays, setHolidays] = useState(initialHolidays);
+  const [holidayDate, setHolidayDate] = useState<Date | undefined>(undefined);
+  const [holidayName, setHolidayName] = useState("");
 
   const updateRule = (id: string, patch: Partial<ScheduleRule>) =>
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -53,6 +60,50 @@ export default function MailSchedulePage() {
     if (!r) return;
     const next = r.daysOfWeek.includes(idx) ? r.daysOfWeek.filter((d) => d !== idx) : [...r.daysOfWeek, idx];
     updateRule(id, { daysOfWeek: next });
+  };
+
+  const addRule = () => {
+    const n = rules.filter((r) => r.id.startsWith("rule-custom")).length + 1;
+    setRules((prev) => [
+      ...prev,
+      {
+        id: `rule-custom-${n}`,
+        trigger: `カスタムルール ${n}`,
+        windowStart: defaultStart,
+        windowEnd: defaultEnd,
+        daysOfWeek: [0, 1, 2, 3, 4],
+        blackoutMessage: "翌営業日朝",
+        outsideAction: "next-business-day",
+        enabled: false,
+      },
+    ]);
+    toast.show(`カスタムルール ${n} を追加しました`, "success");
+  };
+
+  const addHoliday = () => {
+    if (!holidayDate) {
+      toast.show("休業日の日付を選択してください", "error");
+      return;
+    }
+    const name = holidayName.trim();
+    if (!name) {
+      toast.show("休業日名を入力してください", "error");
+      return;
+    }
+    const date = fmtYmd(holidayDate);
+    if (holidays.some((h) => h.date === date)) {
+      toast.show(`${date} は既に登録されています`, "error");
+      return;
+    }
+    setHolidays((prev) => [...prev, { date, name }].sort((a, b) => a.date.localeCompare(b.date)));
+    setHolidayDate(undefined);
+    setHolidayName("");
+    toast.show(`${name}（${date}）を追加しました`, "success");
+  };
+
+  const removeHoliday = (date: string, name: string) => {
+    setHolidays((prev) => prev.filter((h) => h.date !== date));
+    toast.show(`${name} を削除しました`, "info");
   };
 
   return (
@@ -112,7 +163,7 @@ export default function MailSchedulePage() {
       <GlassCard className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/40 bg-white/40 flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-800">トリガー別ルール</div>
-          <SecondaryButton onClick={() => toast.show("新規ルールを追加します", "info")}>
+          <SecondaryButton onClick={addRule}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />ルール追加</span>
           </SecondaryButton>
         </div>
@@ -198,13 +249,19 @@ export default function MailSchedulePage() {
           <h2 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
             休業日カレンダー <HelpHint>祝日・店舗休業日を登録すると、送信ウィンドウ計算から除外されます。</HelpHint>
           </h2>
-          <SecondaryButton onClick={() => toast.show("休業日を追加しました", "success")}>
+          <SecondaryButton onClick={addHoliday}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />追加</span>
           </SecondaryButton>
         </div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <DatePicker placeholder="休業日を選択" />
-          <input type="text" placeholder="休業日名（例: 棚卸し）" className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+          <DatePicker placeholder="休業日を選択" value={holidayDate} onChange={setHolidayDate} />
+          <input
+            type="text"
+            value={holidayName}
+            onChange={(e) => setHolidayName(e.target.value)}
+            placeholder="休業日名（例: 棚卸し）"
+            className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+          />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
           {holidays.map((h) => (
@@ -214,7 +271,7 @@ export default function MailSchedulePage() {
                 <div className="text-xs text-gray-500">{h.date}</div>
               </div>
               <button
-                onClick={() => toast.show(`${h.name} を削除しました`, "info")}
+                onClick={() => removeHoliday(h.date, h.name)}
                 className="p-1.5 rounded-lg text-red-700 hover:bg-red-500/15"
               >
                 <Trash2 className="h-3.5 w-3.5" />

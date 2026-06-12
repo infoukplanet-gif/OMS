@@ -17,6 +17,10 @@ const sb: Record<string, string> = {
   キャンセル済: "bg-gray-400/15 text-gray-500",
 };
 
+/** DatePicker の Date を sentAt の日付部（YYYY/MM/DD）と同じ書式に揃える。 */
+const fmtYmd = (d: Date) =>
+  `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+
 /** 状態遷移に使う現在時刻（YYYY/MM/DD HH:mm） */
 function formatNow(): string {
   const now = new Date();
@@ -51,6 +55,8 @@ export default function MailHistoryPage() {
   }, [mails]);
 
   const [keyword, setKeyword] = useState("");
+  const [sentFrom, setSentFrom] = useState<Date | undefined>(undefined);
+  const [sentTo, setSentTo] = useState<Date | undefined>(undefined);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [previewMail, setPreviewMail] = useState<MailRecord | null>(null);
@@ -62,13 +68,22 @@ export default function MailHistoryPage() {
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
+    // sentAt は "YYYY/MM/DD HH:mm" — 先頭10文字（日付部）を辞書順比較する
+    const from = sentFrom ? fmtYmd(sentFrom) : "";
+    const to = sentTo ? fmtYmd(sentTo) : "";
     return history.filter((m) => {
       if (k && !`${m.to} ${m.subject} ${m.customer} ${m.id}`.toLowerCase().includes(k)) return false;
+      if (from || to) {
+        const sentDate = m.sentAt?.slice(0, 10);
+        if (!sentDate) return false;
+        if (from && sentDate < from) return false;
+        if (to && sentDate > to) return false;
+      }
       if (typeFilter !== "all" && m.type !== typeFilter) return false;
       if (statusFilter !== "all" && m.status !== statusFilter) return false;
       return true;
     });
-  }, [history, keyword, typeFilter, statusFilter]);
+  }, [history, keyword, sentFrom, sentTo, typeFilter, statusFilter]);
 
   const types = Array.from(new Set(history.map((m) => m.type)));
 
@@ -134,8 +149,8 @@ export default function MailHistoryPage() {
               className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             />
           </div>
-          <DatePicker placeholder="開始日" />
-          <DatePicker placeholder="終了日" />
+          <DatePicker placeholder="開始日" value={sentFrom} onChange={setSentFrom} />
+          <DatePicker placeholder="終了日" value={sentTo} onChange={setSentTo} />
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
@@ -154,7 +169,7 @@ export default function MailHistoryPage() {
             <option value="エラー">エラー</option>
             <option value="キャンセル済">キャンセル済</option>
           </select>
-          <SecondaryButton onClick={() => { setKeyword(""); setTypeFilter("all"); setStatusFilter("all"); }}>
+          <SecondaryButton onClick={() => { setKeyword(""); setSentFrom(undefined); setSentTo(undefined); setTypeFilter("all"); setStatusFilter("all"); }}>
             クリア
           </SecondaryButton>
         </div>
