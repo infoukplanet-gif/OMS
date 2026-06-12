@@ -30,7 +30,9 @@ import {
 
 const SidebarContext = createContext({
   collapsed: false,
-  setCollapsed: (_: boolean) => {},
+  setCollapsed: (collapsed: boolean): void => {
+    void collapsed;
+  },
 });
 
 export function useSidebar() {
@@ -139,6 +141,7 @@ const menuItems: MenuItem[] = [
     icon: Mail, label: "メール", href: "/mail",
     children: [
       { label: "メール設定", href: "/mail" },
+      { label: "フリーメール送信", href: "/mail/compose" },
       { label: "メール送信処理", href: "/mail/send" },
       { label: "送信待ち", href: "/mail/pending" },
       { label: "送信履歴", href: "/mail/history" },

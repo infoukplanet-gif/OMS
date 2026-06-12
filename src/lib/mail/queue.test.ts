@@ -64,6 +64,7 @@ describe("createMailQueue — disabled triggers", () => {
     "payment-reminder-3d": true,
     "payment-final-call-7d": true,
     "follow-up": true,
+    "rebill-mismatch": true,
   };
 
   it("skips jobs for disabled triggers (without consuming dedupe slot)", () => {
@@ -90,7 +91,7 @@ describe("createMailQueue — disabled triggers", () => {
     );
     const secondPass = queue.enqueueAll(
       [job({ triggerType: "payment-confirmed", dedupeKey: "ORD-1:payment-confirmed" })],
-      { thanks: true, "ship-notify": true, "delivery-notify": true, "payment-confirmed": true, "payment-reminder-3d": true, "payment-final-call-7d": true, "follow-up": true },
+      { thanks: true, "ship-notify": true, "delivery-notify": true, "payment-confirmed": true, "payment-reminder-3d": true, "payment-final-call-7d": true, "follow-up": true, "rebill-mismatch": true },
     );
 
     expect(secondPass).toEqual({ enqueued: 1, duplicateSkipped: 0, disabledSkipped: 0 });

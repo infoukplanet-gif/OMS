@@ -30,6 +30,7 @@ const ALL_ENABLED: AutoMailEnabled = {
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,
   "follow-up": true,
+  "rebill-mismatch": true,
 };
 
 const SKU = "SKU-1";

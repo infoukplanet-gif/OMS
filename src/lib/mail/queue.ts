@@ -16,7 +16,8 @@ export type MailTriggerType =
   | "payment-confirmed"
   | "payment-reminder-3d"
   | "payment-final-call-7d"
-  | "follow-up";
+  | "follow-up"
+  | "rebill-mismatch";
 
 export interface MailJob {
   orderId: string;
@@ -46,6 +47,7 @@ const DEFAULT_ENABLED: AutoMailEnabled = {
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,
   "follow-up": true,
+  "rebill-mismatch": true,
 };
 
 export function createMailQueue(): MailQueue {

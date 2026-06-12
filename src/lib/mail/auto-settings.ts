@@ -20,6 +20,7 @@ export const DEFAULT_AUTO_MAIL_ENABLED: AutoMailEnabled = {
   "payment-reminder-3d": true,
   "payment-final-call-7d": true,
   "follow-up": true,
+  "rebill-mismatch": true,
 };
 
 let enabled: Record<MailTriggerType, boolean> = { ...DEFAULT_AUTO_MAIL_ENABLED };

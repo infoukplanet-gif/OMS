@@ -25,6 +25,7 @@ describe("auto-settings — module-level enabled map", () => {
       "payment-reminder-3d": true,
       "payment-final-call-7d": true,
       "follow-up": true,
+      "rebill-mismatch": true,
     });
   });
 
@@ -39,6 +40,7 @@ describe("auto-settings — module-level enabled map", () => {
       "payment-reminder-3d": true,
       "payment-final-call-7d": true,
       "follow-up": true,
+      "rebill-mismatch": true,
     });
   });
 

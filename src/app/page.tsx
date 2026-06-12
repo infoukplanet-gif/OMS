@@ -170,6 +170,7 @@ const TRIGGER_LABEL: Record<MailTriggerType, string> = {
   "payment-reminder-3d": "入金催促",
   "payment-final-call-7d": "最終催告",
   "follow-up": "フォロー",
+  "rebill-mismatch": "再請求",
 };
 
 const TRIGGER_BADGE: Record<MailTriggerType, string> = {
@@ -180,6 +181,7 @@ const TRIGGER_BADGE: Record<MailTriggerType, string> = {
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",
   "follow-up": "bg-teal-500/15 text-teal-700",
+  "rebill-mismatch": "bg-rose-500/15 text-rose-700",
 };
 
 const SALES_TREND_BY_PERIOD: Record<PeriodKey, { labels: string[]; values: number[] }> = {
@@ -268,11 +270,9 @@ export default function Dashboard() {
 
   const peakValue = useMemo(() => Math.max(...trend.values), [trend.values]);
 
-  // セッション内 mailQueue のライブスナップショット（初回マウントで取得）
-  const [liveMailJobs, setLiveMailJobs] = useState<MailJob[]>([]);
-  useEffect(() => {
-    setLiveMailJobs(mailQueue.snapshot());
-  }, []);
+  // セッション内 mailQueue のライブスナップショット（マウント時に lazy 初期化で取得。
+  // singleton はリロードで空に戻るため SSR/CSR の初期値は常に一致する）
+  const [liveMailJobs] = useState<MailJob[]>(() => mailQueue.snapshot());
 
   // 共有ストアを seed（ダッシュボードが最初に開かれても業務状況が出るように）。
   // 各業務画面と同じ singleton を共有し、処理を進めると下のカードが更新される。
@@ -298,6 +298,7 @@ export default function Dashboard() {
       "payment-reminder-3d": 0,
       "payment-final-call-7d": 0,
       "follow-up": 0,
+      "rebill-mismatch": 0,
     };
     for (const job of liveMailJobs) map[job.triggerType]++;
     return map;

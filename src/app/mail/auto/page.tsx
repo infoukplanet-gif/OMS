@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -33,6 +33,7 @@ const initial: Trigger[] = [
   { id: "payment3", name: "入金催促（3日経過）", desc: "代引き／銀振の入金待ちが3日経過した受注へ自動送信", enabled: true, template: "入金確認メール（自動）", delay: "入金待ち3日後 09:00", retryMax: 2 },
   { id: "payment7", name: "入金催促（7日経過・最終通告）", desc: "入金待ちが7日経過した受注へ送信。送信後は要オペレーター確認", enabled: false, template: "入金催促（最終通告）", delay: "入金待ち7日後 09:00", retryMax: 2, cc: "ops@example.com" },
   { id: "follow", queueTrigger: "follow-up", name: "フォローアップ（配達完了）", desc: "出荷ステータスが「配達完了」になった直後に商品到着確認・レビュー誘導を送信", enabled: true, template: "フォローアップメール", delay: "配達完了後 即時", retryMax: 1 },
+  { id: "rebill", queueTrigger: "rebill-mismatch", name: "再請求（差額不足）", desc: "金額不整合確認で不足案件に「再請求メール」を実行した際に送信", enabled: true, template: "入金催促（最終通告）", delay: "再請求操作後 即時", retryMax: 2 },
   { id: "stockout", name: "在庫切れ連絡", desc: "受注に対し在庫不足が発生した場合に送信", enabled: false, template: "在庫切れご連絡", delay: "在庫不足検知後 即時", retryMax: 2 },
   { id: "reship", name: "再発送のお知らせ", desc: "返送・配送ミス対応で再発送した際に送信", enabled: true, template: "再発送のお知らせ", delay: "再発送登録後 即時", retryMax: 2 },
   { id: "review", name: "レビュー依頼（発送後7日）", desc: "発送から7日後にレビュー依頼メールを送信", enabled: false, template: "レビュー依頼", delay: "発送後7日後 19:00", retryMax: 1 },
@@ -60,18 +61,14 @@ function syncQueueEnabledFromItems(items: Trigger[]) {
 
 export default function MailAutoPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
-
-  // ページ表示時にローカル state を auto-settings の現在値で復元しておく
+  // 初期表示時にローカル state を auto-settings の現在値で復元しておく
   // （他ページからの遷移で settings が書き換わっていてもズレないように）
-  useEffect(() => {
+  const [items, setItems] = useState(() => {
     const enabled = getAutoMailEnabled();
-    setItems((prev) =>
-      prev.map((it) =>
-        it.queueTrigger ? { ...it, enabled: enabled[it.queueTrigger] } : it,
-      ),
+    return initial.map((it) =>
+      it.queueTrigger ? { ...it, enabled: enabled[it.queueTrigger] } : it,
     );
-  }, []);
+  });
 
   const updateItem = (id: string, patch: Partial<Trigger>) =>
     setItems((prev) =>

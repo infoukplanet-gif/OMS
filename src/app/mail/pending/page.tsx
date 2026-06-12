@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -35,6 +35,7 @@ const triggerLabel: Record<MailTriggerType, string> = {
   "payment-reminder-3d": "入金催促（3日超過）",
   "payment-final-call-7d": "最終催告（7日超過）",
   "follow-up": "フォローアップ（配達完了）",
+  "rebill-mismatch": "再請求（差額不足）",
 };
 
 const triggerBadge: Record<MailTriggerType, string> = {
@@ -45,6 +46,7 @@ const triggerBadge: Record<MailTriggerType, string> = {
   "payment-reminder-3d": "bg-amber-500/15 text-amber-700",
   "payment-final-call-7d": "bg-red-500/15 text-red-700",
   "follow-up": "bg-teal-500/15 text-teal-700",
+  "rebill-mismatch": "bg-rose-500/15 text-rose-700",
 };
 
 export default function MailPendingPage() {
@@ -55,11 +57,9 @@ export default function MailPendingPage() {
   const [selected, setSelected] = useState<string[]>([]);
 
   // 同一セッション中に handler.sendMail 経由で enqueue されたジョブをスナップショット表示
-  // mailQueue は singleton。ページ再訪時に最新を読みに行く（hydration ズレ回避のため effect で取る）。
-  const [liveJobs, setLiveJobs] = useState<MailJob[]>([]);
-  useEffect(() => {
-    setLiveJobs(mailQueue.snapshot());
-  }, []);
+  // mailQueue は singleton。リロードで空に戻るため SSR/CSR 初期値は常に一致し、
+  // マウント時の lazy 初期化で hydration ズレなく最新を読める。
+  const [liveJobs, setLiveJobs] = useState<MailJob[]>(() => mailQueue.snapshot());
   const refreshLiveJobs = () => setLiveJobs(mailQueue.snapshot());
 
   const filtered = useMemo(() => {
