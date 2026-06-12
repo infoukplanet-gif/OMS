@@ -6,8 +6,16 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Plus, Trash2, ShoppingCart, User, MapPin, CreditCard, FileText, Warehouse } from "lucide-react";
-import { orderStore } from "@/lib/stores/orders";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
 import { productStore, type ProductRecord } from "@/lib/stores/product";
+import { wholesaleStore, INITIAL_WHOLESALE, type WholesaleRecord } from "@/lib/stores/wholesale";
+import { paymentStore } from "@/lib/stores/payment";
+import {
+  computeOrderCreditOutstanding,
+  type CreditOrder,
+  type CreditPayment,
+} from "@/lib/customers/credit-usage";
+import { checkCredit, type CreditCheckResult } from "@/lib/customers/credit-check";
 import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY, SKU_NAMES } from "@/lib/seeds/inventory";
 import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
@@ -38,9 +46,11 @@ type Item = {
 
 interface OrderFormProps {
   mode: "create" | "edit";
+  /** 編集モードで対象とする受注ID（/orders/[id]/edit から渡る）。 */
+  recordId?: string;
 }
 
-export function OrderForm({ mode }: OrderFormProps) {
+export function OrderForm({ mode, recordId }: OrderFormProps) {
   const toast = useToast();
   const router = useRouter();
   const isEdit = mode === "edit";
@@ -64,15 +74,38 @@ export function OrderForm({ mode }: OrderFormProps) {
     return m;
   }, [products]);
 
-  const [store, setStore] = useState(STORES[0]);
-  const [orderDate, setOrderDate] = useState<Date | undefined>(new Date());
-  const [orderStatus, setOrderStatus] = useState(STATUSES[0]);
+  // 編集モード: recordId の受注を orderStore（空なら seed）から読み出して prefill。
+  // OrderSeed が保持するフィールド（店舗/顧客/支払/卸先コード/明細=allocation）のみ復元する。
+  // 単価は OrderSeed に持たないため商品マスタからオートフィルする近似。
+  // orderStore は module-level singleton で full reload 時に seed と一致するため、
+  // lazy useState 初期化で読んでも SSR/CSR の初期値は一致する（hydration 安全）。
+  const prefillOrder = (() => {
+    if (!isEdit || !recordId) return undefined;
+    const all = orderStore.getState().length > 0 ? orderStore.getState() : INITIAL_ORDERS;
+    return all.find((o) => o.id === recordId) as OrderSeed | undefined;
+  })();
+
+  const [store, setStore] = useState(() =>
+    typeof prefillOrder?.shop === "string" ? prefillOrder.shop : STORES[0],
+  );
+  const [orderDate, setOrderDate] = useState<Date | undefined>(() => {
+    if (!prefillOrder) return new Date();
+    const parsed = typeof prefillOrder.date === "string" ? new Date(prefillOrder.date) : undefined;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed : undefined;
+  });
+  const [orderStatus, setOrderStatus] = useState(() =>
+    typeof prefillOrder?.status === "string" ? prefillOrder.status : STATUSES[0],
+  );
   const [mallId, setMallId] = useState("");
   const [tag, setTag] = useState(TAGS[0]);
   const [deliveryType, setDeliveryType] = useState(DELIVERY_TYPES[0]);
 
-  const [customerCode, setCustomerCode] = useState("");
-  const [customerName, setCustomerName] = useState("");
+  const [customerCode, setCustomerCode] = useState(() =>
+    typeof prefillOrder?.customerCode === "string" ? prefillOrder.customerCode : "",
+  );
+  const [customerName, setCustomerName] = useState(() =>
+    typeof prefillOrder?.customer === "string" ? prefillOrder.customer : "",
+  );
   const [customerKana, setCustomerKana] = useState("");
   const [email, setEmail] = useState("");
   const [tel, setTel] = useState("");
@@ -88,15 +121,37 @@ export function OrderForm({ mode }: OrderFormProps) {
   const [shipDate, setShipDate] = useState<Date | undefined>(undefined);
   const [timeSlot, setTimeSlot] = useState(TIME_SLOTS[0]);
 
-  const [items, setItems] = useState<Item[]>([
-    { id: 1, code: "", name: "", price: 0, qty: 1, warehouse: WAREHOUSES[0] ?? "" },
-  ]);
+  const [items, setItems] = useState<Item[]>(() => {
+    const lines =
+      prefillOrder && Array.isArray(prefillOrder.allocation)
+        ? (prefillOrder.allocation as AllocationLine[])
+        : [];
+    if (lines.length > 0) {
+      const productList =
+        productStore.getState().length > 0 ? productStore.getState() : INITIAL_PRODUCTS;
+      const pById = new Map(productList.map((p) => [p.code, p]));
+      return lines.map((a, idx) => {
+        const product = pById.get(a.sku);
+        return {
+          id: idx + 1,
+          code: a.sku,
+          name: product?.name ?? SKU_NAMES[a.sku] ?? a.sku,
+          price: product?.price ?? 0,
+          qty: a.qty,
+          warehouse: a.warehouse,
+        };
+      });
+    }
+    return [{ id: 1, code: "", name: "", price: 0, qty: 1, warehouse: WAREHOUSES[0] ?? "" }];
+  });
 
   const [shippingFee, setShippingFee] = useState(0);
   const [paymentFee, setPaymentFee] = useState(0);
   const [discount, setDiscount] = useState(0);
 
-  const [payMethod, setPayMethod] = useState(PAY_METHODS[0]);
+  const [payMethod, setPayMethod] = useState(() =>
+    typeof prefillOrder?.payment === "string" ? prefillOrder.payment : PAY_METHODS[0],
+  );
   const [payStatus, setPayStatus] = useState(PAY_STATUSES[0]);
   const [paidAmount, setPaidAmount] = useState(0);
   const [paidDate, setPaidDate] = useState<Date | undefined>(undefined);
@@ -104,6 +159,9 @@ export function OrderForm({ mode }: OrderFormProps) {
   const [customerNote, setCustomerNote] = useState("");
   const [internalMemo, setInternalMemo] = useState("");
   const [cancelOpen, setCancelOpen] = useState(false);
+
+  // 与信限度オーバー時の確認ダイアログ（warn 時のみ。block はダイアログを出さず toast で弾く）。
+  const [creditWarn, setCreditWarn] = useState<{ record: WholesaleRecord; result: CreditCheckResult } | null>(null);
 
   const subtotal = useMemo(() => items.reduce((s, i) => s + i.price * i.qty, 0), [items]);
   const tax = useMemo(() => Math.floor((subtotal + shippingFee + paymentFee - discount) * 0.1), [subtotal, shippingFee, paymentFee, discount]);
@@ -170,21 +228,8 @@ export function OrderForm({ mode }: OrderFormProps) {
     return `ORD-2026-${String(max + 1).padStart(5, "0")}`;
   }
 
-  function save() {
-    const err = validate();
-    if (err) return toast.show(err, "error");
-
-    if (isEdit) {
-      toast.show("受注を更新しました");
-      return;
-    }
-
-    // create: orderStore に append。空ストアならまず seed を投入する。
-    if (orderStore.getState().length === 0) {
-      orderStore.setItems(INITIAL_ORDERS);
-    }
-
-    // 商品明細を AllocationLine[] に正規化（同じ SKU × 倉庫は合算）。
+  /** 商品明細を AllocationLine[] に正規化（同じ SKU × 倉庫は合算）。新規・編集で共有。 */
+  function buildAllocationLines(): AllocationLine[] {
     const allocationMap = new Map<string, AllocationLine>();
     for (const i of items) {
       const key = `${i.code} ${i.warehouse}`;
@@ -195,8 +240,13 @@ export function OrderForm({ mode }: OrderFormProps) {
         allocationMap.set(key, { ...existing, qty: existing.qty + i.qty });
       }
     }
+    return Array.from(allocationMap.values());
+  }
 
-    const newOrder: OrderSeed = {
+  /** 入力から新規受注を組み立てる。customerCode を必ず紐付ける（B2B 与信集計の対象にするため）。 */
+  function buildNewOrder(): OrderSeed {
+    const code = customerCode.trim();
+    return {
       id: nextOrderId(),
       status: "新規受付",
       shop: store,
@@ -205,12 +255,109 @@ export function OrderForm({ mode }: OrderFormProps) {
       amount: total,
       payment: payMethod,
       date: (orderDate ?? new Date()).toLocaleString("ja-JP"),
-      allocation: Array.from(allocationMap.values()),
+      allocation: buildAllocationLines(),
+      // B2B 受注は卸先コードを紐付け。空（B2C 個人受注）は undefined のまま。
+      customerCode: code || undefined,
     };
+  }
 
+  /**
+   * 編集モードの保存差分。OrderSeed が持つ業務フィールドのみ更新する。
+   * status は状態機械が所有するため直接書き換えない（CLAUDE.md 連動規約）。
+   */
+  function buildEditPartial(): Partial<OrderRecord> {
+    const code = customerCode.trim();
+    return {
+      shop: store,
+      customer: customerName,
+      items: items.reduce((s, i) => s + i.qty, 0),
+      amount: total,
+      payment: payMethod,
+      allocation: buildAllocationLines(),
+      customerCode: code || undefined,
+    };
+  }
+
+  /** 受注を確定して store に append、一覧へ遷移。 */
+  function commitOrder(newOrder: OrderSeed) {
     orderStore.setItems([newOrder, ...orderStore.getState()]);
     toast.show(`受注 ${newOrder.id} を登録しました`);
     router.push("/orders");
+  }
+
+  /**
+   * 卸先（B2B）受注の与信判定。customerCode が卸先マスタに実在する時のみ走る。
+   * 仕様: docs/prd/credit-limit-check-v1.md
+   */
+  function evaluateCredit(): { record: WholesaleRecord; result: CreditCheckResult } | null {
+    const code = customerCode.trim();
+    if (!code) return null;
+    const wholesale = wholesaleStore.getState().length > 0 ? wholesaleStore.getState() : INITIAL_WHOLESALE;
+    const record = wholesale.find((w) => w.code === code);
+    if (!record) return null; // 卸先に無いコード（B2C 等）はチェックせず素通り。
+    // orderStore / paymentStore のレコードを与信集計用の最小形に正規化（wholesale ページと同じ写像）。
+    const creditOrders: CreditOrder[] = orderStore.getState().map((o) => {
+      const seed = o as OrderSeed;
+      return { id: seed.id, customerCode: seed.customerCode, amount: Number(seed.amount ?? 0), status: seed.status };
+    });
+    const creditPayments: CreditPayment[] = paymentStore.getState().map((p) => ({
+      orderId: String(p.orderId),
+      orderTotal: Number(p.orderTotal),
+      paidAmount: Number(p.paidAmount),
+    }));
+    const outstanding = record.creditUsed + computeOrderCreditOutstanding(code, creditOrders, creditPayments);
+    const result = checkCredit({
+      creditLimit: record.creditLimit,
+      customerStatus: record.status,
+      currentOutstanding: outstanding,
+      newOrderAmount: total,
+    });
+    return { record, result };
+  }
+
+  function save() {
+    const err = validate();
+    if (err) return toast.show(err, "error");
+
+    if (isEdit) {
+      if (!recordId) return toast.show("編集対象の受注が特定できません", "error");
+      // 直接編集URLに来てストアが空なら seed を投入してから更新する保険。
+      if (orderStore.getState().length === 0) {
+        orderStore.setItems(INITIAL_ORDERS);
+      }
+      const ok = orderStore.patch(recordId, buildEditPartial());
+      if (!ok) return toast.show(`受注 ${recordId} が見つかりません`, "error");
+      toast.show(`受注 ${recordId} を更新しました`);
+      router.push("/orders");
+      return;
+    }
+
+    // create: orderStore に append。空ストアならまず seed を投入する。
+    // （与信集計は既存受注の未回収残を基準にするため、判定の前に seed を満たす）
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(INITIAL_ORDERS);
+    }
+
+    // 与信ゲート: 停止/限度0 はハードブロック、限度超過は確認ダイアログ。
+    const credit = evaluateCredit();
+    if (credit) {
+      if (credit.result.status === "block") {
+        toast.show(`${credit.record.name}: ${credit.result.reason}`, "error");
+        return;
+      }
+      if (credit.result.status === "warn") {
+        setCreditWarn(credit);
+        return;
+      }
+    }
+
+    commitOrder(buildNewOrder());
+  }
+
+  /** 与信オーバー警告ダイアログで「承知して登録」を押した時。 */
+  function confirmCreditOverride() {
+    setCreditWarn(null);
+    commitOrder(buildNewOrder());
   }
 
   function cancelOrder() {
@@ -239,12 +386,12 @@ export function OrderForm({ mode }: OrderFormProps) {
         </div>
       </div>
 
-      {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 受注一覧 &gt; <span className="text-blue-600">ORD-2026-00851</span> &gt; 編集</div>}
+      {isEdit && <div className="text-xs text-gray-500">ダッシュボード &gt; 受注一覧 &gt; <span className="text-blue-600">{recordId ?? "—"}</span> &gt; 編集</div>}
 
       <GlassCard>
         <h2 className="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-gray-400" />受注情報</h2>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Input label="受注番号" value={isEdit ? "ORD-2026-00851" : "（自動採番）"} onChange={() => {}} disabled />
+          <Input label="受注番号" value={isEdit ? (recordId ?? "") : "（自動採番）"} onChange={() => {}} disabled />
           <SelectInput label="店舗" required value={store} onChange={setStore} options={STORES} />
           <div className="space-y-1.5">
             <FieldLabel>受注日時</FieldLabel>
@@ -461,6 +608,33 @@ export function OrderForm({ mode }: OrderFormProps) {
         }
       >
         <p className="text-sm text-gray-700">この受注をキャンセルします。在庫引当は解除されます。よろしいですか？</p>
+      </Modal>
+
+      <Modal
+        open={creditWarn !== null}
+        onClose={() => setCreditWarn(null)}
+        title="与信限度オーバーの確認"
+        size="sm"
+        footer={
+          <>
+            <SecondaryButton onClick={() => setCreditWarn(null)}>中止</SecondaryButton>
+            <PrimaryButton onClick={confirmCreditOverride} className="bg-amber-500/90 hover:bg-amber-600/90">承知して登録</PrimaryButton>
+          </>
+        }
+      >
+        {creditWarn && (
+          <div className="space-y-3 text-sm text-gray-700">
+            <p className="font-medium text-amber-700">{creditWarn.record.name}（{creditWarn.record.code}）は与信限度を超過します。</p>
+            <div className="rounded-xl border border-white/50 bg-white/40 p-3 space-y-1.5 tabular-nums">
+              <div className="flex justify-between"><span className="text-gray-500">与信限度</span><span>{formatYen(creditWarn.record.creditLimit)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">今回前の残り枠</span><span>{formatYen(creditWarn.result.available)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">今回受注額</span><span>{formatYen(total)}</span></div>
+              <div className="flex justify-between border-t border-white/40 pt-1.5"><span className="text-gray-500">受注後の与信使用見込み</span><span className="font-medium">{formatYen(creditWarn.result.projectedUsage)}</span></div>
+              <div className="flex justify-between text-red-600"><span>限度超過額</span><span className="font-bold">{formatYen(creditWarn.result.overBy)}</span></div>
+            </div>
+            <p className="text-xs text-gray-500">このまま登録するには「承知して登録」を押してください。</p>
+          </div>
+        )}
       </Modal>
     </div>
   );
