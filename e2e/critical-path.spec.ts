@@ -59,14 +59,19 @@ test.describe("critical path: 入金確認 → 受注確定 → 出荷指示作�
     await page.goto("/payments");
     await expect(page.getByRole("heading", { name: "入金管理" })).toBeVisible();
 
-    await page.getByRole("button", { name: /催促メール一括送信/ }).click();
-
     // INITIAL_PAYMENTS の P002 (3日超過) と P003 (8日超過) で 2 件 enqueue が期待される
     //   ※ 同一セッション中に dedupe されるため、二回目以降は重複扱い
+    //   ※ heading は SSR で描画済みのため hydration 完了前にクリックが落ちることがある。
+    //     どの分岐の toast も /催促メール|送信/ にマッチする（重複時も含む）ので、
+    //     toast が出るまでクリックを toPass でリトライする。
+    const reminderButton = page.getByRole("button", { name: /催促メール一括送信/ });
     const toast = page.locator(".pointer-events-auto").filter({
       hasText: /催促メール|送信|enqueue/,
     });
-    await expect(toast.first()).toBeVisible({ timeout: 3000 });
+    await expect(async () => {
+      await reminderButton.click();
+      await expect(toast.first()).toBeVisible({ timeout: 1500 });
+    }).toPass({ timeout: 15000 });
   });
 });
 
