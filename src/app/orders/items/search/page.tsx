@@ -1,9 +1,14 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
+import { cn } from "@/lib/utils";
 import { Search, ArrowUpDown, X } from "lucide-react";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { SKU_NAMES } from "@/lib/seeds/inventory";
+import type { AllocationLine } from "@/lib/state-machines/inventory";
 
 type Row = {
   orderId: string;
@@ -12,39 +17,42 @@ type Row = {
   qty: number;
   price: number;
   orderedAt: Date;
+  status: string;
 };
 
-function makeRows(): Row[] {
-  const names = [
-    ["SKU-A001", "オーガニック緑茶 500ml"],
-    ["SKU-A002", "エスプレッソビーンズ 200g"],
-    ["SKU-B010", "ワイヤレスイヤホン Lite"],
-    ["SKU-B012", "モバイルバッテリー 10000mAh"],
-    ["SKU-C003", "撥水ナイロンリュック"],
-    ["SKU-C005", "レザーキーホルダー"],
-    ["SKU-D020", "アロマキャンドル ローズ"],
-    ["SKU-E042", "スキンケアセット（敏感肌用）"],
-    ["SKU-F101", "ステンレスタンブラー 350ml"],
-    ["SKU-F102", "ギフト用ラッピング"],
-  ];
-  const out: Row[] = [];
-  for (let i = 0; i < 56; i++) {
-    const n = names[i % names.length];
-    const d = new Date();
-    d.setDate(d.getDate() - (i % 30));
-    out.push({
-      orderId: `ORD-2026-${String(1000 + i).padStart(5, "0")}`,
-      productCode: n[0],
-      productName: n[1],
-      qty: 1 + (i % 4),
-      price: 800 + (i * 137) % 9000,
-      orderedAt: d,
-    });
+/**
+ * 共有 orderStore の受注を明細行（allocation lines）へ展開する。
+ * 行単価は受注金額を数量按分した平均単価（v1 は明細単価を保持していないため）。
+ */
+function flattenOrderLines(orders: ReadonlyArray<OrderRecord>): Row[] {
+  const rows: Row[] = [];
+  for (const o of orders) {
+    const lines = (o.allocation ?? []) as AllocationLine[];
+    const totalQty = lines.reduce((s, l) => s + l.qty, 0);
+    const amount = typeof o.amount === "number" ? o.amount : 0;
+    const orderedAt = new Date(typeof o.date === "string" ? o.date : "");
+    if (lines.length === 0 || totalQty === 0 || Number.isNaN(orderedAt.getTime())) continue;
+    const unitPrice = Math.round(amount / totalQty);
+    for (const line of lines) {
+      rows.push({
+        orderId: o.id,
+        productCode: line.sku,
+        productName: SKU_NAMES[line.sku] ?? line.sku,
+        qty: line.qty,
+        price: unitPrice,
+        orderedAt,
+        status: o.status,
+      });
+    }
   }
-  return out;
+  return rows;
 }
 
-const data = makeRows();
+const statusBadge: Record<string, string> = {
+  出荷済み: "bg-emerald-500/15 text-emerald-700",
+  キャンセル: "bg-gray-400/15 text-gray-500",
+};
+
 const PAGE_SIZE = 10;
 
 type SortKey = "orderedAt" | "qty" | "price";
@@ -57,6 +65,19 @@ export default function ItemsSearchPage() {
   const [sortKey, setSortKey] = useState<SortKey>("orderedAt");
   const [sortDesc, setSortDesc] = useState(true);
   const [page, setPage] = useState(1);
+
+  // 共有 orderStore を購読（永続化オーナーは受注一覧側。ここは閲覧のみ）
+  useEffect(() => {
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+  }, []);
+
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS as ReadonlyArray<OrderRecord>,
+  );
+
+  const data = useMemo(() => flattenOrderLines(orders), [orders]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -72,7 +93,7 @@ export default function ItemsSearchPage() {
       return sortDesc ? bv - av : av - bv;
     });
     return list;
-  }, [query, from, to, sortKey, sortDesc]);
+  }, [data, query, from, to, sortKey, sortDesc]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -87,11 +108,19 @@ export default function ItemsSearchPage() {
     toast.show("条件をクリアしました", "info");
   }
 
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+
   const total = filtered.reduce((s, r) => s + r.qty * r.price, 0);
 
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold text-gray-800">受注明細検索</h1>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-800">受注明細検索</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          受注一覧と同じ共有データを明細行に展開して検索します。受注作成・状態遷移が即時反映されます。
+        </p>
+      </div>
 
       <GlassCard>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -154,19 +183,26 @@ export default function ItemsSearchPage() {
                       受注日 <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 w-24">状態</th>
                 </tr>
               </thead>
               <tbody>
                 {pageRows.map((r, i) => (
-                  <tr key={r.orderId + i} className="border-t border-white/30 hover:bg-white/40">
+                  <tr key={`${r.orderId}-${r.productCode}-${i}`} className="border-t border-white/30 hover:bg-white/40">
                     <td className="px-3 py-2.5 font-medium text-blue-600">{r.orderId}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{r.productCode}</td>
                     <td className="px-3 py-2.5 text-gray-800">{r.productName}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{r.qty}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">¥{r.price.toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium">¥{(r.qty * r.price).toLocaleString()}</td>
-                    <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums">
-                      {r.orderedAt.toISOString().slice(0, 10)}
+                    <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums">{fmtDate(r.orderedAt)}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={cn(
+                        "px-2 py-0.5 rounded-full text-xs font-medium",
+                        statusBadge[r.status] ?? "bg-blue-500/15 text-blue-700",
+                      )}>
+                        {r.status}
+                      </span>
                     </td>
                   </tr>
                 ))}
