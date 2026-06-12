@@ -47,6 +47,10 @@ type SortKey = "orders" | "amount" | "gross";
 
 const EMPTY_LEDGER: readonly SalesEntry[] = [];
 
+/** DatePicker の Date を日次集計の日付（"YYYY/MM/DD"）と同じ書式に揃える。 */
+const fmtYmd = (d: Date) =>
+  `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+
 export default function AnalyticsSalesPage() {
   const toast = useToast();
 
@@ -76,17 +80,25 @@ export default function AnalyticsSalesPage() {
 
   const [shop, setShop] = useState("all");
   const [channel, setChannel] = useState("all");
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   const [groupBy, setGroupBy] = useState<"none" | "shop" | "date">("none");
   const [sortKey, setSortKey] = useState<SortKey>("amount");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  const filtered = useMemo(
-    () =>
-      data
-        .filter((d) => (shop === "all" || d.shop === shop) && (channel === "all" || d.channel === channel))
-        .sort((a, b) => (sortDir === "asc" ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey])),
-    [shop, channel, sortKey, sortDir]
-  );
+  const filtered = useMemo(() => {
+    const from = dateFrom ? fmtYmd(dateFrom) : "";
+    const to = dateTo ? fmtYmd(dateTo) : "";
+    return data
+      .filter((d) => {
+        if (shop !== "all" && d.shop !== shop) return false;
+        if (channel !== "all" && d.channel !== channel) return false;
+        if (from && d.date < from) return false;
+        if (to && d.date > to) return false;
+        return true;
+      })
+      .sort((a, b) => (sortDir === "asc" ? a[sortKey] - b[sortKey] : b[sortKey] - a[sortKey]));
+  }, [shop, channel, dateFrom, dateTo, sortKey, sortDir]);
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return null;
@@ -243,8 +255,8 @@ export default function AnalyticsSalesPage() {
 
       <GlassCard>
         <div className="flex flex-wrap items-center gap-3">
-          <DatePicker placeholder="開始日" />
-          <DatePicker placeholder="終了日" />
+          <DatePicker placeholder="開始日" value={dateFrom} onChange={setDateFrom} />
+          <DatePicker placeholder="終了日" value={dateTo} onChange={setDateTo} />
           <select value={shop} onChange={(e) => setShop(e.target.value)} className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
             <option value="all">店舗: すべて</option>
             {shops.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -258,7 +270,7 @@ export default function AnalyticsSalesPage() {
             <option value="shop">集計: 店舗別</option>
             <option value="date">集計: 日次</option>
           </select>
-          <SecondaryButton onClick={() => { setShop("all"); setChannel("all"); setGroupBy("none"); }}>
+          <SecondaryButton onClick={() => { setShop("all"); setChannel("all"); setDateFrom(undefined); setDateTo(undefined); setGroupBy("none"); }}>
             クリア
           </SecondaryButton>
         </div>
