@@ -1,6 +1,8 @@
 "use client";
 import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
+import { useToast } from "@/components/ui/interactive";
+import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import { ScanBarcode, Check, Download, MapPin, Package, Route } from "lucide-react";
 
@@ -11,9 +13,55 @@ const inspectionItems = [
 ];
 
 export default function InspectionPage() {
+  const toast = useToast();
   const [mode, setMode] = useState<"inspection" | "picking">("inspection");
   const [orderNumber, setOrderNumber] = useState("753");
   const [format, setFormat] = useState<"csv" | "tsv">("csv");
+  const [items, setItems] = useState(inspectionItems);
+  const [pickedNos, setPickedNos] = useState<ReadonlySet<number>>(new Set());
+
+  const loadOrder = () => {
+    if (!orderNumber.trim()) {
+      toast.show("受注伝票番号を入力してください", "error");
+      return;
+    }
+    setItems(inspectionItems.map((i) => ({ ...i, scanned: 0 })));
+    setPickedNos(new Set());
+    toast.show(`伝票番号 ${orderNumber} の明細 ${inspectionItems.length} 件を読み込みました`, "success");
+  };
+
+  const scanItem = (no: number) => {
+    setItems((prev) => prev.map((i) => (i.no === no && i.scanned < i.qty ? { ...i, scanned: i.scanned + 1 } : i)));
+  };
+
+  const togglePicked = (no: number) => {
+    setPickedNos((prev) => {
+      const next = new Set(prev);
+      if (next.has(no)) next.delete(no);
+      else next.add(no);
+      return next;
+    });
+  };
+
+  const finishPicking = () => {
+    const remaining = items.length - pickedNos.size;
+    if (remaining > 0) {
+      toast.show(`未ピックの商品が ${remaining} 件あります。すべてピック済にしてから完了してください`, "error");
+      return;
+    }
+    setMode("inspection");
+    toast.show("ピッキング完了。検品モードに切り替えました", "success");
+  };
+
+  const downloadItems = () => {
+    downloadCsv(
+      `受注明細_${orderNumber || "未指定"}`,
+      ["no", "商品名", "商品コード", "受注数", "検品済", "ロケーション"],
+      items.map((i) => [i.no, i.name, i.code, i.qty, i.scanned, i.location]),
+      { delimiter: format === "tsv" ? "\t" : "," },
+    );
+    toast.show(`受注明細 ${items.length} 件を${format.toUpperCase()}でダウンロードしました`, "success");
+  };
 
   return (
     <div className="space-y-5">
@@ -65,7 +113,7 @@ export default function InspectionPage() {
             />
           </div>
           <div className="flex items-end">
-            <button className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
+            <button onClick={loadOrder} className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
               <ScanBarcode className="h-4 w-4" />読込
             </button>
           </div>
@@ -81,7 +129,7 @@ export default function InspectionPage() {
               <p className="text-xs text-gray-500 mt-0.5">伝票番号 【{orderNumber}】 の受注伝票を開く ↗</p>
             </div>
             <div className="flex items-center gap-3 text-xs">
-              <span className="text-gray-500">データ件数: {inspectionItems.length}件</span>
+              <span className="text-gray-500">データ件数: {items.length}件</span>
               <div className="flex gap-1">
                 <span className="text-gray-500">形式:</span>
                 <label className="flex items-center gap-1 cursor-pointer">
@@ -93,7 +141,7 @@ export default function InspectionPage() {
                   <span>TSV</span>
                 </label>
               </div>
-              <button className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80">
+              <button onClick={downloadItems} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80">
                 <Download className="h-3 w-3" />ダウンロード
               </button>
             </div>
@@ -112,10 +160,11 @@ export default function InspectionPage() {
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">受注数</th>
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">検品済</th>
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">状態</th>
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500">操作</th>
               </tr>
             </thead>
             <tbody>
-              {inspectionItems.map(i => (
+              {items.map(i => (
                 <tr key={i.no} className="border-t border-white/30 hover:bg-white/40">
                   <td className="px-3 py-2.5 text-center text-gray-500">{i.no}</td>
                   <td className="px-3 py-2.5 text-center">
@@ -134,6 +183,20 @@ export default function InspectionPage() {
                       <span className="text-xs text-yellow-600">{i.scanned}/{i.qty}</span>
                     )}
                   </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <button
+                      onClick={() => scanItem(i.no)}
+                      disabled={i.scanned >= i.qty}
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all",
+                        i.scanned >= i.qty
+                          ? "bg-gray-200/60 text-gray-400 cursor-not-allowed"
+                          : "bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
+                      )}
+                    >
+                      <ScanBarcode className="h-3.5 w-3.5" />スキャン
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -147,7 +210,7 @@ export default function InspectionPage() {
             </div>
 
             <div className="space-y-2">
-              {[...inspectionItems].sort((a, b) => a.location.localeCompare(b.location)).map((i, idx) => (
+              {[...items].sort((a, b) => a.location.localeCompare(b.location)).map((i, idx) => (
                 <div key={i.no} className="flex items-center gap-3 p-3 rounded-xl bg-white/50 border border-white/50 hover:bg-white/70 transition-colors">
                   <div className="h-9 w-9 rounded-full bg-blue-500/15 flex items-center justify-center text-blue-600 font-bold text-sm">
                     {idx + 1}
@@ -164,16 +227,24 @@ export default function InspectionPage() {
                     <p className="text-xs text-gray-500">ピッキング数</p>
                     <p className="text-lg font-bold text-gray-800">{i.qty}<span className="text-sm font-normal text-gray-500">個</span></p>
                   </div>
-                  <button className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25">
-                    <Check className="h-3.5 w-3.5 inline mr-1" />ピック済
+                  <button
+                    onClick={() => togglePicked(i.no)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                      pickedNos.has(i.no)
+                        ? "bg-emerald-500/80 text-white border border-emerald-400/50 hover:bg-emerald-500/90"
+                        : "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25"
+                    )}
+                  >
+                    <Check className="h-3.5 w-3.5 inline mr-1" />{pickedNos.has(i.no) ? "ピック済" : "ピック"}
                   </button>
                 </div>
               ))}
             </div>
 
             <div className="flex justify-between items-center pt-2">
-              <p className="text-xs text-gray-500">総ピック数: {inspectionItems.reduce((s, i) => s + i.qty, 0)}個</p>
-              <button className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
+              <p className="text-xs text-gray-500">総ピック数: {items.reduce((s, i) => s + i.qty, 0)}個 ／ ピック済 {pickedNos.size}/{items.length} 商品</p>
+              <button onClick={finishPicking} className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90">
                 ピッキング完了 → 検品へ
               </button>
             </div>

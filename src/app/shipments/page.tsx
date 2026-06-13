@@ -108,6 +108,26 @@ export default function ShipmentsPage() {
     });
   }, [items, activeTab, keyword, carrierFilter, shipDateFilter]);
 
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+
+  // フィルター・タブ変更で結果セットが変わったら 1 ページ目に戻す。
+  // effect ではなくレンダー中に直前のフィルターキーと比較して補正する
+  // （React 推奨パターン: setState-in-effect の連鎖レンダーを避ける）。
+  const filterKey = `${activeTab}|${keyword}|${carrierFilter}|${shipDateFilter}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(1);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = useMemo(
+    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filtered, safePage],
+  );
+
   const countByStatus = useMemo(() => {
     const map = new Map<ShipmentStatus, number>();
     for (const status of SHIPMENT_STATUSES) map.set(status, 0);
@@ -458,7 +478,7 @@ export default function ShipmentsPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s) => {
+              {paged.map((s) => {
                 const c = carrierIcon[s.carrier];
                 return (
                   <tr
@@ -556,11 +576,28 @@ export default function ShipmentsPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-500">{filtered.length} 件 / 全 {items.length} 件</span>
+            <span className="text-sm text-gray-500">{safePage} / {totalPages} ページ</span>
             <div className="flex gap-1">
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-400">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className={cn(
+                  "p-1.5 rounded-lg bg-white/50 border border-white/40 transition-colors",
+                  safePage <= 1 ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-white/70",
+                )}
+                title="前のページ"
+              >
                 <ChevronLeft className="h-4 w-4" />
               </button>
-              <button className="p-1.5 rounded-lg bg-white/50 border border-white/40 text-gray-600 hover:bg-white/70 transition-colors">
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className={cn(
+                  "p-1.5 rounded-lg bg-white/50 border border-white/40 transition-colors",
+                  safePage >= totalPages ? "text-gray-300 cursor-not-allowed" : "text-gray-600 hover:bg-white/70",
+                )}
+                title="次のページ"
+              >
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
