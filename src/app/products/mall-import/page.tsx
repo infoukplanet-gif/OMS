@@ -5,6 +5,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { Upload, Download, Store, CheckCircle2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
+import { DetailModal } from "@/components/ui/detail-modal";
 
 type Mall = {
   key: string;
@@ -53,6 +54,7 @@ const initialHistory: ImportHistory[] = [
 
 export default function MallImportPage() {
   const toast = useToast();
+  const [detailRow, setDetailRow] = useState<ImportHistory | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [selectedMall, setSelectedMall] = useState<string>("rakuten");
   const [file, setFile] = useState<File | null>(null);
@@ -232,7 +234,7 @@ export default function MallImportPage() {
                   <td className="py-2 px-2 text-right">
                     <button
                       type="button"
-                      onClick={() => toast.show(`${h.filename} の詳細を表示`, "info")}
+                      onClick={() => setDetailRow(h)}
                       className="text-xs text-blue-600 hover:underline"
                     >
                       詳細
@@ -244,6 +246,25 @@ export default function MallImportPage() {
           </table>
         </div>
       </GlassCard>
+
+      <DetailModal
+        open={detailRow !== null}
+        title="モール取込履歴の詳細"
+        subtitle={detailRow?.filename}
+        rows={
+          detailRow
+            ? [
+                { label: "実行日時", value: detailRow.at },
+                { label: "モール", value: detailRow.mall },
+                { label: "ファイル名", value: detailRow.filename, mono: true },
+                { label: "総行数", value: `${detailRow.rows} 件` },
+                { label: "成功", value: `${detailRow.success} 件`, tone: "success" },
+                { label: "エラー", value: `${detailRow.error} 件`, tone: detailRow.error > 0 ? "danger" : "default" },
+              ]
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }

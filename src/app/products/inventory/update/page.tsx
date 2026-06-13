@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Upload, Cloud, Database, History, AlertCircle, CheckCircle2, FileSpreadsheet } from "lucide-react";
+import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
 type HistoryItem = {
   id: string;
@@ -35,6 +36,7 @@ const RB: Record<HistoryItem["result"], string> = {
 
 export default function InventoryUpdatePage() {
   const toast = useToast();
+  const [detailRow, setDetailRow] = useState<HistoryItem | null>(null);
   const [scope, setScope] = useState("全倉庫");
   const [direction, setDirection] = useState<"both" | "in" | "out">("both");
   const [dryRun, setDryRun] = useState(false);
@@ -201,7 +203,7 @@ export default function InventoryUpdatePage() {
                   </td>
                   <td className="px-3 py-2 text-center">
                     <button
-                      onClick={() => toast.show(`${h.id} の詳細ログを表示`)}
+                      onClick={() => setDetailRow(h)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                     >
                       ログ
@@ -213,6 +215,37 @@ export default function InventoryUpdatePage() {
           </table>
         </div>
       </GlassCard>
+
+      <DetailModal
+        open={detailRow !== null}
+        title="在庫更新ログの詳細"
+        subtitle={detailRow?.id}
+        rows={
+          detailRow
+            ? ([
+                { label: "ジョブID", value: detailRow.id, mono: true },
+                { label: "種別", value: detailRow.type },
+                { label: "対象", value: detailRow.target },
+                { label: "開始", value: detailRow.started },
+                { label: "終了", value: detailRow.ended },
+                { label: "更新/対象", value: `${detailRow.updated} / ${detailRow.total} 件` },
+                {
+                  label: "結果",
+                  value: detailRow.result,
+                  tone:
+                    detailRow.result === "成功"
+                      ? "success"
+                      : detailRow.result === "部分成功"
+                        ? "warning"
+                        : detailRow.result === "失敗"
+                          ? "danger"
+                          : "default",
+                },
+              ] satisfies DetailRow[])
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }

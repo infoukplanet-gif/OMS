@@ -105,12 +105,39 @@ export default function CustomerAutoCreatePage() {
   const [logEnabled, setLogEnabled] = useState(true);
   const [duplicateAction, setDuplicateAction] = useState<DuplicateAction>("merge");
   const [defaultRank, setDefaultRank] = useState("一般");
+  const [logs, setLogs] = useState<ExecutionLog[]>(executionLogs);
+  const [reloading, setReloading] = useState(false);
 
   const totals = {
     created: sourceRules.reduce((s, r) => s + r.createdThisMonth, 0),
     merged: sourceRules.reduce((s, r) => s + r.mergedThisMonth, 0),
-    skipped: executionLogs.reduce((s, l) => s + l.skipped, 0),
+    skipped: logs.reduce((s, l) => s + l.skipped, 0),
   };
+
+  function reloadLogs() {
+    setReloading(true);
+    setTimeout(() => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      const enabledSources = sourceRules.filter((r) => r.enabled);
+      const src = enabledSources.length > 0 ? enabledSources[logs.length % enabledSources.length] : null;
+      const created = src ? Math.max(0, (src.createdThisMonth % 9)) : 0;
+      const merged = src ? src.mergedThisMonth % 4 : 0;
+      const fresh: ExecutionLog = {
+        id: Math.max(0, ...logs.map((l) => l.id)) + 1,
+        at,
+        trigger: src ? `${src.source}${src.trigger}（手動再取得）` : "手動再取得",
+        created,
+        merged,
+        skipped: 0,
+        status: "success",
+      };
+      setLogs((prev) => [fresh, ...prev]);
+      setReloading(false);
+      toast.show(`実行履歴を再読み込みしました（新規 ${created} 件 / 統合 ${merged} 件）`, "success");
+    }, 900);
+  }
 
   function setProcessStatus(id: string, status: Status) {
     setProcesses((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
@@ -340,10 +367,11 @@ export default function CustomerAutoCreatePage() {
           </div>
           <button
             type="button"
-            onClick={() => toast.show("実行履歴を再読み込みしました")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/70 border border-white/60 text-gray-700 hover:bg-white/90"
+            onClick={reloadLogs}
+            disabled={reloading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-white/70 border border-white/60 text-gray-700 hover:bg-white/90 disabled:opacity-50"
           >
-            <RefreshCw className="h-3.5 w-3.5" />更新
+            <RefreshCw className={cn("h-3.5 w-3.5", reloading && "animate-spin")} />{reloading ? "取得中…" : "更新"}
           </button>
         </div>
         <div className="overflow-x-auto">
@@ -360,7 +388,7 @@ export default function CustomerAutoCreatePage() {
               </tr>
             </thead>
             <tbody>
-              {executionLogs.map((l) => (
+              {logs.map((l) => (
                 <tr key={l.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{l.at}</td>
                   <td className="py-2 px-2 text-gray-700">{l.trigger}</td>

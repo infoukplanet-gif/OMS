@@ -13,6 +13,7 @@ import {
 } from "@/lib/calculations/product-auto-create";
 import { getProductAutoCreateSettings } from "@/lib/products/auto-create-settings";
 import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
+import { DetailModal } from "@/components/ui/detail-modal";
 
 /**
  * 取込テンプレート名から入手元（source）を推定する。
@@ -103,6 +104,7 @@ const initialOrderHistory: OrderImportHistory[] = [
 
 export default function ImportPage() {
   const toast = useToast();
+  const [detailRow, setDetailRow] = useState<OrderImportHistory | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState(1);
@@ -468,7 +470,7 @@ export default function ImportPage() {
                   <td className="py-2 px-2 text-right">
                     <button
                       type="button"
-                      onClick={() => toast.show(`${h.filename} の詳細を表示`, "info")}
+                      onClick={() => setDetailRow(h)}
                       className="text-xs text-blue-600 hover:underline"
                     >
                       詳細
@@ -480,6 +482,27 @@ export default function ImportPage() {
           </table>
         </div>
       </GlassCard>
+
+      <DetailModal
+        open={detailRow !== null}
+        title="受注取込履歴の詳細"
+        subtitle={detailRow?.filename}
+        rows={
+          detailRow
+            ? [
+                { label: "実行日時", value: detailRow.at },
+                { label: "ファイル名", value: detailRow.filename, mono: true },
+                { label: "テンプレート", value: detailRow.template },
+                { label: "総行数", value: `${detailRow.rows} 件` },
+                { label: "成功", value: `${detailRow.success} 件`, tone: "success" },
+                { label: "警告", value: `${detailRow.warning} 件`, tone: detailRow.warning > 0 ? "warning" : "default" },
+                { label: "エラー", value: `${detailRow.error} 件`, tone: detailRow.error > 0 ? "danger" : "default" },
+                { label: "実行者", value: detailRow.user },
+              ]
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }
