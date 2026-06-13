@@ -4,7 +4,7 @@ import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
-import { Save, Key, Shield, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Save, Key, Shield, RefreshCw, CheckCircle2, Loader2 } from "lucide-react";
 
 export default function NpConnectPage() {
   const toast = useToast();
@@ -16,6 +16,42 @@ export default function NpConnectPage() {
   const [autoNotifyMethod, setAutoNotifyMethod] = useState(true);
   const [autoSwitchOnNg, setAutoSwitchOnNg] = useState(false);
   const [creditLimit, setCreditLimit] = useState(55000);
+  const [testing, setTesting] = useState(false);
+  const [lastTested, setLastTested] = useState("2026-04-25 09:24（成功）");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function handleConnectionTest() {
+    if (testing) return;
+    if (!merchantId.trim() || !endpoint.trim()) {
+      toast.show("マーチャントIDとエンドポイントURLを入力してください", "error");
+      return;
+    }
+    setTesting(true);
+    setTimeout(() => {
+      const now = new Date();
+      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}（成功）`;
+      setLastTested(ts);
+      setTesting(false);
+      toast.show("接続テストを実行しました（成功）", "success");
+    }, 1200);
+  }
+
+  function handleSave() {
+    if (saving) return;
+    if (!merchantId.trim()) {
+      toast.show("マーチャントIDは必須です", "error");
+      return;
+    }
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("NPコネクト設定を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 1000);
+  }
 
   return (
     <div className="space-y-5">
@@ -29,15 +65,17 @@ export default function NpConnectPage() {
             </HelpHint>
           </div>
           <p className="text-sm text-gray-500 mt-1">
-            最終接続テスト: <span className="font-semibold text-emerald-700">2026-04-25 09:24（成功）</span>
+            最終接続テスト: <span className="font-semibold text-emerald-700">{lastTested}</span>
           </p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => toast.show("接続テストを実行しました（成功）", "success")} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
-            <RefreshCw className="h-4 w-4" />接続テスト
+          <button onClick={handleConnectionTest} disabled={testing} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 disabled:opacity-60">
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {testing ? "確認中..." : "接続テスト"}
           </button>
-          <PrimaryButton onClick={() => toast.show("NPコネクト設定を保存しました", "success")}>
-            <Save className="h-4 w-4" />保存
+          <PrimaryButton onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+            {saving ? "保存中..." : saved ? "保存済" : "保存"}
           </PrimaryButton>
         </div>
       </div>

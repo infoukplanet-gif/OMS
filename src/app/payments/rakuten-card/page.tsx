@@ -34,6 +34,17 @@ export default function RakutenCardPage() {
   const [rows, setRows] = useState<Auth[]>(INITIAL);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("売上確定待ちのみ");
+  const [syncing, setSyncing] = useState(false);
+
+  const resync = () => {
+    if (syncing) return;
+    setSyncing(true);
+    toast.show("楽天RMSから最新オーソリを取得中…", "info");
+    setTimeout(() => {
+      setSyncing(false);
+      toast.show("RMS再同期が完了しました（新規オーソリ 0件）", "success");
+    }, 1200);
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -107,8 +118,8 @@ export default function RakutenCardPage() {
               {["売上確定待ちのみ", "すべて", "売上確定待ち", "売上確定済", "オーソリ期限切れ", "失敗"].map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <button onClick={() => toast.show("楽天RMSから最新オーソリを取得中…")} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
-            <RefreshCw className="h-4 w-4" />RMS再同期
+          <button onClick={resync} disabled={syncing} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 disabled:opacity-60">
+            <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />{syncing ? "同期中…" : "RMS再同期"}
           </button>
         </div>
       </GlassCard>
