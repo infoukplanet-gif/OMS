@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Save, Calendar, Truck, Package, Clock } from "lucide-react";
+import { Save, Calendar, Truck, Package, Clock, Loader2, CheckCircle2 } from "lucide-react";
 
 type Holiday = { date: string; label: string };
 
@@ -29,8 +29,19 @@ export default function ShipmentsAvailabilityPage() {
     { date: "2026-08-15", label: "夏季休業" },
   ]);
 
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
   const handleSave = () => {
-    toast.show("出荷可能設定を保存しました", "success");
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("出荷可能設定を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 800);
   };
 
   const toggleRestDay = (d: typeof restDays[number]) => {
@@ -52,8 +63,9 @@ export default function ShipmentsAvailabilityPage() {
             在庫引当ルール・締切時刻・休業カレンダーを一括管理します。
           </p>
         </div>
-        <PrimaryButton onClick={handleSave}>
-          <Save className="h-4 w-4" />設定を保存
+        <PrimaryButton onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          {saving ? "保存中…" : saved ? "保存済" : "設定を保存"}
         </PrimaryButton>
       </div>
 
