@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { purchaseOrderDownload } from "@/lib/export/download-rows";
 
 export default function PurchasingOrderDownloadPage() {
   return (
@@ -20,7 +21,8 @@ export default function PurchasingOrderDownloadPage() {
         { label: "今月の本日DL", value: "12", unit: "回" },
         { label: "未印刷", value: "6", unit: "件" },
       ]}
-      exampleColumns={["発注番号","発注日","仕入先名","担当者","品目数","小計","税額","合計","入荷予定日","支払期日","備考"]}
+      exampleColumns={purchaseOrderDownload.columns}
+      buildRows={purchaseOrderDownload.buildRows}
       schedules={[
         { id: 1, name: "経理向け月次サマリー", schedule: "毎月1日 09:00", format: "Excel（経理用集計）", recipients: "accounting@example.com", enabled: true },
       ]}

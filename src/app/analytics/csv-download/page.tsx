@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { analyticsCsvDownload } from "@/lib/export/download-rows";
 
 export default function AnalyticsCsvDownloadPage() {
   return (
@@ -44,10 +45,8 @@ export default function AnalyticsCsvDownloadPage() {
           options: ["すべて", "アパレル", "雑貨", "食品", "コスメ", "家電"],
         },
       ]}
-      exampleColumns={[
-        "日付", "店舗", "チャネル", "商品コード", "商品名", "カテゴリ",
-        "数量", "売上金額", "原価", "粗利", "粗利率", "返品数", "決済方法", "顧客区分",
-      ]}
+      exampleColumns={analyticsCsvDownload.columns}
+      buildRows={analyticsCsvDownload.buildRows}
       schedules={[
         { id: 1, name: "毎月1日 売上日次サマリ", schedule: "毎月1日 02:00", format: "Excel (xlsx)", recipients: "ops@example.com, finance@example.com", enabled: true },
         { id: 2, name: "毎週月曜 商品別売上", schedule: "毎週月曜 06:00", format: "CSV", recipients: "merchandiser@example.com", enabled: true },
