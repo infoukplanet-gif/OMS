@@ -93,12 +93,28 @@ export function ProductForm({ mode, productCode }: ProductFormProps) {
     router.push("/products");
   };
 
+  const handleDelete = () => {
+    const targetCode = existing?.code ?? productCode ?? code.trim();
+    if (!targetCode) {
+      toast.show("削除対象の商品コードが特定できません", "error");
+      return;
+    }
+    const targetName = existing?.name ?? (name.trim() || targetCode);
+    if (!window.confirm(`${targetName}（${targetCode}）を商品マスタから削除します。よろしいですか？`)) return;
+    if (!productStore.remove(targetCode)) {
+      toast.show(`商品コード ${targetCode} はマスタに見つかりませんでした`, "error");
+      return;
+    }
+    toast.show(`${targetName}（${targetCode}）を削除しました`, "success");
+    router.push("/products");
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">{isEdit ? "商品編集" : "商品登録"}</h1>
         <div className="flex gap-2">
-          {isEdit && <button className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">削除</button>}
+          {isEdit && <button onClick={handleDelete} className="px-4 py-2 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">削除</button>}
           <button
             onClick={() => router.push("/products")}
             className="px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
@@ -387,9 +403,9 @@ export function ProductForm({ mode, productCode }: ProductFormProps) {
       </GlassCard>
 
       <div className="flex justify-end gap-2 pt-2">
-        {isEdit && <button className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">削除</button>}
-        <button className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">キャンセル</button>
-        <button className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all">{isEdit ? "更新" : "保存"}</button>
+        {isEdit && <button onClick={handleDelete} className="px-5 py-2.5 rounded-xl text-sm bg-red-500/15 border border-red-500/30 text-red-700 hover:bg-red-500/25 transition-all">削除</button>}
+        <button onClick={() => router.push("/products")} className="px-5 py-2.5 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">キャンセル</button>
+        <button onClick={handleSave} className="px-5 py-2.5 rounded-xl text-sm font-medium bg-blue-500/80 border border-blue-400/50 text-white hover:bg-blue-500/90 transition-all">{isEdit ? "更新" : "保存"}</button>
       </div>
     </div>
   );

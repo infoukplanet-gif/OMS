@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { cn } from "@/lib/utils";
-import { AlertCircle, HelpCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useToast } from "@/components/ui/interactive";
+import { HelpHint } from "@/components/ui/help-hint";
 import {
   setAutoMailEnabled,
   resetAutoMailEnabled,
@@ -188,9 +189,7 @@ export default function AutomationPage() {
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-gray-800">{a.name}</p>
-                  <button className="text-gray-400 hover:text-blue-500 transition-colors">
-                    <HelpCircle className="h-3.5 w-3.5" />
-                  </button>
+                  <HelpHint side="right">{a.desc}</HelpHint>
                   {a.warning && <span className="px-1.5 py-0.5 rounded text-[10px] bg-yellow-500/15 text-yellow-700 font-medium">注意</span>}
                   {a.key === "mail-compose" && (
                     <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/15 text-blue-700 font-medium">v1 mail-trigger 連動</span>
