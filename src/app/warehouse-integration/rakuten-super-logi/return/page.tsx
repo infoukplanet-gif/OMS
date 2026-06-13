@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Eye, Plus, Search, Undo2, X } from "lucide-react";
+import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
 type Return = {
   id: string;
@@ -59,6 +60,7 @@ export default function RsrLogiReturnPage() {
   const [items, setItems] = useState(data);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewReturnForm>(EMPTY_RETURN_FORM);
+  const [detailRow, setDetailRow] = useState<Return | null>(null);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -207,7 +209,7 @@ export default function RsrLogiReturnPage() {
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => toast.show(`${d.id} の詳細を表示します`, "info")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="詳細">
+                  <button onClick={() => setDetailRow(d)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="詳細">
                     <Eye className="h-3.5 w-3.5" />
                   </button>
                 </td>
@@ -269,6 +271,53 @@ export default function RsrLogiReturnPage() {
           </div>
         </div>
       )}
+
+      <DetailModal
+        open={detailRow !== null}
+        title="返品明細の詳細"
+        subtitle={detailRow?.id}
+        rows={
+          detailRow
+            ? ([
+                { label: "返品ID", value: detailRow.id, mono: true },
+                { label: "受注番号", value: detailRow.orderNo, mono: true },
+                { label: "顧客", value: detailRow.customer },
+                { label: "商品", value: detailRow.product },
+                { label: "数量", value: `${detailRow.qty} 個` },
+                { label: "返品理由", value: detailRow.reason },
+                { label: "RSL受領", value: detailRow.receivedAt },
+                { label: "検品日時", value: detailRow.inspectedAt },
+                {
+                  label: "検品結果",
+                  value: detailRow.result,
+                  tone:
+                    detailRow.result === "再販可"
+                      ? "success"
+                      : detailRow.result === "不良在庫"
+                        ? "warning"
+                        : detailRow.result === "廃棄"
+                          ? "danger"
+                          : "default",
+                },
+                { label: "返金額", value: `¥${detailRow.refund.toLocaleString()}`, tone: "danger" },
+                { label: "送り状番号", value: detailRow.trackingNo, mono: true },
+                {
+                  label: "状態",
+                  value: detailRow.status,
+                  tone:
+                    detailRow.status === "在庫戻し済"
+                      ? "success"
+                      : detailRow.status === "廃棄処理済"
+                        ? "danger"
+                        : detailRow.status === "検品中" || detailRow.status === "RSL受領"
+                          ? "warning"
+                          : "default",
+                },
+              ] satisfies DetailRow[])
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }

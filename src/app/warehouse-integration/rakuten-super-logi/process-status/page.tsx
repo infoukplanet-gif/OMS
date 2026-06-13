@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Clock, RefreshCw, Search } from "lucide-react";
+import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
 type ProcessLog = {
   id: string;
@@ -54,6 +55,7 @@ export default function RsrLogiProcessStatusPage() {
   const [items, setItems] = useState(data);
   const [lastChecked, setLastChecked] = useState("10:08");
   const [refreshing, setRefreshing] = useState(false);
+  const [detailRow, setDetailRow] = useState<ProcessLog | null>(null);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -230,7 +232,7 @@ export default function RsrLogiProcessStatusPage() {
                   ) : d.status === "実行中" ? (
                     <span className="text-xs text-blue-600 flex items-center gap-1"><Clock className="h-3 w-3" />実行中</span>
                   ) : (
-                    <button onClick={() => toast.show(`${d.id} の詳細を表示します`, "info")} className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25">
+                    <button onClick={() => setDetailRow(d)} className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25">
                       詳細
                     </button>
                   )}
@@ -240,6 +242,44 @@ export default function RsrLogiProcessStatusPage() {
           </tbody>
         </table>
       </GlassCard>
+
+      <DetailModal
+        open={detailRow !== null}
+        title="処理ジョブの詳細"
+        subtitle={detailRow?.job}
+        rows={
+          detailRow
+            ? ([
+                { label: "ジョブID", value: detailRow.id, mono: true },
+                { label: "ジョブ名", value: detailRow.job },
+                { label: "種別", value: detailRow.type },
+                { label: "開始", value: detailRow.startAt },
+                { label: "終了", value: detailRow.endAt },
+                { label: "所要時間", value: detailRow.duration },
+                { label: "処理件数", value: `${detailRow.done} / ${detailRow.total}` },
+                {
+                  label: "失敗件数",
+                  value: detailRow.failed,
+                  tone: detailRow.failed > 0 ? "danger" : "default",
+                },
+                {
+                  label: "状態",
+                  value: detailRow.status,
+                  tone:
+                    detailRow.status === "完了"
+                      ? "success"
+                      : detailRow.status === "失敗"
+                        ? "danger"
+                        : detailRow.status === "実行中"
+                          ? "warning"
+                          : "default",
+                },
+                { label: "詳細", value: detailRow.detail },
+              ] satisfies DetailRow[])
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { ArrowRightLeft, Plus, Search, History } from "lucide-react";
+import { ArrowRightLeft, Plus, Search, History, X } from "lucide-react";
 
 type Row = {
   id: string;
@@ -26,6 +26,30 @@ const INITIAL: Row[] = [
   { id: "DT-004", order: "ORD-2026-00829", product: "ワイヤレスイヤホン Pro", sku: "WEP-001", qty: 3, reason: "充電不良", from: "九州物流センター", to: "メーカー返却", status: "振替待ち" },
 ];
 
+const REASONS = ["検品不良", "配送中破損", "色違い", "充電不良", "サイズ不良", "初期不良"];
+const FROM_WAREHOUSES = ["東京本社倉庫", "大阪倉庫", "九州物流センター"];
+const TO_DESTINATIONS = ["返品倉庫", "メーカー返却", "廃棄処分", "アウトレット移管"];
+
+type TransferForm = {
+  order: string;
+  product: string;
+  sku: string;
+  qty: number;
+  reason: string;
+  from: string;
+  to: string;
+};
+
+const EMPTY_FORM: TransferForm = {
+  order: "",
+  product: "",
+  sku: "",
+  qty: 1,
+  reason: REASONS[0],
+  from: FROM_WAREHOUSES[0],
+  to: TO_DESTINATIONS[0],
+};
+
 const HISTORY = [
   { id: 1, at: "2026-04-25 14:32", who: "佐藤 健", action: "振替完了", target: "DT-002 スニーカー × 1", from: "東京本社倉庫", to: "返品倉庫" },
   { id: 2, at: "2026-04-25 11:18", who: "鈴木 美咲", action: "振替登録", target: "DT-004 ワイヤレスイヤホン × 3", from: "九州物流センター", to: "メーカー返却" },
@@ -38,6 +62,8 @@ export default function ShipmentsDefectiveTransferPage() {
   const [rows, setRows] = useState<Row[]>(INITIAL);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("すべて");
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState<TransferForm>(EMPTY_FORM);
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -51,6 +77,40 @@ export default function ShipmentsDefectiveTransferPage() {
   const execute = (id: string) => {
     setRows(rows.map((r) => (r.id === id ? { ...r, status: "振替完了" } : r)));
     toast.show(`${id} の振替を実行しました`, "success");
+  };
+
+  const openModal = () => {
+    setForm(EMPTY_FORM);
+    setShowModal(true);
+  };
+
+  const submitTransfer = () => {
+    if (!form.order.trim() || !form.product.trim() || !form.sku.trim()) {
+      toast.show("受注番号・商品名・SKU は必須です", "error");
+      return;
+    }
+    if (form.qty < 1) {
+      toast.show("数量は1以上で入力してください", "error");
+      return;
+    }
+    const nextNo = rows.reduce((max, r) => {
+      const n = Number(r.id.replace("DT-", ""));
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0) + 1;
+    const newRow: Row = {
+      id: `DT-${String(nextNo).padStart(3, "0")}`,
+      order: form.order.trim(),
+      product: form.product.trim(),
+      sku: form.sku.trim(),
+      qty: form.qty,
+      reason: form.reason,
+      from: form.from,
+      to: form.to,
+      status: "承認待ち",
+    };
+    setRows([newRow, ...rows]);
+    setShowModal(false);
+    toast.show(`${newRow.id} を振替登録しました（承認待ち）`, "success");
   };
 
   const stats = {
@@ -76,7 +136,7 @@ export default function ShipmentsDefectiveTransferPage() {
             <span className="font-semibold text-blue-700">{stats.pendingApproval}件</span>
           </p>
         </div>
-        <PrimaryButton onClick={() => toast.show("新規振替登録モーダルを開きました")}>
+        <PrimaryButton onClick={openModal}>
           <Plus className="h-4 w-4" />新規振替登録
         </PrimaryButton>
       </div>
@@ -205,6 +265,108 @@ export default function ShipmentsDefectiveTransferPage() {
           </table>
         </div>
       </GlassCard>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm" onClick={() => setShowModal(false)}>
+          <div
+            className="w-full max-w-lg rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-800">新規振替登録</h2>
+              <button onClick={() => setShowModal(false)} className="p-1.5 rounded-lg hover:bg-white/60 text-gray-400" title="閉じる">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">受注番号 <span className="text-rose-500">*</span></label>
+                  <input
+                    value={form.order}
+                    onChange={(e) => setForm({ ...form, order: e.target.value })}
+                    placeholder="ORD-2026-00000"
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">SKU <span className="text-rose-500">*</span></label>
+                  <input
+                    value={form.sku}
+                    onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                    placeholder="TS-WH-M"
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm font-mono bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">商品名 <span className="text-rose-500">*</span></label>
+                <input
+                  value={form.product}
+                  onChange={(e) => setForm({ ...form, product: e.target.value })}
+                  placeholder="Tシャツ ホワイト M"
+                  className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">数量</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.qty}
+                    onChange={(e) => setForm({ ...form, qty: Number(e.target.value) })}
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm tabular-nums bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">不良理由</label>
+                  <select
+                    value={form.reason}
+                    onChange={(e) => setForm({ ...form, reason: e.target.value })}
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  >
+                    {REASONS.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500">振替元</label>
+                  <select
+                    value={form.from}
+                    onChange={(e) => setForm({ ...form, from: e.target.value })}
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  >
+                    {FROM_WAREHOUSES.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">振替先</label>
+                  <select
+                    value={form.to}
+                    onChange={(e) => setForm({ ...form, to: e.target.value })}
+                    className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  >
+                    {TO_DESTINATIONS.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80"
+              >
+                キャンセル
+              </button>
+              <PrimaryButton onClick={submitTransfer}>
+                <Plus className="h-4 w-4" />登録する
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

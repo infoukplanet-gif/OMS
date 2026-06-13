@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Eye, Plus, Search, Truck, X } from "lucide-react";
+import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
 type Inbound = {
   id: string;
@@ -56,6 +57,7 @@ export default function RsrLogiInboundPage() {
   const [items, setItems] = useState(data);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewInboundForm>(EMPTY_FORM);
+  const [detailRow, setDetailRow] = useState<Inbound | null>(null);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -204,7 +206,7 @@ export default function RsrLogiInboundPage() {
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => toast.show(`${d.id} の詳細を表示します`, "info")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="詳細">
+                  <button onClick={() => setDetailRow(d)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="詳細">
                     <Eye className="h-3.5 w-3.5" />
                   </button>
                 </td>
@@ -283,6 +285,45 @@ export default function RsrLogiInboundPage() {
           </div>
         </div>
       )}
+
+      <DetailModal
+        open={detailRow !== null}
+        title="入荷明細の詳細"
+        subtitle={detailRow?.id}
+        rows={
+          detailRow
+            ? ([
+                { label: "入荷ID", value: detailRow.id, mono: true },
+                { label: "発注書", value: detailRow.poNo, mono: true },
+                { label: "仕入先", value: detailRow.supplier },
+                { label: "SKU数", value: `${detailRow.items} 件` },
+                { label: "数量", value: `${detailRow.qty.toLocaleString()} 個` },
+                { label: "予定日", value: detailRow.scheduled },
+                { label: "到着", value: detailRow.arrived },
+                { label: "配送業者", value: detailRow.carrier },
+                { label: "送り状番号", value: detailRow.trackingNo, mono: true },
+                {
+                  label: "差異",
+                  value: detailRow.diff !== 0 ? `${detailRow.diff} 個` : "なし",
+                  tone: detailRow.diff !== 0 ? "danger" : "default",
+                },
+                {
+                  label: "状態",
+                  value: detailRow.status,
+                  tone:
+                    detailRow.status === "完了"
+                      ? "success"
+                      : detailRow.status === "差異あり"
+                        ? "danger"
+                        : detailRow.status === "検品中" || detailRow.status === "RSL受入中"
+                          ? "warning"
+                          : "default",
+                },
+              ] satisfies DetailRow[])
+            : []
+        }
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }
