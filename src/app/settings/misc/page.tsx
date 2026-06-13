@@ -5,7 +5,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { setMiscSettings, resetMiscSettings } from "@/lib/settings/misc-settings";
+import { setMiscSettings } from "@/lib/settings/misc-settings";
+import { downloadCsv } from "@/lib/export/csv";
 
 type Toggle = { key: string; label: string; hint?: string; enabled: boolean };
 
@@ -58,8 +59,28 @@ export default function MiscSettingsPage() {
         </div>
         <div className="flex gap-2">
           <SecondaryButton onClick={() => {
-            resetMiscSettings();
-            toast.show("設定をエクスポートしました", "success");
+            const rows: [string, string][] = [
+              ...toggles.map((t): [string, string] => [t.label, t.enabled ? "有効" : "無効"]),
+              ["1ページあたりの表示件数", pageSize],
+              ["デフォルトソート順", sort],
+              ["金額表示区切り", thousands],
+              ["日付表示形式", dateFormat],
+              ["タイムゾーン", timezone],
+              ["表示言語", language],
+              ["通貨", currency],
+              ["UIテーマ", theme],
+              ["自動バックアップ時刻", backupTime],
+              ["バックアップ保管先", backupTarget],
+              ["受注データ保持期間（年）", orderRetention],
+              ["監査ログ保持期間（年）", logRetention],
+              ["削除データの完全消去日数", purgeDays],
+              ["システム管理者メール", adminEmail],
+              ["サポート電話番号", supportTel],
+              ["緊急連絡先", emergency],
+              ["会社コード", companyCode],
+            ];
+            downloadCsv("システム設定.csv", ["設定項目", "設定値"], rows);
+            toast.show(`システム設定（${rows.length}項目）をエクスポートしました`, "success");
           }}>エクスポート</SecondaryButton>
           <PrimaryButton onClick={() => {
             const toggleMap = Object.fromEntries(toggles.map((t) => [t.key, t.enabled]));
