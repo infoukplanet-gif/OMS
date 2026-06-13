@@ -33,6 +33,31 @@ export default function YahooPaymentPage() {
   const [rows, setRows] = useState<Row[]>(INITIAL);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("未取込のみ");
+  const [syncing, setSyncing] = useState(false);
+
+  const resync = () => {
+    if (syncing) return;
+    setSyncing(true);
+    setTimeout(() => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const paidAt = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      const seq = String(rows.length + 1).padStart(3, "0");
+      const newRow: Row = {
+        id: `Y-${seq}`,
+        order: `ORD-2026-00${830 + rows.length}`,
+        customer: "新規取得顧客",
+        amount: 10000 + rows.length * 1500,
+        yahooStatus: "入金済",
+        paidAt,
+        ourStatus: "未取込",
+        selected: false,
+      };
+      setRows((prev) => [newRow, ...prev]);
+      setSyncing(false);
+      toast.show("Yahoo!ストアAPIから新規入金1件を取得しました", "success");
+    }, 1200);
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -103,8 +128,8 @@ export default function YahooPaymentPage() {
               {["未取込のみ", "差異ありのみ", "すべて"].map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <button onClick={() => toast.show("Yahoo!ストアAPIから最新を取得中…")} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
-            <RefreshCw className="h-4 w-4" />API再同期
+          <button onClick={resync} disabled={syncing} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 disabled:opacity-50">
+            <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />{syncing ? "同期中…" : "API再同期"}
           </button>
         </div>
       </GlassCard>

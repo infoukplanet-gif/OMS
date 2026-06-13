@@ -33,6 +33,34 @@ export default function YahooEasyPage() {
   const [rows, setRows] = useState<Row[]>(INITIAL);
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState("すべて");
+  const [syncing, setSyncing] = useState(false);
+
+  const resync = () => {
+    if (syncing) return;
+    setSyncing(true);
+    setTimeout(() => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      const ymd = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+      const seq = String(rows.length + 1).padStart(3, "0");
+      const methods = ["クレカ", "PayPay", "コンビニ", "ペイジー"] as const;
+      const newRow: Row = {
+        id: `YE-${seq}`,
+        order: `ORD-2026-00${826 + rows.length}`,
+        customer: "新規取得顧客",
+        amount: 8000 + rows.length * 1200,
+        method: methods[rows.length % methods.length],
+        paidAt: stamp,
+        yahooId: `YE-${ymd}-${seq}`,
+        ourStatus: "未取込",
+        selected: false,
+      };
+      setRows((prev) => [newRow, ...prev]);
+      setSyncing(false);
+      toast.show("Yahoo!かんたん決済APIから新規入金1件を取得しました", "success");
+    }, 1200);
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
@@ -101,8 +129,8 @@ export default function YahooEasyPage() {
               {["すべて", "クレカ", "PayPay", "コンビニ", "ペイジー"].map((o) => <option key={o}>{o}</option>)}
             </select>
           </div>
-          <button onClick={() => toast.show("Yahoo!かんたん決済APIから最新を取得中…")} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
-            <RefreshCw className="h-4 w-4" />API再同期
+          <button onClick={resync} disabled={syncing} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 disabled:opacity-50">
+            <RefreshCw className={cn("h-4 w-4", syncing && "animate-spin")} />{syncing ? "同期中…" : "API再同期"}
           </button>
         </div>
       </GlassCard>

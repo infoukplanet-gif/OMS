@@ -4,7 +4,7 @@ import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
-import { Save, Calculator, History } from "lucide-react";
+import { Save, Calculator, History, Loader2, CheckCircle2 } from "lucide-react";
 
 type Fee = {
   id: string;
@@ -38,9 +38,23 @@ const HISTORY = [
 export default function PaymentFeesPage() {
   const toast = useToast();
   const [fees, setFees] = useState<Fee[]>(INITIAL);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const update = <K extends keyof Fee>(id: string, key: K, value: Fee[K]) =>
     setFees(fees.map((f) => (f.id === id ? { ...f, [key]: value } : f)));
+
+  const handleSave = () => {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("手数料設定を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 800);
+  };
 
   return (
     <div className="space-y-5">
@@ -58,8 +72,9 @@ export default function PaymentFeesPage() {
             <span className="font-semibold text-emerald-700">{fees.filter((f) => f.active).length}件</span>
           </p>
         </div>
-        <PrimaryButton onClick={() => toast.show("手数料設定を保存しました", "success")}>
-          <Save className="h-4 w-4" />変更を保存
+        <PrimaryButton onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          {saving ? "保存中…" : saved ? "保存済" : "変更を保存"}
         </PrimaryButton>
       </div>
 
