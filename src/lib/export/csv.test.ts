@@ -35,4 +35,14 @@ describe("toCsv", () => {
     const csv = toCsv(["SKU", "数量"], [["A-1", 10]], "\n");
     expect(csv).toBe("SKU,数量\nA-1,10");
   });
+
+  it("delimiter にタブを指定すると TSV を生成する", () => {
+    const tsv = toCsv(["SKU", "数量"], [["A-1", 10]], "\r\n", "\t");
+    expect(tsv).toBe("SKU\t数量\r\nA-1\t10");
+  });
+
+  it("TSV ではタブを含む値をダブルクォートで囲み、カンマは囲まない", () => {
+    const tsv = toCsv(["名称"], [["前\t後"], ["ケーブル, 1m"]], "\r\n", "\t");
+    expect(tsv).toBe('名称\r\n"前\t後"\r\nケーブル, 1m');
+  });
 });

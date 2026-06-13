@@ -34,6 +34,8 @@ export interface ProductStore {
   findByCode(code: string): ProductRecord | undefined;
   /** code 一致なら上書き、無ければ追加。 */
   upsert(record: ProductRecord): UpsertResult;
+  /** code 一致のレコードを削除。削除したら true、見つからなければ false。 */
+  remove(code: string): boolean;
   /** 一覧全体を置換（初期同期用）。 */
   setItems(next: ReadonlyArray<ProductRecord>): void;
   subscribe(listener: () => void): () => void;
@@ -66,6 +68,14 @@ export function createProductStore(initial: ReadonlyArray<ProductRecord> = []): 
       items = [...items.slice(0, idx), { ...items[idx], ...record }, ...items.slice(idx + 1)];
       notify();
       return { created: false };
+    },
+
+    remove(code) {
+      const idx = items.findIndex((p) => p.code === code);
+      if (idx === -1) return false;
+      items = [...items.slice(0, idx), ...items.slice(idx + 1)];
+      notify();
+      return true;
     },
 
     setItems(next) {

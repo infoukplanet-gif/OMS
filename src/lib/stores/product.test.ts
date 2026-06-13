@@ -55,6 +55,25 @@ describe("createProductStore — 商品マスタ共有ストア", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  it("remove は code 一致のレコードを削除し true を返す", () => {
+    const store = createProductStore([product(), product({ code: "UCB-002" })]);
+    const listener = vi.fn();
+    store.subscribe(listener);
+    expect(store.remove("WEP-001")).toBe(true);
+    expect(store.getState()).toHaveLength(1);
+    expect(store.findByCode("WEP-001")).toBeUndefined();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("remove は存在しない code では false を返し通知しない", () => {
+    const store = createProductStore([product()]);
+    const listener = vi.fn();
+    store.subscribe(listener);
+    expect(store.remove("NOPE")).toBe(false);
+    expect(store.getState()).toHaveLength(1);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   it("setItems は台帳全体を置換し通知する", () => {
     const store = createProductStore([product()]);
     const listener = vi.fn();
