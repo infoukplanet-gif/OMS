@@ -5,7 +5,26 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Copy, Eye, Plus, Search } from "lucide-react";
+import { Copy, Eye, Plus, Search, X } from "lucide-react";
+
+const SAMPLE_VALUES: Record<string, string> = {
+  "{{shop_name}}": "OMSショップ",
+  "{{customer_name}}": "山田 太郎",
+  "{{order_id}}": "ORD-2026-00851",
+  "{{order_date}}": "2026/06/13",
+  "{{total_amount}}": "32,400",
+  "{{payment_method}}": "クレジットカード",
+  "{{payment_deadline}}": "2026/06/20",
+  "{{shipping_carrier}}": "ヤマト運輸",
+  "{{tracking_number}}": "4567-8901-2345",
+  "{{delivery_date}}": "2026/06/15",
+  "{{product_list}}": "オーガニックコットンTシャツ ×2",
+  "{{shipping_address}}": "東京都渋谷区〇〇1-2-3",
+};
+
+function applySampleValues(text: string): string {
+  return text.replace(/\{\{[a-z_]+\}\}/g, (m) => SAMPLE_VALUES[m] ?? m);
+}
 
 type Template = {
   id: string;
@@ -139,6 +158,14 @@ export default function MailAutoTemplatePage() {
   const [keyword, setKeyword] = useState("");
   const [filter, setFilter] = useState<"all" | "enabled" | "disabled">("all");
   const [activeId, setActiveId] = useState(initial[0].id);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  const saveTemplates = () => {
+    const now = new Date();
+    setSavedAt(`${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+    toast.show("テンプレートを保存しました", "success");
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -192,11 +219,12 @@ export default function MailAutoTemplatePage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">サンクスメール・出荷通知・入金催促・フォロー等のテンプレートを統合管理。</p>
         </div>
-        <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("プレビューを開きます", "info")}>
+        <div className="flex items-center gap-2">
+          {savedAt && <span className="text-xs text-emerald-700">保存済み {savedAt}</span>}
+          <SecondaryButton onClick={() => setPreviewOpen(true)}>
             <span className="inline-flex items-center gap-1.5"><Eye className="h-4 w-4" />プレビュー</span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("テンプレートを保存しました", "success")}>保存</PrimaryButton>
+          <PrimaryButton onClick={saveTemplates}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -324,6 +352,43 @@ export default function MailAutoTemplatePage() {
           </GlassCard>
         </div>
       </div>
+
+      {previewOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 backdrop-blur-sm p-4"
+          onClick={() => setPreviewOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white/90 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/50 sticky top-0 bg-white/80 backdrop-blur-xl">
+              <div className="flex items-center gap-2">
+                <Eye className="h-4 w-4 text-blue-600" />
+                <h2 className="text-sm font-semibold text-gray-800">プレビュー：{active.name}</h2>
+              </div>
+              <button onClick={() => setPreviewOpen(false)} className="p-1 rounded-lg hover:bg-white/60 text-gray-500">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-500">差込変数にサンプル値を当てはめた送信イメージです。</p>
+              <div className="space-y-1">
+                <span className="text-xs text-gray-500">件名</span>
+                <div className="px-3 py-2 rounded-xl bg-white/70 border border-white/60 text-sm font-medium text-gray-800">
+                  {applySampleValues(active.subject)}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs text-gray-500">本文</span>
+                <div className="px-4 py-3 rounded-xl bg-white/70 border border-white/60 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+                  {applySampleValues(active.body)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

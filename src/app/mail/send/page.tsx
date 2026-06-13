@@ -5,9 +5,23 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { AlertCircle, CheckCircle2, Clock, Pause, Play, RefreshCw, Search, Send } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Loader2, Pause, Play, RefreshCw, Search, Send } from "lucide-react";
 
-const queue = [
+type SendStatus = "送信中" | "待機中" | "送信完了" | "失敗";
+
+interface SendJob {
+  id: string;
+  trigger: string;
+  target: string;
+  template: string;
+  count: number;
+  status: SendStatus;
+  progress: number;
+  started: string;
+  finished: string;
+}
+
+const INITIAL_QUEUE: SendJob[] = [
   { id: "SND-20260430-0125", trigger: "受注確認", target: "新規受付", template: "サンクスメール", count: 12, status: "送信中", progress: 8, started: "2026/04/30 10:30", finished: "—" },
   { id: "SND-20260430-0124", trigger: "発送完了", target: "出荷済み", template: "出荷通知", count: 45, status: "待機中", progress: 0, started: "—", finished: "—" },
   { id: "SND-20260430-0123", trigger: "入金確認", target: "入金完了", template: "入金確認", count: 7, status: "送信完了", progress: 7, started: "2026/04/30 09:00", finished: "2026/04/30 09:03" },
@@ -32,17 +46,80 @@ const sb: Record<string, string> = {
   失敗: "bg-red-500/15 text-red-700",
 };
 
+const nowStamp = (): string => {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `2026/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 export default function MailSendPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [triggerFilter, setTriggerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [triggerList, setTriggerList] = useState(triggers);
+  const [queue, setQueue] = useState<SendJob[]>(INITIAL_QUEUE);
+  const [reloading, setReloading] = useState(false);
+  const [running, setRunning] = useState(false);
 
   const toggleTrigger = (name: string) => {
     setTriggerList((prev) => prev.map((t) => (t.name === name ? { ...t, autoSend: !t.autoSend } : t)));
     const target = triggerList.find((t) => t.name === name);
     if (target) toast.show(`「${name}」の自動送信を${target.autoSend ? "停止" : "有効化"}しました`, "success");
+  };
+
+  // 再読込: 送信中ジョブの進捗を取り込み、完了したものは送信完了へ繰り上げる
+  const reload = () => {
+    if (reloading) return;
+    setReloading(true);
+    setTimeout(() => {
+      setQueue((prev) =>
+        prev.map((q) => {
+          if (q.status !== "送信中") return q;
+          const next = Math.min(q.count, q.progress + Math.ceil(q.count / 3));
+          if (next >= q.count) {
+            return { ...q, progress: q.count, status: "送信完了", finished: nowStamp() };
+          }
+          return { ...q, progress: next };
+        })
+      );
+      setReloading(false);
+      toast.show("送信ジョブの最新状況を取り込みました", "info");
+    }, 900);
+  };
+
+  // 送信バッチ手動実行: 待機中ジョブを送信中に起動する
+  const runBatch = () => {
+    if (running) return;
+    const waiting = queue.filter((q) => q.status === "待機中");
+    if (waiting.length === 0) {
+      toast.show("起動できる待機中ジョブがありません", "info");
+      return;
+    }
+    setRunning(true);
+    setTimeout(() => {
+      setQueue((prev) =>
+        prev.map((q) => (q.status === "待機中" ? { ...q, status: "送信中", started: nowStamp() } : q))
+      );
+      setRunning(false);
+      toast.show(`${waiting.length}件の待機中ジョブを起動しました`, "success");
+    }, 1000);
+  };
+
+  // 行操作: 失敗→再送 / 待機中→即時実行 / 送信中→停止
+  const retryJob = (id: string) => {
+    setQueue((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, status: "送信中", progress: 0, started: nowStamp(), finished: "—" } : q))
+    );
+    toast.show(`${id} の失敗キューを再送します`, "info");
+  };
+  const runJob = (id: string) => {
+    setQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: "送信中", started: nowStamp() } : q)));
+    toast.show(`${id} を即時実行します`, "success");
+  };
+  const pauseJob = (id: string) => {
+    setQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: "待機中" } : q)));
+    toast.show(`${id} を一時停止しました`, "info");
   };
 
   const filtered = useMemo(() => {
@@ -53,7 +130,7 @@ export default function MailSendPage() {
       if (statusFilter !== "all" && q.status !== statusFilter) return false;
       return true;
     });
-  }, [keyword, triggerFilter, statusFilter]);
+  }, [queue, keyword, triggerFilter, statusFilter]);
 
   const kpis = [
     { label: "本日送信済", value: queue.filter((q) => q.status === "送信完了" && q.started.startsWith("2026/04/30")).reduce((s, q) => s + q.progress, 0), color: "text-emerald-600", hint: "本日処理した送信完了メールの累計件数" },
@@ -75,11 +152,17 @@ export default function MailSendPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("送信ジョブを再読込しました", "info")}>
-            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />再読込</span>
+          <SecondaryButton onClick={reload} disabled={reloading}>
+            <span className="inline-flex items-center gap-1.5">
+              {reloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {reloading ? "再読込中…" : "再読込"}
+            </span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("送信バッチを手動で実行します", "success")}>
-            <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />送信バッチ手動実行</span>
+          <PrimaryButton onClick={runBatch} disabled={running}>
+            <span className="inline-flex items-center gap-1.5">
+              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {running ? "実行中…" : "送信バッチ手動実行"}
+            </span>
           </PrimaryButton>
         </div>
       </div>
@@ -213,21 +296,21 @@ export default function MailSendPage() {
                 <td className="px-4 py-3 text-center">
                   {q.status === "失敗" ? (
                     <button
-                      onClick={() => toast.show(`${q.id} の失敗キューを再送します`, "info")}
+                      onClick={() => retryJob(q.id)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-orange-500/15 text-orange-700 hover:bg-orange-500/25 inline-flex items-center gap-1"
                     >
                       <RefreshCw className="h-3 w-3" />再送
                     </button>
                   ) : q.status === "待機中" ? (
                     <button
-                      onClick={() => toast.show(`${q.id} を即時実行します`, "success")}
+                      onClick={() => runJob(q.id)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center gap-1"
                     >
                       <Play className="h-3 w-3" />実行
                     </button>
                   ) : q.status === "送信中" ? (
                     <button
-                      onClick={() => toast.show(`${q.id} を一時停止しました`, "info")}
+                      onClick={() => pauseJob(q.id)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 inline-flex items-center gap-1"
                     >
                       <Pause className="h-3 w-3" />停止
