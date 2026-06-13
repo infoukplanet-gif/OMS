@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { statusDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsStatusDownloadPage() {
   return (
@@ -20,7 +21,8 @@ export default function ShipmentsStatusDownloadPage() {
         { label: "保留中", value: "8", unit: "件" },
         { label: "遅延中", value: "3", unit: "件" },
       ]}
-      exampleColumns={["受注番号","現ステータス","ステータス更新日時","受注日","出荷予定日","顧客名","倉庫","配送業者","追跡番号","遅延日数","保留理由"]}
+      exampleColumns={statusDownload.columns}
+      buildRows={statusDownload.buildRows}
       schedules={[
         { id: 1, name: "倉庫委託先向け 朝報", schedule: "毎日 08:00", format: "Excel (xlsx)", recipients: "warehouse@example.com", enabled: true },
         { id: 2, name: "出荷遅延ウォッチ", schedule: "毎日 14:00", format: "CSV", recipients: "ops@example.com", enabled: true },

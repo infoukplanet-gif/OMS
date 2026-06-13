@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { notificationDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsNotificationDownloadPage() {
   return (
@@ -20,7 +21,8 @@ export default function ShipmentsNotificationDownloadPage() {
         { label: "通知失敗", value: "0", unit: "件" },
         { label: "今月合計", value: "8,420", unit: "件" },
       ]}
-      exampleColumns={["モール受注番号","店舗内受注番号","出荷日","配送業者","追跡番号","送付先氏名","個口数","備考","ステータス"]}
+      exampleColumns={notificationDownload.columns}
+      buildRows={notificationDownload.buildRows}
       schedules={[
         { id: 1, name: "楽天 出荷通知バッチ (1日2回)", schedule: "毎日 12:00 / 18:00", format: "楽天RMS取込形式", recipients: "RMS API 自動送信", enabled: true },
         { id: 2, name: "Amazon SP-API 連携 (毎時)", schedule: "毎時0分", format: "Amazon SP-API形式", recipients: "SP-API 自動送信", enabled: true },

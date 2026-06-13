@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { documentsDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsDocumentsPage() {
   return (
@@ -21,7 +22,8 @@ export default function ShipmentsDocumentsPage() {
         { label: "今月の発行合計", value: "8,420", unit: "枚" },
         { label: "再発行率", value: "0.8", unit: "%" },
       ]}
-      exampleColumns={["受注番号","書類種別","発行日","顧客名","宛名","金額","税額","インボイス番号","発行者","ファイル名"]}
+      exampleColumns={documentsDownload.columns}
+      buildRows={documentsDownload.buildRows}
       schedules={[
         { id: 1, name: "卸先 月次請求書バッチ", schedule: "毎月1日 09:00", format: "PDF（書類別フォルダ ZIP）", recipients: "billing@example.com", enabled: true },
         { id: 2, name: "領収書 自動発行", schedule: "毎日 22:00", format: "PDF（書類別フォルダ ZIP）", recipients: "FTP", enabled: true },

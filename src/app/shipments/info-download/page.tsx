@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { infoDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsInfoDownloadPage() {
   return (
@@ -21,7 +22,8 @@ export default function ShipmentsInfoDownloadPage() {
         { label: "総出力レコード", value: "84,200", unit: "行" },
         { label: "最終DL日時", value: "10:24" },
       ]}
-      exampleColumns={["受注番号","出荷日","送付先氏名","送付先郵便番号","送付先住所","送付先電話","配送業者","配送方法","追跡番号","代引金額","送料","個口数","重量","サイズ","倉庫コード","出荷指示者","備考"]}
+      exampleColumns={infoDownload.columns}
+      buildRows={infoDownload.buildRows}
       schedules={[
         { id: 1, name: "ヤマト B2 連携用 (毎日 16:00)", schedule: "毎日 16:00", format: "ヤマトB2取込形式", recipients: "shipping@example.com / FTP", enabled: true },
         { id: 2, name: "倉庫委託先向け 月次サマリー", schedule: "毎月1日 09:00", format: "Excel", recipients: "warehouse@example.com", enabled: true },

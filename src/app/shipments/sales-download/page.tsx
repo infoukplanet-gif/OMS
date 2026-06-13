@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { salesDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsSalesDownloadPage() {
   return (
@@ -21,7 +22,8 @@ export default function ShipmentsSalesDownloadPage() {
         { label: "純売上", value: "¥37,938,000" },
         { label: "売上計上件数", value: "8,420", unit: "件" },
       ]}
-      exampleColumns={["売上計上日","受注番号","受注日","発送日","顧客コード","顧客名","モール","商品コード","商品名","数量","税抜金額","税額","税込金額","送料","手数料","値引額","支払方法"]}
+      exampleColumns={salesDownload.columns}
+      buildRows={salesDownload.buildRows}
       schedules={[
         { id: 1, name: "freee連携バッチ", schedule: "毎日 23:30", format: "freee連携形式", recipients: "freee API 自動送信", enabled: true },
         { id: 2, name: "経理向け月次", schedule: "毎月1日 09:00", format: "Excel (xlsx)", recipients: "accounting@example.com", enabled: true },

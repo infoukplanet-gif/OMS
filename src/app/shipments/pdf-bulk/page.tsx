@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { pdfBulkDownload } from "@/lib/export/download-rows";
 
 export default function ShipmentsPdfBulkPage() {
   return (
@@ -21,7 +22,8 @@ export default function ShipmentsPdfBulkPage() {
         { label: "今月の合計DL", value: "284", unit: "回" },
         { label: "平均生成時間", value: "3.2", unit: "秒" },
       ]}
-      exampleColumns={["受注番号","顧客名","送付先住所","発送日","配送業者","追跡番号","金額","個口数"]}
+      exampleColumns={pdfBulkDownload.columns}
+      buildRows={pdfBulkDownload.buildRows}
       schedules={[
         { id: 1, name: "倉庫委託先向け 出荷指示書ZIP", schedule: "毎日 08:00", format: "ZIP（一括）", recipients: "warehouse@example.com", enabled: true },
         { id: 2, name: "BtoB卸先 納品書PDF", schedule: "毎週月曜 09:00", format: "納品書PDF（全受注を1冊に結合）", recipients: "wholesale-ops@example.com", enabled: true },

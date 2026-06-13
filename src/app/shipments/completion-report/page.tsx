@@ -1,6 +1,7 @@
 "use client";
 
 import { DownloadWizard } from "@/components/download/download-wizard";
+import { completionReport } from "@/lib/export/download-rows";
 
 export default function ShipmentsCompletionReportPage() {
   return (
@@ -20,7 +21,8 @@ export default function ShipmentsCompletionReportPage() {
         { label: "完了率", value: "99.6", unit: "%" },
         { label: "差し戻し件数", value: "12", unit: "件" },
       ]}
-      exampleColumns={["発送日","受注番号","配送業者","倉庫","モール","顧客名","金額","送料","代引金額","完了時刻","リードタイム","備考"]}
+      exampleColumns={completionReport.columns}
+      buildRows={completionReport.buildRows}
       schedules={[
         { id: 1, name: "月次経理レポート", schedule: "毎月1日 09:00", format: "Excel (xlsx)", recipients: "accounting@example.com", enabled: true },
         { id: 2, name: "倉庫委託先向け週次", schedule: "毎週月曜 10:00", format: "PDF（1ページ集約）", recipients: "warehouse@example.com", enabled: true },
