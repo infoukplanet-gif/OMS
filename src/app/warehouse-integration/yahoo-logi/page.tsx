@@ -25,6 +25,8 @@ export default function YahooLogiPage() {
   const [syncStock, setSyncStock] = useState(true);
   const [autoShip, setAutoShip] = useState(true);
   const [autoReturn, setAutoReturn] = useState(true);
+  const [syncInterval, setSyncInterval] = useState("15分");
+  const [shipTiming, setShipTiming] = useState("受注確定後即時");
   const [connStatus, setConnStatus] = useState<ConnStatus>("正常");
   const [lastChecked, setLastChecked] = useState("10:25");
   const [saving, setSaving] = useState(false);
@@ -142,17 +144,14 @@ export default function YahooLogiPage() {
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">在庫同期間隔</span>
-            <select className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
-              {["5分", "15分", "30分", "60分"].map((v) => <option key={v}>{v}</option>)}
+            <select value={syncInterval} onChange={(e) => setSyncInterval(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+              {["5分", "15分", "30分", "60分"].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">出荷指示送信タイミング</span>
-            <select className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
-              <option>受注確定後即時</option>
-              <option>15分間隔バッチ</option>
-              <option>30分間隔バッチ</option>
-              <option>1日1回（13:00）</option>
+            <select value={shipTiming} onChange={(e) => setShipTiming(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+              {["受注確定後即時", "15分間隔バッチ", "30分間隔バッチ", "1日1回（13:00）"].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </label>
         </div>
