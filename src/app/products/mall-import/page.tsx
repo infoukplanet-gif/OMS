@@ -4,6 +4,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Upload, Download, Store, CheckCircle2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 
 type Mall = {
   key: string;
@@ -34,6 +35,16 @@ type ImportHistory = {
   at: string;
 };
 
+/** モール公式の商品CSVフォーマットに合わせたテンプレートヘッダー（hasTemplate のモールのみ）。 */
+const TEMPLATE_HEADERS: Record<string, string[]> = {
+  rakuten: ["商品管理番号（商品URL）", "商品番号", "商品名", "販売価格", "在庫数", "ジャンルID", "カタログID"],
+  yahoo: ["code", "name", "price", "quantity", "jan", "product-category"],
+  amazon: ["sku", "product-id", "product-id-type", "price", "quantity", "condition-type"],
+  makeshop: ["独自商品コード", "商品名", "販売価格", "在庫数", "JANコード", "カテゴリー"],
+  shopify: ["Handle", "Title", "Vendor", "Type", "Variant SKU", "Variant Price", "Variant Inventory Qty"],
+  colorme: ["商品ID", "商品名", "型番", "販売価格", "在庫数", "カテゴリー"],
+};
+
 const initialHistory: ImportHistory[] = [
   { id: 1, mall: "楽天市場", filename: "item_20260423.csv", rows: 512, success: 508, error: 4, at: "2026-04-23 17:05" },
   { id: 2, mall: "Amazon", filename: "Inventory_Template.txt", rows: 230, success: 230, error: 0, at: "2026-04-22 10:12" },
@@ -59,7 +70,10 @@ export default function MallImportPage() {
   }
 
   function handleTemplate() {
-    toast.show(`${mall.label} のテンプレートをダウンロードしました`);
+    const headers = TEMPLATE_HEADERS[mall.key];
+    if (!headers) return toast.show(`${mall.label} はAPI連携のためテンプレートはありません`, "info");
+    downloadCsv(`${mall.label}_商品テンプレート.csv`, headers, []);
+    toast.show(`${mall.label} のテンプレートをダウンロードしました`, "success");
   }
 
   function handleExecute() {

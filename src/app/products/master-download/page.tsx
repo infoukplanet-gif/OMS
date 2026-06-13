@@ -4,6 +4,9 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { PrimaryButton, useToast } from "@/components/ui/interactive";
 import { FileDown, CheckSquare, Square } from "lucide-react";
+import { downloadCsv, type CsvCell } from "@/lib/export/csv";
+import { productStore } from "@/lib/stores/product";
+import { INITIAL_PRODUCTS, type SeededProduct } from "@/lib/seeds/products";
 
 type Field = { key: string; label: string; group: string };
 
@@ -76,9 +79,36 @@ export default function MasterDownloadPage() {
     });
   }
 
+  // 商品マスタにまだ無い項目（カナ・JAN等）は空欄で出力する。
+  function fieldValue(p: SeededProduct, key: string): CsvCell {
+    switch (key) {
+      case "sku": return p.code;
+      case "name": return p.name;
+      case "category": return p.category;
+      case "cost": return p.cost;
+      case "price": return p.price;
+      case "stock": return p.stock;
+      case "safe_stock": return p.safety;
+      case "status": return p.status;
+      default: return "";
+    }
+  }
+
   function handleDownload() {
     if (selected.size === 0) return toast.show("項目を1つ以上選択してください", "error");
-    toast.show(`${selected.size}項目を ${format.toUpperCase()} でダウンロードしました`);
+    if (format !== "csv_utf8") {
+      return toast.show("この出力形式は次バージョンで対応予定です。CSV (UTF-8) をご利用ください", "info");
+    }
+    const STATUS_LABEL: Record<string, SeededProduct["status"]> = { active: "販売中", pause: "停止中", end: "廃番" };
+    const products = (productStore.getState().length > 0 ? productStore.getState() : INITIAL_PRODUCTS) as readonly SeededProduct[];
+    const target = products.filter((p) => status === "all" || p.status === STATUS_LABEL[status]);
+    const fields = FIELDS.filter((f) => selected.has(f.key));
+    downloadCsv(
+      "商品マスタ全件.csv",
+      fields.map((f) => f.label),
+      target.map((p) => fields.map((f) => fieldValue(p, f.key))),
+    );
+    toast.show(`${target.length} 件 × ${fields.length} 項目をダウンロードしました`, "success");
   }
 
   return (

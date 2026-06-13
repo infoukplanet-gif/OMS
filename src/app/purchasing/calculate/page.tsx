@@ -22,6 +22,7 @@ import {
 } from "@/lib/state-machines/inventory";
 import { recommendReorderQty } from "@/lib/calculations/reorder-calculation";
 import { buildPurchaseOrdersFromReorder, nextPoSeq } from "@/lib/calculations/reorder-to-po";
+import { downloadCsv } from "@/lib/export/csv";
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 const rowKey = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
@@ -114,6 +115,24 @@ export default function CalculatePage() {
   );
   const totalQty = selectedRows.reduce((sum, r) => sum + r.suggestedQty, 0);
   const outOfStock = rows.filter((r) => r.health === "在庫切れ").length;
+
+  /** 選択中の計算結果を発注書CSVとして書き出す。 */
+  const exportCsv = () => {
+    if (selectedRows.length === 0) return;
+    downloadCsv(
+      "発注書.csv",
+      ["SKU", "商品名", "倉庫", "仕入先", "フリー在庫", "引当数", "在庫定数", "発注点", "発注残", "ロット", "推奨発注数", "単価", "金額"],
+      selectedRows.map((r) => {
+        const unitCost = SKU_UNIT_COST[r.sku] ?? 0;
+        return [
+          r.sku, r.name, r.warehouse, r.supplier,
+          r.free, r.allocated, r.constant, r.reorder,
+          r.pending, r.lot, r.suggestedQty, unitCost, r.suggestedQty * unitCost,
+        ];
+      }),
+    );
+    toast.show(`${selectedRows.length} 件の発注書CSVを書き出しました`, "success");
+  };
 
   /** 選択行から仕入先ごとの未発行POを起票し、既存の未発行POを差し替える。 */
   const createPurchaseOrders = () => {
@@ -211,7 +230,7 @@ export default function CalculatePage() {
           </h2>
           <div className="flex gap-2">
             <button
-              onClick={() => toast.show("発注書CSVをダウンロードしました")}
+              onClick={exportCsv}
               disabled={selectedRows.length === 0}
               className={cn(
                 "flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs border transition-all",

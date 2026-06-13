@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
 import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 
 type ImportMode = "new" | "update" | "upsert";
 
@@ -131,7 +132,10 @@ export default function ProductImportPage() {
   }
 
   function handleDownloadTemplate() {
-    toast.show("商品一括登録テンプレートをダウンロードしました");
+    // テンプレートは取込項目のヘッダー行のみ（「スキップ」はマッピング専用のため除外）。
+    const headers = systemFields.filter((f) => f !== "スキップ（取り込まない）");
+    downloadCsv("商品一括登録テンプレート.csv", headers, []);
+    toast.show("商品一括登録テンプレートをダウンロードしました", "success");
   }
 
   function addTemplate(name: string) {

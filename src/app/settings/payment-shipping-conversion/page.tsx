@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { cn } from "@/lib/utils";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
 import { setConversions as persistConversions, upsertConversion, removeConversion as persistRemove } from "@/lib/settings/payment-shipping-conversion-settings";
+import { downloadCsv } from "@/lib/export/csv";
 
 type ConvType = "payment" | "shipping";
 
@@ -74,7 +75,14 @@ export default function PaymentShippingConversionPage() {
           <p className="text-sm text-gray-500 mt-1">楽天・Yahoo!等の支払/配送コードをOMSの標準値に正規化します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("マッピング設定をエクスポートしました", "success")}>エクスポート</SecondaryButton>
+          <SecondaryButton onClick={() => {
+            downloadCsv(
+              "支払配送変換設定.csv",
+              ["優先度", "種別", "取込元", "ソース値", "変換後", "有効"],
+              items.map((i) => [i.priority, i.type === "payment" ? "支払" : "配送", i.source, i.sourceValue, i.target, i.enabled ? "有効" : "無効"]),
+            );
+            toast.show(`${items.length} 件のマッピング設定をエクスポートしました`, "success");
+          }}>エクスポート</SecondaryButton>
           <PrimaryButton onClick={() => { persistConversions(items); toast.show("変換設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>

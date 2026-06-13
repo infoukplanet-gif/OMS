@@ -7,6 +7,7 @@ import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Upload, FileText, CheckCircle2, AlertCircle, History, Download } from "lucide-react";
 import { shipmentStore } from "@/lib/stores/shipment";
+import { downloadCsv } from "@/lib/export/csv";
 
 type ImportLog = {
   id: number;
@@ -150,7 +151,14 @@ export default function ShipmentsNotificationImportPage() {
           </p>
         </div>
         <button
-          onClick={() => toast.show("テンプレートCSVをダウンロード")}
+          onClick={() => {
+            downloadCsv(
+              "出荷通知取込テンプレート.csv",
+              ["受注番号", "追跡番号"],
+              [["ORD-2026-0001", "439901234567"]],
+            );
+            toast.show("テンプレートCSVをダウンロードしました", "success");
+          }}
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
         >
           <Download className="h-4 w-4" />テンプレートDL

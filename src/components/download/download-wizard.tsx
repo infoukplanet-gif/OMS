@@ -6,6 +6,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/export/csv";
 import { FileDown, History, RefreshCw, Calendar, Filter, FileSpreadsheet } from "lucide-react";
 
 export type DownloadFilter = {
@@ -73,18 +74,63 @@ export function DownloadWizard({
   const toast = useToast();
   const [format, setFormat] = useState(formats[0]);
   const [encoding, setEncoding] = useState("UTF-8 (BOM付き)");
+  const [newline, setNewline] = useState("CRLF (Windows)");
   const [includeHeader, setIncludeHeader] = useState(true);
   const [splitFile, setSplitFile] = useState(false);
+  const [from, setFrom] = useState<Date | undefined>();
+  const [to, setTo] = useState<Date | undefined>();
+  const [scheduleList, setScheduleList] = useState(schedules);
   const [filterValues, setFilterValues] = useState<Record<string, string>>(
     Object.fromEntries(filters.map((f) => [f.key, f.defaultValue ?? f.options[0]]))
   );
 
+  const applyPreset = (p: { label: string; days: number }) => {
+    const end = new Date();
+    const start = new Date(end);
+    start.setDate(start.getDate() - p.days);
+    setFrom(start);
+    setTo(end);
+    toast.show(`期間を「${p.label}」に設定しました`);
+  };
+
+  // データ行はページ側の実装待ちのため、現バージョンはカラム定義（ヘッダー行）を出力する。
+  const emitCsv = (filename: string) => {
+    if (exampleColumns.length === 0) {
+      toast.show("このページの出力カラム定義がありません", "error");
+      return false;
+    }
+    downloadCsv(filename, exampleColumns, [], {
+      newline: newline.startsWith("LF") ? "\n" : "\r\n",
+      bom: encoding !== "UTF-8 (BOM無し)",
+    });
+    return true;
+  };
+
   const handleDownload = () => {
-    toast.show(`${format} 形式でダウンロードを開始しました`, "success");
+    if (!format.startsWith("CSV")) {
+      return toast.show(`${format} 形式は次バージョンで対応予定です。CSV をご利用ください`, "info");
+    }
+    if (encoding === "Shift_JIS") {
+      return toast.show("Shift_JIS は次バージョンで対応予定です。UTF-8 をご利用ください", "info");
+    }
+    if (!includeHeader) {
+      return toast.show("現バージョンはヘッダー行のみを出力するため「ヘッダー行を含める」を有効にしてください", "info");
+    }
+    if (emitCsv(`${title}.csv`)) {
+      toast.show(`${title}.csv（${exampleColumns.length}列）をダウンロードしました`, "success");
+    }
+  };
+
+  const handleRedownload = (h: DownloadHistoryItem) => {
+    if (emitCsv(`${title}_${h.id}.csv`)) {
+      toast.show(`${h.at} 実行分と同じ条件で再ダウンロードしました`, "success");
+    }
   };
 
   const handleScheduleToggle = (id: number) => {
-    toast.show(`スケジュール ID ${id} を切替えました`);
+    setScheduleList((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
+    const target = scheduleList.find((s) => s.id === id);
+    if (target) toast.show(`「${target.name}」を${target.enabled ? "停止" : "有効"}にしました`, "success");
   };
 
   return (
@@ -123,7 +169,7 @@ export function DownloadWizard({
           {rangePresets.map((p) => (
             <button
               key={p.label}
-              onClick={() => toast.show(`期間を「${p.label}」に設定しました`)}
+              onClick={() => applyPreset(p)}
               className="px-3 py-1.5 rounded-xl text-xs font-medium bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
             >
               {p.label}
@@ -133,11 +179,11 @@ export function DownloadWizard({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">開始日</label>
-            <DatePicker placeholder="開始日を選択" />
+            <DatePicker value={from} onChange={setFrom} placeholder="開始日を選択" />
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">終了日</label>
-            <DatePicker placeholder="終了日を選択" />
+            <DatePicker value={to} onChange={setTo} placeholder="終了日を選択" />
           </div>
         </div>
       </GlassCard>
@@ -207,7 +253,12 @@ export function DownloadWizard({
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">改行コード</label>
-            <select className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+            <select
+              value={newline}
+              onChange={(e) => setNewline(e.target.value)}
+              className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              disabled={!format.startsWith("CSV")}
+            >
               <option>CRLF (Windows)</option>
               <option>LF (Unix)</option>
             </select>
@@ -259,7 +310,7 @@ export function DownloadWizard({
         </GlassCard>
       )}
 
-      {schedules.length > 0 && (
+      {scheduleList.length > 0 && (
         <GlassCard>
           <div className="flex items-center gap-2 mb-4">
             <RefreshCw className="h-4 w-4 text-gray-400" />
@@ -278,7 +329,7 @@ export function DownloadWizard({
                 </tr>
               </thead>
               <tbody>
-                {schedules.map((s) => (
+                {scheduleList.map((s) => (
                   <tr key={s.id} className="border-t border-white/30 hover:bg-white/40">
                     <td className="px-3 py-2.5 font-medium text-gray-800">{s.name}</td>
                     <td className="px-3 py-2.5 text-gray-700 text-xs">{s.schedule}</td>
@@ -349,7 +400,7 @@ export function DownloadWizard({
                   <td className="py-2 px-2 text-center">
                     {h.status === "success" ? (
                       <button
-                        onClick={() => toast.show("再ダウンロードを開始しました")}
+                        onClick={() => handleRedownload(h)}
                         className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                       >
                         再DL

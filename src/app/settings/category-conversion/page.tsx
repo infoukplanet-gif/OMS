@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { productStore } from "@/lib/stores/product";
 import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
 import { recalculateProductCategories, type ConversionRule } from "@/lib/calculations/category-conversion";
-import { ArrowRight, Edit, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { downloadCsv } from "@/lib/export/csv";
+import { ArrowRight, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 type Rule = {
   id: string;
@@ -91,6 +92,30 @@ export default function CategoryConversionPage() {
   const update = (id: string, patch: Partial<Rule>) =>
     setItems((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
+  const exportCsv = () => {
+    downloadCsv(
+      "カテゴリ変換ルール.csv",
+      ["優先度", "変換元カテゴリ", "取得元", "一致方法", "変換先カテゴリ", "月間ヒット", "有効"],
+      items.map((r) => [r.priority, r.from, r.fromSource, r.matchType, r.to, r.hits, r.enabled ? "有効" : "無効"])
+    );
+    toast.show(`${items.length} 件の変換ルールをCSVで書き出しました`, "success");
+  };
+
+  const addRule = () => {
+    const rule: Rule = {
+      id: `c-${Date.now()}`,
+      from: "",
+      fromSource: sources[0],
+      to: targets[0],
+      matchType: "完全一致",
+      priority: 5,
+      hits: 0,
+      enabled: true,
+    };
+    setItems((prev) => [...prev, rule]);
+    toast.show("新規ルールを追加しました。変換元カテゴリを入力してください", "success");
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -102,11 +127,11 @@ export default function CategoryConversionPage() {
           <p className="text-sm text-gray-500 mt-1">楽天・Yahoo!・Amazonのカテゴリツリーを自社標準にマッピングし、商品取込時に自動変換します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("変換ルールをCSVで書き出しました", "success")}>CSV書き出し</SecondaryButton>
+          <SecondaryButton onClick={exportCsv}>CSV書き出し</SecondaryButton>
           <SecondaryButton onClick={recalcCategories}>
             <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />取込済み商品を再計算</span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("新規ルールを追加します", "info")}>
+          <PrimaryButton onClick={addRule}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />新規ルール</span>
           </PrimaryButton>
         </div>
@@ -211,9 +236,6 @@ export default function CategoryConversionPage() {
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
-                    <button onClick={() => toast.show(`${r.from} を編集します`, "info")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="編集">
-                      <Edit className="h-3.5 w-3.5" />
-                    </button>
                     <button onClick={() => { setItems((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

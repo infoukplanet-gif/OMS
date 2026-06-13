@@ -30,4 +30,9 @@ describe("toCsv", () => {
   it("行が無ければヘッダーのみを返す", () => {
     expect(toCsv(["A", "B"], [])).toBe("A,B");
   });
+
+  it("newline に LF を指定すると LF 区切りで連結する", () => {
+    const csv = toCsv(["SKU", "数量"], [["A-1", 10]], "\n");
+    expect(csv).toBe("SKU,数量\nA-1,10");
+  });
 });

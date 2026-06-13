@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/intera
 import { cn } from "@/lib/utils";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
 import { setFieldMappings, upsertFieldMapping, removeFieldMapping } from "@/lib/settings/field-conversion-settings";
+import { downloadCsv } from "@/lib/export/csv";
 
 type Mapping = {
   id: string;
@@ -64,7 +65,14 @@ export default function FieldConversionPage() {
           <p className="text-sm text-gray-500 mt-1">楽天・Yahoo!・Amazon等のデータをOMSに正規化して取込みます。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("マッピング設定をエクスポートしました", "success")}>エクスポート</SecondaryButton>
+          <SecondaryButton onClick={() => {
+            downloadCsv(
+              "項目変換設定.csv",
+              ["取込元", "ソース項目", "取込先", "ターゲット項目", "変換ルール", "既定値", "必須", "有効"],
+              items.map((i) => [i.source, i.sourceField, i.target, i.targetField, i.transform, i.defaultValue, i.required ? "必須" : "任意", i.enabled ? "有効" : "無効"]),
+            );
+            toast.show(`${items.length} 件のマッピング設定をエクスポートしました`, "success");
+          }}>エクスポート</SecondaryButton>
           <PrimaryButton onClick={() => { setFieldMappings(items); toast.show("項目変換設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>
