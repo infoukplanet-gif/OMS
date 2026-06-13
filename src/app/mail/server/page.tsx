@@ -97,12 +97,38 @@ export default function MailServerPage() {
   const [activeId, setActiveId] = useState(initialSmtp[0].id);
   const [testTarget, setTestTarget] = useState("");
 
+  const [testing, setTesting] = useState(false);
+
   const active = servers.find((s) => s.id === activeId) || servers[0];
   const update = (patch: Partial<Smtp>) =>
     setServers((prev) => prev.map((s) => (s.id === active.id ? { ...s, ...patch } : s)));
 
   const setPrimary = (id: string) =>
     setServers((prev) => prev.map((s) => ({ ...s, isPrimary: s.id === id })));
+
+  const nowStamp = (): string => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  const handleTest = () => {
+    if (!active.host.trim()) { toast.show("ホスト名を入力してください", "error"); return; }
+    setTesting(true);
+    toast.show(`${active.name} へ接続テスト中…`, "info");
+    setTimeout(() => {
+      update({ status: "ok", lastChecked: nowStamp() });
+      setTesting(false);
+      toast.show(`${active.host}:${active.port} への接続に成功しました`, "success");
+    }, 1200);
+  };
+
+  const handleSave = () => {
+    if (!active.host.trim()) { toast.show("ホスト名は必須です", "error"); return; }
+    if (!active.fromAddress.trim()) { toast.show("送信元アドレスは必須です", "error"); return; }
+    update({ lastChecked: nowStamp() });
+    toast.show(`${active.name} の SMTP 設定を保存しました`, "success");
+  };
 
   return (
     <div className="space-y-5">
@@ -115,10 +141,10 @@ export default function MailServerPage() {
           <p className="text-sm text-gray-500 mt-1">SMTP・SPF/DKIM・送信元・接続テストを統合管理。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("接続テストを開始しました", "info")}>
-            <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />接続テスト</span>
+          <SecondaryButton onClick={handleTest} disabled={testing}>
+            <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />{testing ? "テスト中…" : "接続テスト"}</span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("SMTP 設定を保存しました", "success")}>保存</PrimaryButton>
+          <PrimaryButton onClick={handleSave}>保存</PrimaryButton>
         </div>
       </div>
 

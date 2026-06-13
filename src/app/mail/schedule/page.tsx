@@ -6,7 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
-import { Calendar, Plus, Trash2 } from "lucide-react";
+import { Calendar, CheckCircle2, Loader2, Plus, Save, Trash2 } from "lucide-react";
 
 const dows = ["月", "火", "水", "木", "金", "土", "日"];
 
@@ -51,6 +51,21 @@ export default function MailSchedulePage() {
   const [holidays, setHolidays] = useState(initialHolidays);
   const [holidayDate, setHolidayDate] = useState<Date | undefined>(undefined);
   const [holidayName, setHolidayName] = useState("");
+
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = () => {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("送信スケジュールを保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 800);
+  };
 
   const updateRule = (id: string, patch: Partial<ScheduleRule>) =>
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -118,7 +133,12 @@ export default function MailSchedulePage() {
         </div>
         <div className="flex gap-2">
           <SecondaryButton onClick={() => setRules(initialSchedule)}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("送信スケジュールを保存しました", "success")}>保存</PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={saving}>
+            <span className="inline-flex items-center gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+              {saving ? "保存中…" : saved ? "保存済" : "保存"}
+            </span>
+          </PrimaryButton>
         </div>
       </div>
 

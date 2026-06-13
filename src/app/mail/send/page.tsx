@@ -6,6 +6,7 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Clock, Loader2, Pause, Play, RefreshCw, Search, Send } from "lucide-react";
+import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
 type SendStatus = "送信中" | "待機中" | "送信完了" | "失敗";
 
@@ -61,6 +62,7 @@ export default function MailSendPage() {
   const [queue, setQueue] = useState<SendJob[]>(INITIAL_QUEUE);
   const [reloading, setReloading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [detailJob, setDetailJob] = useState<SendJob | null>(null);
 
   const toggleTrigger = (name: string) => {
     setTriggerList((prev) => prev.map((t) => (t.name === name ? { ...t, autoSend: !t.autoSend } : t)));
@@ -317,7 +319,7 @@ export default function MailSendPage() {
                     </button>
                   ) : (
                     <button
-                      onClick={() => toast.show(`${q.id} の詳細を表示します`, "info")}
+                      onClick={() => setDetailJob(q)}
                       className="px-3 py-1 rounded-lg text-xs font-medium bg-gray-500/10 text-gray-700 hover:bg-gray-500/20"
                     >
                       詳細
@@ -334,6 +336,43 @@ export default function MailSendPage() {
           </tbody>
         </table>
       </GlassCard>
+
+      <DetailModal
+        open={detailJob !== null}
+        title="送信バッチの詳細"
+        subtitle={detailJob?.id}
+        rows={
+          detailJob
+            ? ([
+                { label: "送信バッチID", value: detailJob.id, mono: true },
+                { label: "トリガー", value: detailJob.trigger },
+                { label: "対象ステータス", value: detailJob.target },
+                { label: "テンプレート", value: detailJob.template },
+                { label: "対象件数", value: `${detailJob.count} 件` },
+                {
+                  label: "送信済",
+                  value: `${detailJob.progress} / ${detailJob.count} 件`,
+                  tone: detailJob.progress >= detailJob.count ? "success" : "default",
+                },
+                {
+                  label: "状態",
+                  value: detailJob.status,
+                  tone:
+                    detailJob.status === "送信完了"
+                      ? "success"
+                      : detailJob.status === "失敗"
+                        ? "danger"
+                        : detailJob.status === "待機中"
+                          ? "warning"
+                          : "default",
+                },
+                { label: "開始", value: detailJob.started },
+                { label: "完了", value: detailJob.finished },
+              ] satisfies DetailRow[])
+            : []
+        }
+        onClose={() => setDetailJob(null)}
+      />
     </div>
   );
 }

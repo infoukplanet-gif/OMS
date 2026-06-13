@@ -5,7 +5,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Mail, Plus, Trash2, User } from "lucide-react";
+import { CheckCircle2, Loader2, Mail, Plus, Save, Trash2, User } from "lucide-react";
 
 type FromAddress = {
   id: string;
@@ -89,6 +89,21 @@ export default function MailSignaturePage() {
   const setDefaultAddr = (id: string) => setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
   const setDefaultSig = (id: string) => setSignatures((prev) => prev.map((s) => ({ ...s, isDefault: s.id === id })));
 
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = () => {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("メールアドレス・署名を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 800);
+  };
+
   const addAddress = () => {
     const id = `addr-${Date.now()}`;
     const next: FromAddress = {
@@ -130,7 +145,12 @@ export default function MailSignaturePage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">店舗別の送信元アドレスと、署名のテンプレートを編集します。</p>
         </div>
-        <PrimaryButton onClick={() => toast.show("メールアドレス・署名を保存しました", "success")}>保存</PrimaryButton>
+        <PrimaryButton onClick={handleSave} disabled={saving}>
+          <span className="inline-flex items-center gap-1.5">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+            {saving ? "保存中…" : saved ? "保存済" : "保存"}
+          </span>
+        </PrimaryButton>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
