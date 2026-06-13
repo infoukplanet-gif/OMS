@@ -37,6 +37,13 @@ export type ScheduledExport = {
   enabled: boolean;
 };
 
+/** buildRows に渡す現在の絞り込み・期間状態。フィルタ・期間を実出力に反映するため。 */
+export type DownloadRowContext = {
+  filters: Record<string, string>;
+  from?: Date;
+  to?: Date;
+};
+
 export type DownloadWizardProps = {
   title: string;
   description: string;
@@ -48,6 +55,11 @@ export type DownloadWizardProps = {
   schedules?: ScheduledExport[];
   kpis?: { label: string; value: string; unit?: string }[];
   exampleColumns?: string[];
+  /**
+   * 実データ行を返すビルダー。現在の絞り込み条件・期間が渡され、
+   * exampleColumns と同じ列順の行配列を返す。未指定時はヘッダー行のみ出力。
+   */
+  buildRows?: (ctx: DownloadRowContext) => (string | number)[][];
 };
 
 const DEFAULT_FORMATS = ["CSV", "Excel (xlsx)", "PDF"];
@@ -70,6 +82,7 @@ export function DownloadWizard({
   schedules = [],
   kpis = [],
   exampleColumns = [],
+  buildRows,
 }: DownloadWizardProps) {
   const toast = useToast();
   const [format, setFormat] = useState(formats[0]);
@@ -93,17 +106,19 @@ export function DownloadWizard({
     toast.show(`期間を「${p.label}」に設定しました`);
   };
 
-  // データ行はページ側の実装待ちのため、現バージョンはカラム定義（ヘッダー行）を出力する。
-  const emitCsv = (filename: string) => {
+  // buildRows が渡されていれば現在の絞り込み・期間で実データ行を生成し、
+  // 無ければヘッダー行のみ出力する。戻り値は出力した行数（-1 はエラーで中断）。
+  const emitCsv = (filename: string): number => {
     if (exampleColumns.length === 0) {
       toast.show("このページの出力カラム定義がありません", "error");
-      return false;
+      return -1;
     }
-    downloadCsv(filename, exampleColumns, [], {
+    const rows = buildRows ? buildRows({ filters: filterValues, from, to }) : [];
+    downloadCsv(filename, exampleColumns, rows, {
       newline: newline.startsWith("LF") ? "\n" : "\r\n",
       bom: encoding !== "UTF-8 (BOM無し)",
     });
-    return true;
+    return rows.length;
   };
 
   const handleDownload = () => {
@@ -116,15 +131,19 @@ export function DownloadWizard({
     if (!includeHeader) {
       return toast.show("現バージョンはヘッダー行のみを出力するため「ヘッダー行を含める」を有効にしてください", "info");
     }
-    if (emitCsv(`${title}.csv`)) {
-      toast.show(`${title}.csv（${exampleColumns.length}列）をダウンロードしました`, "success");
+    const count = emitCsv(`${title}.csv`);
+    if (count < 0) return;
+    if (buildRows && count === 0) {
+      return toast.show("指定の条件に該当するデータがありません。期間・絞り込みを見直してください", "info");
     }
+    const suffix = buildRows ? `${count.toLocaleString()}件` : `${exampleColumns.length}列`;
+    toast.show(`${title}.csv（${suffix}）をダウンロードしました`, "success");
   };
 
   const handleRedownload = (h: DownloadHistoryItem) => {
-    if (emitCsv(`${title}_${h.id}.csv`)) {
-      toast.show(`${h.at} 実行分と同じ条件で再ダウンロードしました`, "success");
-    }
+    const count = emitCsv(`${title}_${h.id}.csv`);
+    if (count < 0) return;
+    toast.show(`${h.at} 実行分と同じ条件で再ダウンロードしました`, "success");
   };
 
   const handleScheduleToggle = (id: number) => {
