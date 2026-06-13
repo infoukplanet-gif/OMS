@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
+import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -293,7 +294,17 @@ export default function BlacklistPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+          <button
+            onClick={() => {
+              downloadCsv(
+                "ブラックリスト監査ログ.csv",
+                ["日時", "操作者", "操作", "対象", "詳細"],
+                AUDIT_LOG.map((l) => [l.at, l.by, l.action, l.target, l.detail ?? ""])
+              );
+              toast.show(`監査ログ ${AUDIT_LOG.length} 件をCSVでエクスポートしました`, "success");
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
             <Download className="h-4 w-4" />監査ログをエクスポート
           </button>
           <button

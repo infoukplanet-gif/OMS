@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
+import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import { Upload, AlertTriangle, CheckCircle, Download, Trash2 } from "lucide-react";
 
@@ -138,7 +139,24 @@ export default function MasterDeletePage() {
               </select>
             </div>
             <div className="flex items-end">
-              <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+              <button
+                onClick={() => {
+                  const templates: Record<string, { file: string; header: string }> = {
+                    product: { file: "商品マスタ削除テンプレート.csv", header: "商品コード" },
+                    set: { file: "セット商品マスタ削除テンプレート.csv", header: "セット商品コード" },
+                    supplier: { file: "仕入先マスタ削除テンプレート.csv", header: "仕入先コード" },
+                    wholesale: { file: "卸先マスタ削除テンプレート.csv", header: "卸先コード" },
+                  };
+                  const tpl = templates[target];
+                  if (!tpl) {
+                    toast.show("先に削除するマスタを選択してください", "error");
+                    return;
+                  }
+                  downloadCsv(tpl.file, [tpl.header], []);
+                  toast.show(`${tpl.file} をダウンロードしました`, "success");
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+              >
                 <Download className="h-4 w-4" />
                 CSVテンプレートをダウンロード
               </button>

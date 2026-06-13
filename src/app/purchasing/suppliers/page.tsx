@@ -4,6 +4,8 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
+import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import { Plus, Upload, Pencil, Search, Building2, Truck, Banknote, AlertTriangle, Download } from "lucide-react";
 import { supplierStore, INITIAL_SUPPLIERS } from "@/lib/stores/supplier";
@@ -27,6 +29,7 @@ type Supplier = {
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function PurchasingSuppliersPage() {
+  const toast = useToast();
   const suppliers = useSyncExternalStore(
     (cb) => supplierStore.subscribe(cb),
     () => supplierStore.getState() as readonly Supplier[],
@@ -67,7 +70,17 @@ export default function PurchasingSuppliersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">
+          <button
+            onClick={() => {
+              downloadCsv(
+                "仕入先マスタ.csv",
+                ["仕入先コード", "仕入先名", "担当者", "電話番号", "メールアドレス", "今月発注額", "年間発注額", "未支払額", "リードタイム（日）", "評価ランク", "取引状態"],
+                filtered.map((s) => [s.code, s.name, s.contact, s.phone, s.email, s.monthVolume, s.ytdVolume, s.unpaid, s.leadTime, s.rating, s.status])
+              );
+              toast.show(`表示中の仕入先 ${filtered.length} 件をCSVでエクスポートしました`, "success");
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
+          >
             <Download className="h-4 w-4" />CSVエクスポート
           </button>
           <Link href="/purchasing/suppliers/import" className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80">

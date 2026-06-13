@@ -10,6 +10,8 @@ import { computeOrderCreditOutstanding, type CreditOrder, type CreditPayment } f
 import { wholesaleStore, INITIAL_WHOLESALE } from "@/lib/stores/wholesale";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useToast } from "@/components/ui/interactive";
+import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -61,6 +63,7 @@ type SortKey = "code" | "name" | "creditLimit" | "creditUsed" | "monthSales" | "
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function WholesalePage() {
+  const toast = useToast();
   // wholesaleStore を購読（登録した卸先を即座に一覧に反映）
   const storeClients = useSyncExternalStore(
     (cb) => wholesaleStore.subscribe(cb),
@@ -205,7 +208,17 @@ export default function WholesalePage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all">
+          <button
+            onClick={() => {
+              downloadCsv(
+                "卸先マスタ.csv",
+                ["卸先コード", "卸先名", "カナ", "担当者", "支払条件", "与信限度額", "与信使用額", "ランク", "ステータス", "当月売上", "年間売上", "支払遅延回数", "都道府県", "取引開始日"],
+                filtered.map((c) => [c.code, c.name, c.kana, c.contact, c.terms, c.creditLimit, c.creditUsed, c.group, c.status, c.monthSales, c.ytdSales, c.delays, c.prefecture, c.startedAt])
+              );
+              toast.show(`表示中の卸先 ${filtered.length} 件をCSVでエクスポートしました`, "success");
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80 transition-all"
+          >
             <Download className="h-4 w-4" />CSVエクスポート
           </button>
           <Link
