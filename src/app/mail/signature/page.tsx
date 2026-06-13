@@ -89,6 +89,37 @@ export default function MailSignaturePage() {
   const setDefaultAddr = (id: string) => setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
   const setDefaultSig = (id: string) => setSignatures((prev) => prev.map((s) => ({ ...s, isDefault: s.id === id })));
 
+  const addAddress = () => {
+    const id = `addr-${Date.now()}`;
+    const next: FromAddress = {
+      id,
+      label: "新規送信元",
+      email: "new@example.com",
+      displayName: "OMSショップ",
+      replyTo: "new@example.com",
+      isDefault: false,
+      shop: "本店",
+      spf: "warning",
+      dkim: "warning",
+    };
+    setAddresses((prev) => [...prev, next]);
+    setActiveAddrId(id);
+    toast.show("新規送信元アドレスを追加しました。右側で内容を編集してください", "success");
+  };
+
+  const addSignature = () => {
+    const id = `sig-${Date.now()}`;
+    const next: Signature = {
+      id,
+      name: "新規署名",
+      isDefault: false,
+      body: `--\n{{shop_name}}\nTEL: \nURL: `,
+    };
+    setSignatures((prev) => [...prev, next]);
+    setActiveSigId(id);
+    toast.show("新規署名を追加しました。右側で内容を編集してください", "success");
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -109,7 +140,7 @@ export default function MailSignaturePage() {
               <Mail className="h-4 w-4 text-blue-600" />送信元アドレス
             </h2>
             <button
-              onClick={() => toast.show("新規送信元アドレスを追加します", "info")}
+              onClick={addAddress}
               className="px-2 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center gap-1"
             >
               <Plus className="h-3 w-3" />追加
@@ -233,7 +264,7 @@ export default function MailSignaturePage() {
           <div className="px-4 py-3 border-b border-white/40 bg-white/40 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-800">署名一覧</h2>
             <button
-              onClick={() => toast.show("新規署名を追加します", "info")}
+              onClick={addSignature}
               className="px-2 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center gap-1"
             >
               <Plus className="h-3 w-3" />追加

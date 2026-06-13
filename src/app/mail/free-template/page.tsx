@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Copy, Edit, Eye, Plus, Search, Trash2 } from "lucide-react";
+import { downloadCsv } from "@/lib/export/csv";
+import { Copy, Edit, Eye, Plus, Search, Trash2, X } from "lucide-react";
 
 type FreeTemplate = {
   id: string;
@@ -97,12 +98,63 @@ const initial: FreeTemplate[] = [
 
 const categories = ["お詫び", "問い合わせ", "事務連絡", "営業"];
 
+const todayLabel = () =>
+  new Date().toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" });
+
 export default function MailFreeTemplatePage() {
   const toast = useToast();
   const [items, setItems] = useState(initial);
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
   const [shared, setShared] = useState<"all" | "shared" | "personal">("all");
+  const [panel, setPanel] = useState<{ id: string; mode: "preview" | "edit" } | null>(null);
+
+  const panelItem = panel ? (items.find((i) => i.id === panel.id) ?? null) : null;
+  const idSeqRef = useRef(0);
+  const newTemplateId = () => `free-new-${++idSeqRef.current}`;
+
+  const updateItem = (id: string, patch: Partial<FreeTemplate>) =>
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch, updated: todayLabel() } : i)));
+
+  const exportCsv = () => {
+    downloadCsv(
+      "フリーメールテンプレート.csv",
+      ["テンプレート名", "カテゴリ", "件名", "本文", "共有", "作成者", "更新日", "利用回数"],
+      items.map((t) => [t.name, t.category, t.subject, t.body, t.shared ? "共有" : "個人", t.createdBy, t.updated, t.uses])
+    );
+    toast.show(`${items.length} 件のテンプレートをCSVで書き出しました`, "success");
+  };
+
+  const addTemplate = () => {
+    const id = newTemplateId();
+    const item: FreeTemplate = {
+      id,
+      name: "新規テンプレート",
+      category: "事務連絡",
+      subject: "",
+      body: "",
+      signature: "default",
+      shared: false,
+      updated: todayLabel(),
+      createdBy: "管理者",
+      uses: 0,
+    };
+    setItems((prev) => [...prev, item]);
+    setPanel({ id, mode: "edit" });
+    toast.show("新規テンプレートを追加しました。内容を編集してください", "success");
+  };
+
+  const duplicateTemplate = (t: FreeTemplate) => {
+    const id = newTemplateId();
+    setItems((prev) => [...prev, { ...t, id, name: `${t.name}（コピー）`, uses: 0, updated: todayLabel() }]);
+    toast.show(`${t.name} を複製しました`, "success");
+  };
+
+  const removeTemplate = (t: FreeTemplate) => {
+    setItems((prev) => prev.filter((p) => p.id !== t.id));
+    setPanel((p) => (p?.id === t.id ? null : p));
+    toast.show(`${t.name} を削除しました`, "info");
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -126,8 +178,8 @@ export default function MailFreeTemplatePage() {
           <p className="text-sm text-gray-500 mt-1">用途別に分類されたテンプレートからフリーメール送信画面で呼び出して利用します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("テンプレートをエクスポートしました", "success")}>エクスポート</SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("新規テンプレートを追加します", "info")}>
+          <SecondaryButton onClick={exportCsv}>エクスポート</SecondaryButton>
+          <PrimaryButton onClick={addTemplate}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />新規追加</span>
           </PrimaryButton>
         </div>
@@ -187,6 +239,103 @@ export default function MailFreeTemplatePage() {
         </div>
       </GlassCard>
 
+      {panelItem && (
+        <GlassCard>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-800">
+                {panel?.mode === "edit" ? "テンプレート編集" : "プレビュー"}
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-700">{panelItem.category}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {panel?.mode === "preview" && (
+                <SecondaryButton onClick={() => setPanel({ id: panelItem.id, mode: "edit" })}>編集する</SecondaryButton>
+              )}
+              <button
+                onClick={() => setPanel(null)}
+                className="p-1.5 rounded-lg bg-gray-500/10 text-gray-700 hover:bg-gray-500/20"
+                title="閉じる"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          {panel?.mode === "edit" ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">テンプレート名</label>
+                  <input
+                    value={panelItem.name}
+                    onChange={(e) => updateItem(panelItem.id, { name: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">カテゴリ</label>
+                  <select
+                    value={panelItem.category}
+                    onChange={(e) => updateItem(panelItem.id, { category: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                  >
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">共有設定</label>
+                  <select
+                    value={panelItem.shared ? "shared" : "personal"}
+                    onChange={(e) => updateItem(panelItem.id, { shared: e.target.value === "shared" })}
+                    className="w-full px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                  >
+                    <option value="shared">共有</option>
+                    <option value="personal">個人</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">件名</label>
+                <input
+                  value={panelItem.subject}
+                  onChange={(e) => updateItem(panelItem.id, { subject: e.target.value })}
+                  placeholder="例: 【お詫び】商品発送遅延について（{{order_id}}）"
+                  className="w-full px-3 py-2 rounded-xl text-sm font-mono bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">本文</label>
+                <textarea
+                  value={panelItem.body}
+                  onChange={(e) => updateItem(panelItem.id, { body: e.target.value })}
+                  rows={6}
+                  placeholder="{{customer_name}} 様 などの差込変数が使えます"
+                  className="w-full px-3 py-2 rounded-xl text-sm font-mono bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                />
+              </div>
+              <div className="flex justify-end">
+                <PrimaryButton
+                  onClick={() => {
+                    setPanel(null);
+                    toast.show(`${panelItem.name} を保存しました`, "success");
+                  }}
+                >
+                  保存して閉じる
+                </PrimaryButton>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-800 font-mono">{panelItem.subject || "（件名未設定）"}</div>
+              <div className="text-sm text-gray-700 whitespace-pre-wrap rounded-xl bg-white/50 border border-white/60 p-3">
+                {panelItem.body || "（本文未設定）"}
+              </div>
+              <div className="text-xs text-gray-400">作成者: {panelItem.createdBy} ／ 更新: {panelItem.updated} ／ 利用回数: {panelItem.uses}</div>
+            </div>
+          )}
+        </GlassCard>
+      )}
+
       <GlassCard className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/40 bg-white/40 text-xs text-gray-500">
           {filtered.length} 件 / 全 {items.length} 件
@@ -231,31 +380,28 @@ export default function MailFreeTemplatePage() {
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
                     <button
-                      onClick={() => toast.show(`${t.name} をプレビューします`, "info")}
+                      onClick={() => setPanel({ id: t.id, mode: "preview" })}
                       className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                       title="プレビュー"
                     >
                       <Eye className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => toast.show(`${t.name} を複製しました`, "success")}
+                      onClick={() => duplicateTemplate(t)}
                       className="p-1.5 rounded-lg bg-gray-500/10 text-gray-700 hover:bg-gray-500/20"
                       title="複製"
                     >
                       <Copy className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => toast.show(`${t.name} を編集します`, "info")}
+                      onClick={() => setPanel({ id: t.id, mode: "edit" })}
                       className="p-1.5 rounded-lg bg-gray-500/10 text-gray-700 hover:bg-gray-500/20"
                       title="編集"
                     >
                       <Edit className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => {
-                        setItems((prev) => prev.filter((p) => p.id !== t.id));
-                        toast.show(`${t.name} を削除しました`, "info");
-                      }}
+                      onClick={() => removeTemplate(t)}
                       className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25"
                       title="削除"
                     >

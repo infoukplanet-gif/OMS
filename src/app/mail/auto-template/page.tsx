@@ -155,6 +155,33 @@ export default function MailAutoTemplatePage() {
   const update = (patch: Partial<Template>) =>
     setItems((prev) => prev.map((i) => (i.id === active.id ? { ...i, ...patch } : i)));
 
+  const addTemplate = () => {
+    const id = `tpl-${Date.now()}`;
+    const today = new Date();
+    const next: Template = {
+      id,
+      name: "新規テンプレート",
+      trigger: "手動送信",
+      subject: "{{shop_name}}：",
+      body: "{{customer_name}} 様\n\n",
+      updated: `${today.getFullYear()}/${String(today.getMonth() + 1).padStart(2, "0")}/${String(today.getDate()).padStart(2, "0")}`,
+      uses: 0,
+      enabled: false,
+    };
+    setItems((prev) => [...prev, next]);
+    setActiveId(id);
+    toast.show("新規テンプレートを追加しました。右側で内容を編集してください", "success");
+  };
+
+  const copyVariable = async (v: string) => {
+    try {
+      await navigator.clipboard.writeText(v);
+      toast.show(`${v} をコピーしました`, "info");
+    } catch {
+      toast.show("クリップボードへのコピーに失敗しました", "error");
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -196,7 +223,7 @@ export default function MailAutoTemplatePage() {
               <option value="disabled">無効のみ</option>
             </select>
             <button
-              onClick={() => toast.show("新規テンプレートを追加します", "info")}
+              onClick={addTemplate}
               className="w-full px-3 py-2 rounded-xl text-sm font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 inline-flex items-center justify-center gap-1.5"
             >
               <Plus className="h-4 w-4" />新規テンプレート
@@ -287,7 +314,7 @@ export default function MailAutoTemplatePage() {
               {variables.map((v) => (
                 <button
                   key={v}
-                  onClick={() => toast.show(`${v} をコピーしました`, "info")}
+                  onClick={() => copyVariable(v)}
                   className="px-2.5 py-1 rounded-lg text-xs font-mono bg-white/60 border border-white/60 hover:bg-blue-500/10 hover:text-blue-700 inline-flex items-center gap-1"
                 >
                   <Copy className="h-3 w-3" />{v}

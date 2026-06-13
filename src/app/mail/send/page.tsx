@@ -37,6 +37,13 @@ export default function MailSendPage() {
   const [keyword, setKeyword] = useState("");
   const [triggerFilter, setTriggerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [triggerList, setTriggerList] = useState(triggers);
+
+  const toggleTrigger = (name: string) => {
+    setTriggerList((prev) => prev.map((t) => (t.name === name ? { ...t, autoSend: !t.autoSend } : t)));
+    const target = triggerList.find((t) => t.name === name);
+    if (target) toast.show(`「${name}」の自動送信を${target.autoSend ? "停止" : "有効化"}しました`, "success");
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -94,15 +101,15 @@ export default function MailSendPage() {
           <h2 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
             自動送信トリガー <HelpHint>受注ステータスの変化に応じて起動するメール送信トリガーの一覧。停止／再開はトグルで切替できます。</HelpHint>
           </h2>
-          <span className="text-xs text-gray-500">{triggers.filter((t) => t.autoSend).length} / {triggers.length} 件 有効</span>
+          <span className="text-xs text-gray-500">{triggerList.filter((t) => t.autoSend).length} / {triggerList.length} 件 有効</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {triggers.map((t) => (
+          {triggerList.map((t) => (
             <div key={t.name} className="p-3 rounded-xl bg-white/50 border border-white/60">
               <div className="flex items-center justify-between mb-2">
                 <div className="font-medium text-gray-800 text-sm">{t.name}</div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" defaultChecked={t.autoSend} className="sr-only peer" />
+                  <input type="checkbox" checked={t.autoSend} onChange={() => toggleTrigger(t.name)} className="sr-only peer" />
                   <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
                 </label>
               </div>
