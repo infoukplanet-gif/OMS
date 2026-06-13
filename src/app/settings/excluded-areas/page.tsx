@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -50,6 +50,53 @@ export default function ExcludedAreasPage() {
   const update = (id: string, patch: Partial<AreaRule>) =>
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const parseCsv = (text: string): AreaRule[] => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+    // 先頭行が見出し（「都道府県」を含む）の場合はスキップ
+    const startsAt = lines[0].includes("都道府県") ? 1 : 0;
+    const out: AreaRule[] = [];
+    for (let i = startsAt; i < lines.length; i++) {
+      const cols = lines[i].split(",").map((c) => c.trim());
+      const [prefecture, zipPattern, reason, carrierCol, surchargeCol, codCol, enabledCol] = cols;
+      if (!prefecture || !prefs.includes(prefecture)) continue;
+      const ruleCarriers = (carrierCol ?? "")
+        .split(/[|;／・]/)
+        .map((c) => c.trim())
+        .filter((c) => carriers.includes(c));
+      out.push({
+        id: `ar-import-${i}-${out.length}`,
+        prefecture,
+        zipPattern: zipPattern ?? "",
+        reason: reason ?? "",
+        carriers: ruleCarriers.length > 0 ? ruleCarriers : ["ヤマト"],
+        surcharge: Number(surchargeCol) || 0,
+        cod: /^(true|1|可|○|代引可)$/i.test(codCol ?? ""),
+        enabled: enabledCol === undefined || /^(true|1|有効|○)$/i.test(enabledCol),
+      });
+    }
+    return out;
+  };
+
+  const handleImport = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = parseCsv(text);
+      if (parsed.length === 0) {
+        toast.show("取込可能な行がありませんでした（都道府県列を確認してください）", "info");
+        return;
+      }
+      const merged = [...rules, ...parsed];
+      setRules(merged);
+      setAreaRules(merged);
+      toast.show(`${parsed.length}件の除外地域を取込みました`, "success");
+    } catch {
+      toast.show("CSVの読み込みに失敗しました", "error");
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -61,7 +108,18 @@ export default function ExcludedAreasPage() {
           <p className="text-sm text-gray-500 mt-1">対象地域・追加送料・代引可否を業者別に設定し、受注画面に反映します。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("CSVインポートは次バージョンで対応予定", "info")}>CSVインポート</SecondaryButton>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleImport(file);
+              e.target.value = "";
+            }}
+          />
+          <SecondaryButton onClick={() => fileRef.current?.click()}>CSVインポート</SecondaryButton>
           <PrimaryButton onClick={() => { setAreaRules(rules); toast.show("配送除外地域設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>

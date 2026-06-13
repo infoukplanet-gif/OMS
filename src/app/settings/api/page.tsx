@@ -35,13 +35,34 @@ const initialKeys: ApiKey[] = [
   { id: "key-old", label: "旧本番（無効化済）", scope: "受注 読取・書込", keyMasked: "sk_live_********************0011", createdAt: "2024/06/01", lastUsed: "2025/11/30 12:00", enabled: false, ipWhitelist: "—" },
 ];
 
-const connections: Connection[] = [
+const initialConnections: Connection[] = [
   { id: "rakuten", name: "楽天市場 RMS API", endpoint: "https://api.rms.rakuten.co.jp", authType: "oauth", status: "ok", lastSync: "2026/04/30 10:00" },
   { id: "yahoo", name: "Yahoo!ショッピング API", endpoint: "https://circus.shopping.yahooapis.jp", authType: "oauth", status: "ok", lastSync: "2026/04/30 09:50" },
   { id: "amazon", name: "Amazon SP-API", endpoint: "https://sellingpartnerapi-fe.amazon.com", authType: "oauth", status: "warning", lastSync: "2026/04/30 04:00" },
   { id: "yamato", name: "ヤマト B2 クラウド", endpoint: "https://bmypage.kuronekoyamato.co.jp", authType: "api-key", status: "ok", lastSync: "2026/04/30 09:30" },
   { id: "sagawa", name: "佐川急便 e飛伝", endpoint: "https://e-hiden.sagawa-exp.co.jp", authType: "basic", status: "error", lastSync: "2026/04/29 18:00" },
 ];
+
+const SCOPE_OPTIONS = [
+  "受注 読取のみ",
+  "受注 読取・書込",
+  "受注/在庫/出荷 読取・書込",
+  "売上 / 在庫 読取",
+  "全API 読取・書込",
+];
+
+type KeyForm = { label: string; scope: string; ipWhitelist: string };
+const EMPTY_KEY_FORM: KeyForm = { label: "", scope: SCOPE_OPTIONS[0], ipWhitelist: "" };
+
+const HEX = "0123456789abcdef";
+function randomKeySuffix(len: number): string {
+  let out = "";
+  for (let i = 0; i < len; i++) out += HEX[Math.floor(Math.random() * HEX.length)];
+  return out;
+}
+function generateMaskedKey(prefix: string): string {
+  return `${prefix}${"*".repeat(20)}${randomKeySuffix(4)}`;
+}
 
 const sb: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-700",
@@ -53,6 +74,10 @@ const sbLabel: Record<string, string> = { ok: "正常", warning: "警告", error
 export default function SettingsApiPage() {
   const toast = useToast();
   const [keys, setKeys] = useState(initialKeys);
+  const [conns, setConns] = useState(initialConnections);
+  const [reconnecting, setReconnecting] = useState<Record<string, boolean>>({});
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [keyForm, setKeyForm] = useState<KeyForm>(EMPTY_KEY_FORM);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
   const [rateLimit, setRateLimit] = useState(60);
   const [allowCors, setAllowCors] = useState(false);
@@ -64,14 +89,73 @@ export default function SettingsApiPage() {
   const updateKey = (id: string, patch: Partial<ApiKey>) =>
     setKeys((prev) => prev.map((k) => (k.id === id ? { ...k, ...patch } : k)));
 
+  const nowStamp = (): string => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  const openKeyModal = () => {
+    setKeyForm(EMPTY_KEY_FORM);
+    setShowKeyModal(true);
+  };
+
+  const submitKey = () => {
+    const label = keyForm.label.trim();
+    if (!label) {
+      toast.show("ラベルを入力してください", "error");
+      return;
+    }
+    const newKey: ApiKey = {
+      id: `key-${randomKeySuffix(6)}`,
+      label,
+      scope: keyForm.scope,
+      keyMasked: generateMaskedKey("sk_live_"),
+      createdAt: nowStamp().split(" ")[0],
+      lastUsed: "—",
+      enabled: true,
+      ipWhitelist: keyForm.ipWhitelist.trim() || "—",
+    };
+    setKeys((prev) => [newKey, ...prev]);
+    setShowKeyModal(false);
+    toast.show(`APIキー「${label}」を発行しました`, "success");
+  };
+
+  const copyKey = async (k: ApiKey) => {
+    try {
+      await navigator.clipboard.writeText(k.keyMasked);
+      toast.show("キーをクリップボードにコピーしました", "info");
+    } catch {
+      toast.show("コピーに失敗しました", "error");
+    }
+  };
+
+  const rotateKey = (id: string) => {
+    const prefix = keys.find((k) => k.id === id)?.keyMasked.split("*")[0] ?? "sk_live_";
+    updateKey(id, { keyMasked: generateMaskedKey(prefix), lastUsed: nowStamp() });
+    const label = keys.find((k) => k.id === id)?.label ?? "";
+    toast.show(`${label} をローテーションしました`, "success");
+  };
+
+  const reconnect = (c: Connection) => {
+    setReconnecting((p) => ({ ...p, [c.id]: true }));
+    setTimeout(() => {
+      setConns((prev) =>
+        prev.map((x) => (x.id === c.id ? { ...x, status: "ok", lastSync: nowStamp() } : x))
+      );
+      setReconnecting((p) => ({ ...p, [c.id]: false }));
+      toast.show(`${c.name} と再接続しました`, "success");
+    }, 1200);
+  };
+
   const stats = useMemo(
     () => ({
       total: keys.length,
       active: keys.filter((k) => k.enabled).length,
       inactive: keys.filter((k) => !k.enabled).length,
-      connOk: connections.filter((c) => c.status === "ok").length,
+      connOk: conns.filter((c) => c.status === "ok").length,
     }),
-    [keys]
+    [keys, conns]
   );
 
   return (
@@ -105,7 +189,7 @@ export default function SettingsApiPage() {
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">外部接続 正常</div>
-          <div className="text-2xl font-bold text-blue-600 mt-1">{stats.connOk} / {connections.length}</div>
+          <div className="text-2xl font-bold text-blue-600 mt-1">{stats.connOk} / {conns.length}</div>
         </GlassCard>
       </div>
 
@@ -114,7 +198,7 @@ export default function SettingsApiPage() {
           <h2 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-blue-600" />APIキー <HelpHint>OMSへ外部からアクセスする際のキー。発行時のみ秘密鍵を表示します。</HelpHint>
           </h2>
-          <SecondaryButton onClick={() => toast.show("新規APIキーを発行しました", "success")}>
+          <SecondaryButton onClick={openKeyModal}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />キー発行</span>
           </SecondaryButton>
         </div>
@@ -146,7 +230,7 @@ export default function SettingsApiPage() {
                     <button onClick={() => toggleReveal(k.id)} className="p-1 rounded-lg hover:bg-white/60 text-gray-400" title="表示切替">
                       {reveal[k.id] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                     </button>
-                    <button onClick={() => toast.show("キーをコピーしました", "info")} className="p-1 rounded-lg hover:bg-white/60 text-gray-400" title="コピー">
+                    <button onClick={() => copyKey(k)} className="p-1 rounded-lg hover:bg-white/60 text-gray-400" title="コピー">
                       <Copy className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -161,7 +245,7 @@ export default function SettingsApiPage() {
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
-                    <button onClick={() => toast.show(`${k.label} をローテーションしました`, "success")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="ローテーション">
+                    <button onClick={() => rotateKey(k.id)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="ローテーション">
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
                     <button onClick={() => { setKeys((p) => p.filter((x) => x.id !== k.id)); toast.show("キーを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
@@ -191,7 +275,7 @@ export default function SettingsApiPage() {
             </tr>
           </thead>
           <tbody>
-            {connections.map((c) => (
+            {conns.map((c) => (
               <tr key={c.id} className="border-t border-white/30 hover:bg-white/40">
                 <td className="px-3 py-2.5 font-medium text-gray-800">{c.name}</td>
                 <td className="px-3 py-2.5 text-xs font-mono text-gray-600">{c.endpoint}</td>
@@ -204,8 +288,8 @@ export default function SettingsApiPage() {
                 </td>
                 <td className="px-3 py-2.5 text-gray-500 text-xs">{c.lastSync}</td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => toast.show(`${c.name} と再接続しました`, "success")} className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25">
-                    再接続
+                  <button onClick={() => reconnect(c)} disabled={reconnecting[c.id]} className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 disabled:opacity-50">
+                    {reconnecting[c.id] ? "接続中…" : "再接続"}
                   </button>
                 </td>
               </tr>
@@ -247,6 +331,64 @@ export default function SettingsApiPage() {
           </label>
         </div>
       </GlassCard>
+
+      {showKeyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+          onClick={() => setShowKeyModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold text-gray-800 inline-flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-blue-600" />新規APIキー発行
+              </h3>
+              <button onClick={() => setShowKeyModal(false)} className="p-1 rounded-lg hover:bg-white/60 text-gray-400">
+                <span className="text-lg leading-none">×</span>
+              </button>
+            </div>
+            <div className="space-y-3 text-sm">
+              <label className="space-y-1 block">
+                <span className="text-xs text-gray-500">ラベル <span className="text-rose-500">*</span></span>
+                <input
+                  value={keyForm.label}
+                  onChange={(e) => setKeyForm((f) => ({ ...f, label: e.target.value }))}
+                  placeholder="例: 本番（外部連携用）"
+                  className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                />
+              </label>
+              <label className="space-y-1 block">
+                <span className="text-xs text-gray-500">スコープ</span>
+                <select
+                  value={keyForm.scope}
+                  onChange={(e) => setKeyForm((f) => ({ ...f, scope: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
+                >
+                  {SCOPE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 block">
+                <span className="text-xs text-gray-500">IP制限（任意・CIDR）</span>
+                <input
+                  value={keyForm.ipWhitelist}
+                  onChange={(e) => setKeyForm((f) => ({ ...f, ipWhitelist: e.target.value }))}
+                  placeholder="例: 203.0.113.10/32"
+                  className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono"
+                />
+              </label>
+              <p className="text-xs text-gray-400">秘密鍵は発行時のみ表示されます。発行後は再表示できません。</p>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <SecondaryButton onClick={() => setShowKeyModal(false)}>キャンセル</SecondaryButton>
+              <PrimaryButton onClick={submitKey}>発行する</PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

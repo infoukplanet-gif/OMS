@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -129,6 +129,117 @@ function TemplateModal({
   );
 }
 
+const PREVIEW_ROWS = [
+  { code: "AP-1024", name: "オーガニックコットンT 白 M", qty: 2, price: 2480 },
+  { code: "AP-2210", name: "リネンワイドパンツ ベージュ L", qty: 1, price: 5980 },
+  { code: "AC-0087", name: "本革ミニ財布 キャメル", qty: 1, price: 8800 },
+];
+
+function TemplatePreviewModal({ template, onClose }: { template: Template; onClose: () => void }) {
+  const subtotal = PREVIEW_ROWS.reduce((s, r) => s + r.qty * r.price, 0);
+  const tax = Math.round(subtotal * 0.1);
+  const showAmount = template.type !== "ピッキングリスト" && !template.name.includes("金額非表示");
+  const isInvoice = template.type === "請求書" || template.type === "見積書";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl max-h-[88vh] overflow-y-auto rounded-2xl bg-white/85 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-gray-800 inline-flex items-center gap-2">
+              <Eye className="h-4 w-4 text-blue-600" />プレビュー
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">{template.name}（{template.paperSize}）</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-white/60 text-gray-400">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* 紙面プレビュー */}
+        <div className="rounded-xl bg-white border border-gray-200 shadow-inner p-6 text-gray-800">
+          <div className="flex items-start justify-between border-b-2 border-gray-800 pb-3 mb-4">
+            <div>
+              <div className="text-xl font-bold tracking-wide">{template.type}</div>
+              <div className="text-xs text-gray-500 mt-1">発行日: 2026/06/13　No. SAMPLE-0001</div>
+            </div>
+            <div className="text-right text-xs text-gray-600">
+              <div className="font-semibold text-sm text-gray-800">サンプル商店 株式会社</div>
+              <div>〒100-0001 東京都千代田区1-1-1</div>
+              <div>TEL: 03-0000-0000</div>
+              {isInvoice && <div className="mt-1">登録番号: T1234567890123</div>}
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <div className="text-sm font-semibold border-b border-gray-300 pb-1 mb-1 inline-block">サンプル 太郎 様</div>
+            <div className="text-xs text-gray-500">〒150-0002 東京都渋谷区サンプル2-3-4</div>
+          </div>
+
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-gray-100 border-y border-gray-300">
+                <th className="text-left px-2 py-1.5 font-medium">商品コード</th>
+                <th className="text-left px-2 py-1.5 font-medium">商品名</th>
+                <th className="text-right px-2 py-1.5 font-medium">数量</th>
+                {showAmount && <th className="text-right px-2 py-1.5 font-medium">単価</th>}
+                {showAmount && <th className="text-right px-2 py-1.5 font-medium">金額</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {PREVIEW_ROWS.map((r) => (
+                <tr key={r.code} className="border-b border-gray-200">
+                  <td className="px-2 py-1.5 font-mono">{r.code}</td>
+                  <td className="px-2 py-1.5">{r.name}</td>
+                  <td className="px-2 py-1.5 text-right">{r.qty}</td>
+                  {showAmount && <td className="px-2 py-1.5 text-right">¥{r.price.toLocaleString()}</td>}
+                  {showAmount && <td className="px-2 py-1.5 text-right">¥{(r.qty * r.price).toLocaleString()}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {showAmount && (
+            <div className="flex justify-end mt-3">
+              <div className="w-48 text-xs space-y-1">
+                <div className="flex justify-between"><span className="text-gray-500">小計</span><span>¥{subtotal.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">消費税(10%)</span><span>¥{tax.toLocaleString()}</span></div>
+                <div className="flex justify-between border-t border-gray-300 pt-1 font-bold text-sm"><span>合計</span><span>¥{(subtotal + tax).toLocaleString()}</span></div>
+              </div>
+            </div>
+          )}
+
+          {template.type === "送り状" && (
+            <div className="mt-4 flex items-center gap-3 border border-gray-300 rounded p-3">
+              <div className="h-10 w-28 bg-[repeating-linear-gradient(90deg,#111_0_2px,transparent_2px_4px)]" aria-hidden />
+              <div className="text-xs text-gray-600">お問い合わせ伝票番号: 0000-1111-2222</div>
+            </div>
+          )}
+
+          {template.type === "ピッキングリスト" && (
+            <div className="mt-3 text-xs text-gray-500">ロケーション順ソート / バーコードスキャン対応</div>
+          )}
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-500">
+          <div>用紙: <span className="text-gray-800">{template.paperSize}</span></div>
+          <div>対象店舗: <span className="text-gray-800">{template.shop}</span></div>
+          <div>使用回数: <span className="text-gray-800">{template.usage.toLocaleString()}</span></div>
+          <div>最終更新: <span className="text-gray-800">{template.lastUpdated || "—"}</span></div>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-2">※ サンプルデータによる表示イメージです。実際の帳票は受注内容に応じて出力されます。</p>
+
+        <div className="flex justify-end mt-4">
+          <SecondaryButton onClick={onClose}>閉じる</SecondaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TemplatesPage() {
   const toast = useToast();
   const [items, setItems] = useState<Template[]>(INITIAL);
@@ -137,6 +248,7 @@ export default function TemplatesPage() {
   const [shopFilter, setShopFilter] = useState("all");
   // false = closed, null = new, Template = editing
   const [modalTarget, setModalTarget] = useState<Template | null | false>(false);
+  const [previewTarget, setPreviewTarget] = useState<Template | null>(null);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -153,8 +265,10 @@ export default function TemplatesPage() {
   const setDefault = (id: string, type: string) =>
     setItems((prev) => prev.map((t) => (t.type === type ? { ...t, isDefault: t.id === id } : t)));
 
+  const dupSeq = useRef(0);
   const handleDuplicate = (t: Template) => {
-    const newItem: Template = { ...t, id: `t-${Date.now()}`, name: `${t.name}（複製）`, isDefault: false, usage: 0 };
+    dupSeq.current += 1;
+    const newItem: Template = { ...t, id: `t-copy-${dupSeq.current}`, name: `${t.name}（複製）`, isDefault: false, usage: 0 };
     setItems((prev) => [...prev, newItem]);
     toast.show(`「${t.name}」を複製しました`, "success");
   };
@@ -174,6 +288,10 @@ export default function TemplatesPage() {
     <div className="space-y-5">
       {modalTarget !== false && (
         <TemplateModal template={modalTarget} onSave={handleSave} onClose={() => setModalTarget(false)} />
+      )}
+
+      {previewTarget && (
+        <TemplatePreviewModal template={previewTarget} onClose={() => setPreviewTarget(null)} />
       )}
 
       <div className="flex items-start justify-between">
@@ -259,7 +377,7 @@ export default function TemplatesPage() {
               <span>更新: {t.lastUpdated}</span>
             </div>
             <div className="flex gap-2 mt-3">
-              <button onClick={() => toast.show(`「${t.name}」のプレビューを表示します`, "info")} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-gray-700 bg-white/60 border border-white/50 hover:bg-white/80 inline-flex items-center justify-center gap-1">
+              <button onClick={() => setPreviewTarget(t)} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-gray-700 bg-white/60 border border-white/50 hover:bg-white/80 inline-flex items-center justify-center gap-1">
                 <Eye className="h-3 w-3" />プレビュー
               </button>
               <button onClick={() => setModalTarget(t)} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-blue-700 bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 inline-flex items-center justify-center gap-1">

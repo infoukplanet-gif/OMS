@@ -5,7 +5,13 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { AlertCircle, CheckCircle2, Pause, Play, RefreshCw, Search, Settings } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Pause, Play, RefreshCw, Save, Search, Settings, X } from "lucide-react";
+
+const nowStamp = (): string => {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `2026/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 type Channel = {
   id: string;
@@ -63,6 +69,43 @@ export default function OrderFetchApiPage() {
   const toggle = (id: string) =>
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, status: c.status === "disabled" ? "ok" : "disabled" } : c)));
 
+  const [running, setRunning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [modalChannel, setModalChannel] = useState<Channel | null>(null);
+
+  const runAllChannels = () => {
+    if (running) return;
+    setRunning(true);
+    setTimeout(() => {
+      const stamp = nowStamp();
+      setItems((prev) =>
+        prev.map((c) => (c.status === "disabled" ? c : { ...c, lastRun: stamp })),
+      );
+      setRunning(false);
+      toast.show("全チャネルの受注取得を実行しました", "success");
+    }, 1200);
+  };
+
+  const runChannel = (id: string) => {
+    const stamp = nowStamp();
+    setItems((prev) => prev.map((c) => (c.id === id ? { ...c, lastRun: stamp } : c)));
+    const target = items.find((c) => c.id === id);
+    toast.show(`${target?.name ?? "チャネル"} を手動実行しました`, "success");
+  };
+
+  const handleSave = () => {
+    if (saving) return;
+    setSaving(true);
+    setSaved(false);
+    setTimeout(() => {
+      setSaving(false);
+      setSaved(true);
+      toast.show("API共通設定を保存しました", "success");
+      setTimeout(() => setSaved(false), 3000);
+    }, 800);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -74,10 +117,18 @@ export default function OrderFetchApiPage() {
           <p className="text-sm text-gray-500 mt-1">楽天・Yahoo!・Amazon・Shopify等から自動的に受注を取込み、OMSで一元管理。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => toast.show("全チャネルを今すぐ実行しました", "success")}>
-            <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />全チャネル実行</span>
+          <SecondaryButton onClick={runAllChannels} disabled={running}>
+            <span className="inline-flex items-center gap-1.5">
+              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {running ? "実行中…" : "全チャネル実行"}
+            </span>
           </SecondaryButton>
-          <PrimaryButton onClick={() => toast.show("API共通設定を保存しました", "success")}>保存</PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={saving}>
+            <span className="inline-flex items-center gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+              {saving ? "保存中…" : saved ? "保存済" : "保存"}
+            </span>
+          </PrimaryButton>
         </div>
       </div>
 
@@ -203,10 +254,10 @@ export default function OrderFetchApiPage() {
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
-                    <button onClick={() => toast.show(`${c.name} の設定を開きます`, "info")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="設定">
+                    <button onClick={() => setModalChannel(c)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="設定">
                       <Settings className="h-3.5 w-3.5" />
                     </button>
-                    <button onClick={() => toast.show(`${c.name} を手動実行しました`, "success")} className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25" title="手動実行">
+                    <button onClick={() => runChannel(c.id)} className="p-1.5 rounded-lg bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25" title="手動実行">
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
                     <button onClick={() => { toggle(c.id); toast.show(c.status === "disabled" ? `${c.name} を有効化` : `${c.name} を一時停止`, "info"); }} className="p-1.5 rounded-lg bg-gray-500/10 text-gray-700 hover:bg-gray-500/20" title="切替">
@@ -219,6 +270,50 @@ export default function OrderFetchApiPage() {
           </tbody>
         </table>
       </GlassCard>
+
+      {modalChannel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4" onClick={() => setModalChannel(null)}>
+          <div
+            className="w-full max-w-md rounded-2xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12),inset_0_1px_0_rgba(255,255,255,0.9)] p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">{modalChannel.name}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{modalChannel.shop}</p>
+              </div>
+              <button onClick={() => setModalChannel(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-500/10 hover:text-gray-600" title="閉じる">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-2.5 text-sm">
+              <Row label="エンドポイント" value={modalChannel.endpoint} mono />
+              <Row label="取得スケジュール" value={modalChannel.schedule} />
+              <Row label="最終実行" value={modalChannel.lastRun} />
+              <Row label="前回取得件数" value={`${modalChannel.lastCount} 件`} />
+              <Row label="24時間取得" value={`${modalChannel.total24h.toLocaleString()} 件`} />
+              <Row label="エラー件数" value={`${modalChannel.errorCount} 件`} />
+              <Row label="認証期限" value={modalChannel.authExpires} />
+              <Row label="状態" value={sbLabel[modalChannel.status]} />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <SecondaryButton onClick={() => { runChannel(modalChannel.id); setModalChannel(null); }}>
+                <span className="inline-flex items-center gap-1.5"><RefreshCw className="h-4 w-4" />手動実行</span>
+              </SecondaryButton>
+              <PrimaryButton onClick={() => setModalChannel(null)}>閉じる</PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-white/50 border border-white/50">
+      <span className="text-xs text-gray-500 shrink-0">{label}</span>
+      <span className={cn("text-gray-800 text-right break-all", mono && "font-mono text-xs")}>{value}</span>
     </div>
   );
 }

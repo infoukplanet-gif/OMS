@@ -41,6 +41,21 @@ export default function MiscSettingsPage() {
   const [logRetention, setLogRetention] = useState("1");
   const [purgeDays, setPurgeDays] = useState("30");
   const [backupTarget, setBackupTarget] = useState("AWS S3 (s3://oms-backup/daily)");
+  const [backingUp, setBackingUp] = useState(false);
+  const [lastBackup, setLastBackup] = useState("2026-06-12 03:00");
+
+  const runBackup = () => {
+    if (backingUp) return;
+    setBackingUp(true);
+    setTimeout(() => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      setLastBackup(stamp);
+      setBackingUp(false);
+      toast.show(`バックアップが完了しました（保管先: ${backupTarget}）`, "success");
+    }, 1500);
+  };
 
   const [adminEmail, setAdminEmail] = useState("admin@example.com");
   const [supportTel, setSupportTel] = useState("03-0000-0000");
@@ -208,8 +223,11 @@ export default function MiscSettingsPage() {
             <span className="text-xs text-gray-500">削除データの完全消去日数</span>
             <input type="number" value={purgeDays} onChange={(e) => setPurgeDays(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
-          <div className="flex items-end">
-            <SecondaryButton onClick={() => toast.show("バックアップを今すぐ実行しました", "success")}>今すぐバックアップ</SecondaryButton>
+          <div className="flex flex-col justify-end gap-1.5">
+            <SecondaryButton onClick={runBackup} disabled={backingUp}>
+              {backingUp ? "バックアップ中…" : "今すぐバックアップ"}
+            </SecondaryButton>
+            <span className="text-xs text-gray-500">最終バックアップ: {lastBackup}</span>
           </div>
         </div>
       </GlassCard>

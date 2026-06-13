@@ -66,6 +66,22 @@ export default function ShopsPage() {
     toast.show(`${name} を削除しました`, "info");
   };
 
+  const [reconnecting, setReconnecting] = useState<Record<string, boolean>>({});
+
+  const reconnect = (id: string, name: string) => {
+    const shop = shopStore.findById(id);
+    if (!shop || reconnecting[id]) return;
+    setReconnecting((prev) => ({ ...prev, [id]: true }));
+    setTimeout(() => {
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      shopStore.upsert({ ...shop, status: "連携中", lastSync: "同期完了", lastSyncAt: stamp });
+      setReconnecting((prev) => ({ ...prev, [id]: false }));
+      toast.show(`${name} を再接続しました`, "success");
+    }, 1200);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -227,11 +243,12 @@ export default function ShopsPage() {
                   <div className="flex justify-center gap-1">
                     {s.status === "エラー" && (
                       <button
-                        onClick={() => toast.show(`${s.name} を再接続しました`, "success")}
-                        className="p-1.5 rounded-lg bg-orange-500/15 text-orange-700 hover:bg-orange-500/25"
+                        onClick={() => reconnect(s.id, s.name)}
+                        disabled={reconnecting[s.id]}
+                        className="p-1.5 rounded-lg bg-orange-500/15 text-orange-700 hover:bg-orange-500/25 disabled:opacity-50"
                         title="再接続"
                       >
-                        <RefreshCw className="h-3.5 w-3.5" />
+                        <RefreshCw className={cn("h-3.5 w-3.5", reconnecting[s.id] && "animate-spin")} />
                       </button>
                     )}
                     <Link

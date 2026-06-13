@@ -43,28 +43,77 @@ const sbLabel: Record<string, string> = { success: "成功", running: "処理中
 
 const categories = Array.from(new Set(data.map((d) => d.category)));
 
+function downloadBlob(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function DownloadHistoryPage() {
   const toast = useToast();
+  const [jobs, setJobs] = useState<Job[]>(data);
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState<"all" | Job["status"]>("all");
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
-    return data.filter((d) => {
+    return jobs.filter((d) => {
       if (k && !`${d.id} ${d.filename} ${d.user}`.toLowerCase().includes(k)) return false;
       if (category !== "all" && d.category !== category) return false;
       if (status !== "all" && d.status !== status) return false;
       return true;
     });
-  }, [keyword, category, status]);
+  }, [jobs, keyword, category, status]);
 
   const kpis = [
-    { label: "総ダウンロード", value: data.length, color: "text-gray-700" },
-    { label: "成功", value: data.filter((d) => d.status === "success").length, color: "text-emerald-600" },
-    { label: "処理中", value: data.filter((d) => d.status === "running").length, color: "text-blue-600" },
-    { label: "失敗（要再実行）", value: data.filter((d) => d.status === "failed").length, color: "text-red-600" },
+    { label: "総ダウンロード", value: jobs.length, color: "text-gray-700" },
+    { label: "成功", value: jobs.filter((d) => d.status === "success").length, color: "text-emerald-600" },
+    { label: "処理中", value: jobs.filter((d) => d.status === "running").length, color: "text-blue-600" },
+    { label: "失敗（要再実行）", value: jobs.filter((d) => d.status === "failed").length, color: "text-red-600" },
   ];
+
+  const exportHistoryCsv = () => {
+    const header = ["ジョブID", "カテゴリ", "ファイル名", "期間", "実行者", "形式", "レコード", "サイズ", "実行日時", "所要", "状態"];
+    const rows = filtered.map((d) => [d.id, d.category, d.filename, d.range, d.user, d.format, d.records, d.size, d.startedAt, d.duration, sbLabel[d.status]]);
+    const csv = [header, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    downloadBlob(`download_history_${filtered.length}件.csv`, "﻿" + csv, "text/csv;charset=utf-8");
+    toast.show(`履歴 ${filtered.length} 件をCSVで書き出しました`, "success");
+  };
+
+  const reDownload = (job: Job) => {
+    const header = ["ジョブID", "カテゴリ", "ファイル名", "期間", "実行者", "形式", "レコード", "サイズ", "実行日時"];
+    const row = [job.id, job.category, job.filename, job.range, job.user, job.format, job.records, job.size, job.startedAt];
+    const csv = [header, row].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    downloadBlob(job.filename.replace(/\.(xlsx|csv)$/i, "") + ".csv", "﻿" + csv, "text/csv;charset=utf-8");
+    toast.show(`${job.filename} を再ダウンロードしました`, "info");
+  };
+
+  const reRun = (id: string) => {
+    setJobs((prev) => prev.map((d) => (d.id === id ? { ...d, status: "running", duration: "—" } : d)));
+    toast.show(`${id} を再実行しています…`, "info");
+    setTimeout(() => {
+      setJobs((prev) =>
+        prev.map((d) =>
+          d.id === id && d.status === "running"
+            ? { ...d, status: "success", duration: "4s", records: d.records || 1 }
+            : d
+        )
+      );
+      toast.show(`${id} の再実行が完了しました`, "success");
+    }, 1600);
+  };
+
+  const removeJob = (id: string) => {
+    setJobs((prev) => prev.filter((d) => d.id !== id));
+    toast.show(`${id} を削除しました`, "info");
+  };
 
   return (
     <div className="space-y-5">
@@ -76,7 +125,7 @@ export default function DownloadHistoryPage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">過去のダウンロードジョブを統合管理。期限切れファイルは7日経過で自動削除されます。</p>
         </div>
-        <SecondaryButton onClick={() => toast.show("履歴をCSVで書き出しました", "success")}>
+        <SecondaryButton onClick={exportHistoryCsv}>
           <span className="inline-flex items-center gap-1.5"><Download className="h-4 w-4" />履歴CSV</span>
         </SecondaryButton>
       </div>
@@ -165,16 +214,16 @@ export default function DownloadHistoryPage() {
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
                     {d.status === "success" && (
-                      <button onClick={() => toast.show(`${d.filename} をダウンロードします`, "info")} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="再ダウンロード">
+                      <button onClick={() => reDownload(d)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="再ダウンロード">
                         <Download className="h-3.5 w-3.5" />
                       </button>
                     )}
                     {d.status === "failed" && (
-                      <button onClick={() => toast.show(`${d.id} を再実行しました`, "success")} className="p-1.5 rounded-lg bg-orange-500/15 text-orange-700 hover:bg-orange-500/25" title="再実行">
+                      <button onClick={() => reRun(d.id)} className="p-1.5 rounded-lg bg-orange-500/15 text-orange-700 hover:bg-orange-500/25" title="再実行">
                         <RefreshCw className="h-3.5 w-3.5" />
                       </button>
                     )}
-                    <button onClick={() => toast.show(`${d.id} を削除しました`, "info")} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
+                    <button onClick={() => removeJob(d.id)} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
