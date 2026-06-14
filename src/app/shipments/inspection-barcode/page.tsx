@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
@@ -31,7 +32,9 @@ const INITIAL_ITEMS: ScanItem[] = [
 
 export default function ShipmentsInspectionBarcodePage() {
   const toast = useToast();
+  const router = useRouter();
   const [orderNo, setOrderNo] = useState("ORD-2026-00851");
+  const [completing, setCompleting] = useState(false);
   const [items, setItems] = useState<ScanItem[]>(INITIAL_ITEMS);
   const [scanCode, setScanCode] = useState("");
   const [logs, setLogs] = useState<ScanLog[]>([
@@ -70,7 +73,19 @@ export default function ShipmentsInspectionBarcodePage() {
   const totalScanned = items.reduce((s, i) => s + i.scanned, 0);
   const allDone = totalScanned === totalRequired;
 
-  const completeShipment = () => toast.show("出荷確定処理に進みました", "success");
+  const completeShipment = () => {
+    if (!allDone || completing) return;
+    setCompleting(true);
+    const now = new Date().toLocaleTimeString("ja-JP", { hour12: false });
+    setLogs((prev) => [
+      { id: prev.length + 1, at: now, sku: orderNo, result: "ok", detail: "検品完了・出荷確定へ送信" },
+      ...prev,
+    ]);
+    toast.show(`${orderNo} の検品が完了しました。出荷確定へ移動します`, "success");
+    setTimeout(() => {
+      router.push(`/shipments/confirm?order=${encodeURIComponent(orderNo)}`);
+    }, 600);
+  };
 
   return (
     <div className="space-y-5">
@@ -88,8 +103,8 @@ export default function ShipmentsInspectionBarcodePage() {
             <span className="font-semibold">{totalScanned}/{totalRequired}</span> 個
           </p>
         </div>
-        <PrimaryButton onClick={completeShipment} disabled={!allDone}>
-          <CheckCircle2 className="h-4 w-4" />検品完了 → 出荷確定
+        <PrimaryButton onClick={completeShipment} disabled={!allDone || completing}>
+          <CheckCircle2 className="h-4 w-4" />{completing ? "送信中…" : "検品完了 → 出荷確定"}
         </PrimaryButton>
       </div>
 
