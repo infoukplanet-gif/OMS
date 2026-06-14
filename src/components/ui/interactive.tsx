@@ -51,10 +51,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 export function useToast() {
   const ctx = useContext(ToastContext);
   if (!ctx) {
-    // Fallback: no provider → use console + alert
+    // Fallback: no provider → dev-only diagnostic, silent in production
     return {
       show: (message: string) => {
-        if (typeof window !== "undefined") console.log("[toast]", message);
+        if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+          console.warn("[toast:no-provider]", message);
+        }
       },
     };
   }
