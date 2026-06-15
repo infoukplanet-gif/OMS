@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -30,6 +30,8 @@ const Field = ({
   className,
   type = "text",
   defaultValue,
+  value,
+  onChange,
   hint,
   unit,
 }: {
@@ -39,6 +41,8 @@ const Field = ({
   className?: string;
   type?: string;
   defaultValue?: string;
+  value?: string;
+  onChange?: (v: string) => void;
   hint?: string;
   unit?: string;
 }) => (
@@ -52,7 +56,9 @@ const Field = ({
       <input
         type={type}
         placeholder={placeholder}
-        defaultValue={defaultValue}
+        {...(value !== undefined
+          ? { value, onChange: (e: ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value) }
+          : { defaultValue })}
         className={cn(
           "w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all",
           unit && "pr-10"
@@ -71,6 +77,8 @@ const Select = ({
   options,
   className,
   defaultValue,
+  value,
+  onChange,
   hint,
 }: {
   label: string;
@@ -78,6 +86,8 @@ const Select = ({
   options: string[];
   className?: string;
   defaultValue?: string;
+  value?: string;
+  onChange?: (v: string) => void;
   hint?: string;
 }) => (
   <div className={cn("space-y-1.5", className)}>
@@ -87,7 +97,9 @@ const Select = ({
       {hint && <HelpHint side="right">{hint}</HelpHint>}
     </label>
     <select
-      defaultValue={defaultValue}
+      {...(value !== undefined
+        ? { value, onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange?.(e.target.value) }
+        : { defaultValue })}
       className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
     >
       {options.map((o) => (
@@ -145,9 +157,23 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
     return isEdit ? ["リピーター", "ギフト購入多"] : [];
   });
 
-  // 必須フィールドを controlled で管理する
+  // 永続化されるフィールド（CustomerRecord のスキーマ項目）を controlled で管理する。
+  // これらを束ねないと保存時に入力値が捨てられる。
   const [code, setCode] = useState(() => prefill?.code ?? "");
   const [name, setName] = useState(() => prefill?.name ?? "");
+  const [kana, setKana] = useState(() => String(prefill?.kana ?? ""));
+  const [email, setEmail] = useState(() => String(prefill?.email ?? ""));
+  const [phone, setPhone] = useState(() => String(prefill?.phone ?? ""));
+  const [prefecture, setPrefecture] = useState(() => String(prefill?.prefecture ?? ""));
+  const [rank, setRank] = useState<CustomerRecord["rank"]>(
+    () => (prefill?.rank as CustomerRecord["rank"]) ?? "通常"
+  );
+
+  // 都道府県セレクトは controlled 値が options に含まれないと表示が消えるため、
+  // 既存値を取りこぼさないよう現在値を option 集合に含める。
+  const prefectureOptions = Array.from(
+    new Set(["選択", "東京都", "大阪府", "北海道", "京都府", "福岡県", ...(prefecture ? [prefecture] : [])])
+  );
 
   const addAddress = () => {
     if (shippingAddresses.length < 5) setShippingAddresses([...shippingAddresses, shippingAddresses.length + 1]);
@@ -190,16 +216,16 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
       id: trimmedCode,
       code: trimmedCode,
       name: trimmedName,
-      kana: String(existing?.kana ?? ""),
-      email: String(existing?.email ?? d.email ?? ""),
-      phone: String(existing?.phone ?? d.tel ?? ""),
-      prefecture: String(existing?.prefecture ?? ""),
+      kana: kana.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      prefecture: prefecture === "選択" ? "" : prefecture.trim(),
       purchases: Number(existing?.purchases ?? 0),
       total: Number(existing?.total ?? 0),
       lastPurchase: String(existing?.lastPurchase ?? now),
       registered: String(existing?.registered ?? now),
-      rank: (existing?.rank as CustomerRecord["rank"]) ?? "通常",
-      vip: Boolean(existing?.vip ?? false),
+      rank,
+      vip: rank === "VIP" || Boolean(existing?.vip ?? false),
       kind: "general",
       tags,
     };
@@ -323,7 +349,7 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
             />
           </div>
-          <Field label="顧客名カナ" placeholder="ヤマダ タロウ" defaultValue={d.kana} hint="検索性のため必ず入力推奨。半角/全角は自動正規化されます。" />
+          <Field label="顧客名カナ" placeholder="ヤマダ タロウ" value={kana} onChange={setKana} hint="検索性のため必ず入力推奨。半角/全角は自動正規化されます。" />
           <Field label="ニックネーム" placeholder="タロちゃん" />
           <Select label="性別" options={["未設定", "男性", "女性", "その他"]} />
           <div className="space-y-1.5">
@@ -339,7 +365,13 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
           <Field label="役職" placeholder="部長" />
           <Field label="紹介元" placeholder="Webサイト/知人紹介" hint="集客分析に使用するチャネル名。" />
           <Select label="顧客区分" options={["一般", "VIP", "法人", "取引先"]} />
-          <Select label="ランク" options={["通常", "シルバー", "ゴールド", "プラチナ"]} hint="購入実績で自動更新されますが、手動上書きも可能です。" />
+          <Select
+            label="ランク"
+            options={["通常", "シルバー", "ゴールド", "プラチナ", "VIP"]}
+            value={rank}
+            onChange={(v) => setRank(v as CustomerRecord["rank"])}
+            hint="購入実績で自動更新されますが、手動上書きも可能です。"
+          />
           <Select label="言語" options={["日本語", "English", "中文（簡体）", "中文（繁体）", "한국어"]} />
           <Select label="担当営業" options={["未割当", "佐藤 健", "鈴木 美咲", "田中 花子", "高橋 翔"]} />
         </div>
@@ -352,11 +384,11 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
           <HelpHint>複数の連絡手段を持つ顧客に備え、電話・メールは複数登録できます。</HelpHint>
         </h2>
         <div className="grid grid-cols-3 gap-4">
-          <Field label="電話番号1（主）" placeholder="03-0000-0000" type="tel" defaultValue={d.tel} />
+          <Field label="電話番号1（主）" placeholder="03-0000-0000" type="tel" value={phone} onChange={setPhone} />
           <Field label="電話番号2" placeholder="090-0000-0000" type="tel" />
           <Field label="電話番号3" placeholder="予備" type="tel" />
           <Field label="FAX" placeholder="03-0000-0000" type="tel" />
-          <Field label="メールアドレス1" required placeholder="example@mail.com" type="email" defaultValue={d.email} hint="ログインID・通知配信先になります。" />
+          <Field label="メールアドレス1" required placeholder="example@mail.com" type="email" value={email} onChange={setEmail} hint="ログインID・通知配信先になります。" />
           <Field label="メールアドレス2" placeholder="予備" type="email" />
           <Field label="LINE ID" placeholder="@yamada" />
           <Field label="Webサイト" placeholder="https://example.com" />
@@ -375,7 +407,13 @@ export function CustomerForm({ mode, recordId }: CustomerFormProps) {
         </h2>
         <div className="grid grid-cols-6 gap-4">
           <Field label="郵便番号" placeholder="100-0001" className="col-span-1" hint="ハイフン有無どちらでも保存できます。" />
-          <Select label="都道府県" options={["選択", "東京都", "大阪府", "北海道", "京都府", "福岡県"]} className="col-span-1" />
+          <Select
+            label="都道府県"
+            options={prefectureOptions}
+            value={prefecture || "選択"}
+            onChange={setPrefecture}
+            className="col-span-1"
+          />
           <Field label="市区町村" placeholder="千代田区" className="col-span-2" />
           <Field label="番地" placeholder="千代田1-1-1" className="col-span-2" />
           <Field label="建物名・部屋番号" placeholder="サンプルビル 10F" className="col-span-6" />
