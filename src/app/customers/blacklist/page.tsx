@@ -1,10 +1,19 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
 import { downloadCsv } from "@/lib/export/csv";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  blacklistStore,
+  INITIAL_BLACKLIST,
+  SEVERITY_LADDER,
+  type BlacklistEntry,
+  type BlockTarget,
+  type Reason,
+} from "@/lib/stores/blacklist";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -23,38 +32,6 @@ import {
   ShoppingCart,
 } from "lucide-react";
 
-type Reason =
-  | "代金未払い"
-  | "受取拒否"
-  | "不正カード"
-  | "なりすまし"
-  | "悪質クレーム"
-  | "脅迫・暴言"
-  | "規約違反"
-  | "その他";
-
-type BlockTarget = "order" | "shipping" | "contact" | "payment";
-
-type Severity = "観察" | "注意" | "警告" | "完全ブロック";
-
-type BlacklistEntry = {
-  id: string;
-  code: string;
-  name: string;
-  kana: string;
-  email: string;
-  phone: string;
-  reason: Reason;
-  detail: string;
-  severity: Severity;
-  blocks: BlockTarget[];
-  registeredAt: string;
-  registeredBy: string;
-  expiresAt: string | null;
-  status: "active" | "released" | "expired";
-  evidenceCount: number;
-};
-
 type AuditLog = {
   id: number;
   at: string;
@@ -63,130 +40,6 @@ type AuditLog = {
   target: string;
   detail?: string;
 };
-
-const SEVERITY_LADDER: Severity[] = ["観察", "注意", "警告", "完全ブロック"];
-
-const INITIAL_ENTRIES: BlacklistEntry[] = [
-  {
-    id: "BL-001",
-    code: "CUS-0099",
-    name: "悪質太郎",
-    kana: "アクシツタロウ",
-    email: "akushitsu@example.com",
-    phone: "090-9999-0001",
-    reason: "代金未払い",
-    detail: "代金引換での受取拒否が3回連続。配送料が累計¥4,800の損害。",
-    severity: "完全ブロック",
-    blocks: ["order", "shipping", "payment"],
-    registeredAt: "2026-03-15",
-    registeredBy: "佐藤 健（管理者）",
-    expiresAt: null,
-    status: "active",
-    evidenceCount: 5,
-  },
-  {
-    id: "BL-002",
-    code: "CUS-0145",
-    name: "迷惑花子",
-    kana: "メイワクハナコ",
-    email: "meiwaku@example.com",
-    phone: "080-9999-0002",
-    reason: "不正カード",
-    detail: "他人名義クレジットカード使用の疑い。カード会社からチャージバック発生。",
-    severity: "完全ブロック",
-    blocks: ["order", "payment"],
-    registeredAt: "2026-02-28",
-    registeredBy: "鈴木 美咲",
-    expiresAt: null,
-    status: "active",
-    evidenceCount: 3,
-  },
-  {
-    id: "BL-003",
-    code: "CUS-0201",
-    name: "クレーム一郎",
-    kana: "クレームイチロウ",
-    email: "claim@example.com",
-    phone: "070-9999-0003",
-    reason: "脅迫・暴言",
-    detail: "電話・メールにおける脅迫的な言動を録音/保存済み。法務確認済。",
-    severity: "完全ブロック",
-    blocks: ["order", "contact", "shipping"],
-    registeredAt: "2026-01-10",
-    registeredBy: "田中 花子",
-    expiresAt: null,
-    status: "active",
-    evidenceCount: 8,
-  },
-  {
-    id: "BL-004",
-    code: "CUS-0312",
-    name: "返品濫用 次郎",
-    kana: "ヘンピンランヨウ",
-    email: "henpin@example.com",
-    phone: "090-9999-0004",
-    reason: "規約違反",
-    detail: "12ヶ月で返品率82%。利用規約第5条に基づき期限付きブロック。",
-    severity: "警告",
-    blocks: ["order"],
-    registeredAt: "2026-04-05",
-    registeredBy: "高橋 翔",
-    expiresAt: "2026-10-05",
-    status: "active",
-    evidenceCount: 2,
-  },
-  {
-    id: "BL-005",
-    code: "CUS-0420",
-    name: "なりすまし 三郎",
-    kana: "ナリスマシ",
-    email: "narisumashi@example.com",
-    phone: "080-9999-0005",
-    reason: "なりすまし",
-    detail: "別顧客の住所・電話番号で会員登録。本人確認の結果、第三者であることが判明。",
-    severity: "完全ブロック",
-    blocks: ["order", "payment", "contact"],
-    registeredAt: "2025-11-20",
-    registeredBy: "佐藤 健（管理者）",
-    expiresAt: null,
-    status: "active",
-    evidenceCount: 4,
-  },
-  {
-    id: "BL-006",
-    code: "CUS-0488",
-    name: "観察対象 四郎",
-    kana: "カンサツタイショウ",
-    email: "kansatu@example.com",
-    phone: "090-9999-0006",
-    reason: "受取拒否",
-    detail: "代金引換の受取拒否が2回。3回目で完全ブロック移行を予定。",
-    severity: "注意",
-    blocks: [],
-    registeredAt: "2026-04-12",
-    registeredBy: "鈴木 美咲",
-    expiresAt: "2026-07-12",
-    status: "active",
-    evidenceCount: 1,
-  },
-  {
-    id: "BL-007",
-    code: "CUS-0510",
-    name: "改心 五郎",
-    kana: "カイシンゴロウ",
-    email: "kaishin@example.com",
-    phone: "070-9999-0007",
-    reason: "悪質クレーム",
-    detail: "本人より謝罪の連絡があり、社内協議の結果、解除済み。",
-    severity: "観察",
-    blocks: [],
-    registeredAt: "2025-08-15",
-    registeredBy: "田中 花子",
-    expiresAt: null,
-    status: "released",
-    evidenceCount: 0,
-  },
-];
 
 // 集計用の擬似「現在日時」（サンプルデータと噛み合わせるため固定）
 const PSEUDO_NOW = new Date("2026-04-28").getTime();
@@ -229,8 +82,12 @@ export default function BlacklistPage() {
   const [statusTab, setStatusTab] = useState<(typeof STATUS_OPTIONS)[number]>("有効");
   const [showAddModal, setShowAddModal] = useState(false);
   const [selected, setSelected] = useState<BlacklistEntry | null>(null);
-  const [entries, setEntries] = useState<BlacklistEntry[]>(INITIAL_ENTRIES);
-  const seqRef = useRef(INITIAL_ENTRIES.length);
+  const entries = useSyncExternalStore(
+    blacklistStore.subscribe,
+    blacklistStore.getState,
+    blacklistStore.getState,
+  );
+  usePersistentStore({ store: blacklistStore, domain: "blacklist", seed: INITIAL_BLACKLIST });
 
   const emptyDraft = { code: "", name: "", reason: "", severity: "", blocks: "", expires: "", detail: "" };
   const [draft, setDraft] = useState(emptyDraft);
@@ -264,7 +121,13 @@ export default function BlacklistPage() {
     const p = (n: number) => String(n).padStart(2, "0");
     const registeredAt = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
     const expires = draft.expires.trim();
-    const seq = (seqRef.current += 1);
+    const maxSeq = blacklistStore
+      .getState()
+      .reduce((max, e) => {
+        const n = Number(/^BL-(\d+)$/.exec(e.id)?.[1] ?? 0);
+        return n > max ? n : max;
+      }, 0);
+    const seq = maxSeq + 1;
     const entry: BlacklistEntry = {
       id: `BL-${String(seq).padStart(3, "0")}`,
       code: draft.code.trim(),
@@ -282,7 +145,7 @@ export default function BlacklistPage() {
       status: "active",
       evidenceCount: 0,
     };
-    setEntries((prev) => [entry, ...prev]);
+    blacklistStore.upsert(entry);
     setDraft(emptyDraft);
     setStatusTab("有効");
     setShowAddModal(false);
@@ -317,9 +180,7 @@ export default function BlacklistPage() {
   };
 
   const release = (entry: BlacklistEntry) => {
-    setEntries((prev) =>
-      prev.map((e) => (e.id === entry.id ? { ...e, status: "released" as const } : e))
-    );
+    blacklistStore.upsert({ ...entry, status: "released" });
     toast.show(`${entry.name} さんのブラックリスト登録を解除しました`, "success");
     setSelected(null);
   };
@@ -331,7 +192,7 @@ export default function BlacklistPage() {
       return;
     }
     const next = SEVERITY_LADDER[idx + 1];
-    setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, severity: next } : e)));
+    blacklistStore.upsert({ ...entry, severity: next });
     setSelected((cur) => (cur && cur.id === entry.id ? { ...cur, severity: next } : cur));
     toast.show(`${entry.name} さんの重要度を「${next}」に引き上げました`, "success");
   };
