@@ -98,6 +98,8 @@ export default function MailServerPage() {
   const [testTarget, setTestTarget] = useState("");
 
   const [testing, setTesting] = useState(false);
+  const [sendingTest, setSendingTest] = useState(false);
+  const [lastTestSent, setLastTestSent] = useState<{ target: string; at: string } | null>(null);
 
   const active = servers.find((s) => s.id === activeId) || servers[0];
   const update = (patch: Partial<Smtp>) =>
@@ -121,6 +123,18 @@ export default function MailServerPage() {
       setTesting(false);
       toast.show(`${active.host}:${active.port} への接続に成功しました`, "success");
     }, 1200);
+  };
+
+  const handleSendTest = () => {
+    if (sendingTest) return;
+    if (!testTarget.trim()) { toast.show("送信先を入力してください", "error"); return; }
+    setSendingTest(true);
+    toast.show(`${testTarget} へテスト送信中…`, "info");
+    setTimeout(() => {
+      setLastTestSent({ target: testTarget, at: nowStamp() });
+      setSendingTest(false);
+      toast.show(`${testTarget} へテスト送信しました`, "success");
+    }, 1000);
   };
 
   const handleSave = () => {
@@ -375,15 +389,17 @@ export default function MailServerPage() {
                 placeholder="テスト送信先アドレス"
                 className="flex-1 min-w-[240px] px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
               />
-              <PrimaryButton
-                onClick={() => {
-                  if (!testTarget) { toast.show("送信先を入力してください", "error"); return; }
-                  toast.show(`${testTarget} へテスト送信しました`, "success");
-                }}
-              >
-                <span className="inline-flex items-center gap-1.5"><Send className="h-4 w-4" />送信</span>
+              <PrimaryButton onClick={handleSendTest} disabled={sendingTest}>
+                <span className="inline-flex items-center gap-1.5">
+                  <Send className="h-4 w-4" />{sendingTest ? "送信中…" : "送信"}
+                </span>
               </PrimaryButton>
             </div>
+            {lastTestSent && (
+              <p className="mt-2 text-xs text-gray-400">
+                最終テスト送信: {lastTestSent.target}（{lastTestSent.at}）
+              </p>
+            )}
           </GlassCard>
         </div>
       </div>
