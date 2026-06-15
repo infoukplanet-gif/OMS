@@ -1,27 +1,16 @@
 "use client";
-import { useState } from "react";
+
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Plus, Trash2, Pencil } from "lucide-react";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-
-type Pattern = {
-  id: number;
-  name: string;
-  source: string;
-  columns: number;
-  lastUsed: string;
-  count: number;
-  delimiter: string;
-  encoding: string;
-  hasHeader: boolean;
-};
-
-const initialPatterns: Pattern[] = [
-  { id: 1, name: "楽天市場標準", source: "楽天市場", columns: 24, lastUsed: "2024/04/11", count: 1245, delimiter: "カンマ(,)", encoding: "UTF-8", hasHeader: true },
-  { id: 2, name: "Amazon出荷通知", source: "Amazon", columns: 18, lastUsed: "2024/04/10", count: 890, delimiter: "タブ", encoding: "UTF-8", hasHeader: true },
-  { id: 3, name: "卸先A専用", source: "自社EC", columns: 12, lastUsed: "2024/04/08", count: 56, delimiter: "カンマ(,)", encoding: "Shift_JIS", hasHeader: false },
-  { id: 4, name: "Yahoo!ショッピング", source: "Yahoo!", columns: 20, lastUsed: "2024/04/09", count: 432, delimiter: "カンマ(,)", encoding: "UTF-8", hasHeader: true },
-];
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  importPatternsStore,
+  INITIAL_IMPORT_PATTERNS,
+  nextImportPatternId,
+  type ImportPattern,
+} from "@/lib/stores/import-patterns";
 
 const SOURCES = ["楽天市場", "Amazon", "Yahoo!", "自社EC", "au PAY", "その他"];
 const DELIMITERS = ["カンマ(,)", "タブ", "パイプ(|)", "セミコロン(;)"];
@@ -35,10 +24,26 @@ function todayString() {
 
 export default function ImportPatternsPage() {
   const toast = useToast();
-  const [patterns, setPatterns] = useState<Pattern[]>(initialPatterns);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Pattern | null>(null);
 
+  // 永続化オーナー（このページのみ usePersistentStore を張る）
+  usePersistentStore({
+    store: importPatternsStore,
+    domain: "import-patterns",
+    seed: INITIAL_IMPORT_PATTERNS,
+  });
+
+  // ストア購読
+  const patterns = useSyncExternalStore(
+    importPatternsStore.subscribe,
+    importPatternsStore.getState,
+    importPatternsStore.getState,
+  );
+
+  // モーダル状態
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<ImportPattern | null>(null);
+
+  // フォーム状態
   const [name, setName] = useState("");
   const [source, setSource] = useState(SOURCES[0]);
   const [columns, setColumns] = useState(20);
@@ -57,7 +62,7 @@ export default function ImportPatternsPage() {
     setModalOpen(true);
   }
 
-  function openEdit(p: Pattern) {
+  function openEdit(p: ImportPattern) {
     setEditing(p);
     setName(p.name);
     setSource(p.source);
@@ -75,26 +80,37 @@ export default function ImportPatternsPage() {
       return;
     }
     if (editing) {
-      setPatterns((prev) =>
-        prev.map((p) =>
-          p.id === editing.id ? { ...p, name: trimmed, source, columns, delimiter, encoding, hasHeader } : p
-        )
-      );
+      importPatternsStore.upsert({
+        ...editing,
+        name: trimmed,
+        source,
+        columns,
+        delimiter,
+        encoding,
+        hasHeader,
+      });
       toast.show(`「${trimmed}」を更新しました`);
     } else {
-      const id = Math.max(0, ...patterns.map((p) => p.id)) + 1;
-      setPatterns((prev) => [
-        ...prev,
-        { id, name: trimmed, source, columns, delimiter, encoding, hasHeader, lastUsed: todayString(), count: 0 },
-      ]);
+      const id = nextImportPatternId(importPatternsStore.getState());
+      importPatternsStore.upsert({
+        id,
+        name: trimmed,
+        source,
+        columns,
+        delimiter,
+        encoding,
+        hasHeader,
+        lastUsed: todayString(),
+        count: 0,
+      });
       toast.show(`「${trimmed}」を追加しました`);
     }
     setModalOpen(false);
   }
 
-  function handleDelete(p: Pattern) {
+  function handleDelete(p: ImportPattern) {
     if (!confirm(`「${p.name}」を削除しますか？`)) return;
-    setPatterns((prev) => prev.filter((x) => x.id !== p.id));
+    importPatternsStore.remove(p.id);
     toast.show(`「${p.name}」を削除しました`);
   }
 
@@ -223,7 +239,7 @@ export default function ImportPatternsPage() {
               onChange={(e) => setEncoding(e.target.value)}
               className="w-full px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             >
-              {ENCODINGS.map((e) => <option key={e}>{e}</option>)}
+              {ENCODINGS.map((enc) => <option key={enc}>{enc}</option>)}
             </select>
           </div>
           <label className="col-span-2 flex items-center gap-2 text-sm text-gray-700">

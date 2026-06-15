@@ -1,11 +1,15 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { cn } from "@/lib/utils";
 import { Plus, X } from "lucide-react";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-
-type Tag = { id: number; name: string; color: string };
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderTagsStore,
+  INITIAL_ORDER_TAGS,
+  type OrderTag,
+} from "@/lib/stores/order-tags";
 
 const COLORS = [
   { key: "red", label: "赤", className: "bg-red-500/15 text-red-700 border-red-500/20" },
@@ -18,20 +22,21 @@ const COLORS = [
   { key: "pink", label: "桃", className: "bg-pink-500/15 text-pink-700 border-pink-500/20" },
 ];
 
-const initialTags: Tag[] = [
-  { id: 1, name: "優先対応", color: COLORS[0].className },
-  { id: 2, name: "ギフト", color: COLORS[6].className },
-  { id: 3, name: "同梱不可", color: COLORS[1].className },
-  { id: 4, name: "リピーター", color: COLORS[5].className },
-  { id: 5, name: "法人", color: COLORS[4].className },
-  { id: 6, name: "要確認", color: COLORS[2].className },
-];
-
 export default function TagsPage() {
   const toast = useToast();
-  const [tags, setTags] = useState<Tag[]>(initialTags);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({ store: orderTagsStore, domain: "order-tags", seed: INITIAL_ORDER_TAGS });
+
+  // 共有ストアを購読
+  const tags = useSyncExternalStore(
+    orderTagsStore.subscribe,
+    orderTagsStore.getState,
+    orderTagsStore.getState,
+  );
+
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Tag | null>(null);
+  const [editing, setEditing] = useState<OrderTag | null>(null);
   const [name, setName] = useState("");
   const [colorKey, setColorKey] = useState(COLORS[0].key);
 
@@ -42,7 +47,7 @@ export default function TagsPage() {
     setModalOpen(true);
   }
 
-  function openEdit(tag: Tag) {
+  function openEdit(tag: OrderTag) {
     setEditing(tag);
     setName(tag.name);
     const found = COLORS.find((c) => tag.color.includes(c.key));
@@ -58,19 +63,24 @@ export default function TagsPage() {
     }
     const color = COLORS.find((c) => c.key === colorKey)!.className;
     if (editing) {
-      setTags((prev) => prev.map((t) => (t.id === editing.id ? { ...t, name: trimmed, color } : t)));
+      orderTagsStore.upsert({ ...editing, name: trimmed, color });
       toast.show(`「${trimmed}」を更新しました`);
     } else {
-      const id = Math.max(0, ...tags.map((t) => t.id)) + 1;
-      setTags((prev) => [...prev, { id, name: trimmed, color }]);
+      // 新規 ID 採番: 既存 TAG-n の n 部分の最大値 + 1
+      const maxN = tags.reduce((acc, t) => {
+        const m = t.id.match(/^TAG-(\d+)$/);
+        return m ? Math.max(acc, parseInt(m[1], 10)) : acc;
+      }, 0);
+      const newId = `TAG-${maxN + 1}`;
+      orderTagsStore.upsert({ id: newId, name: trimmed, color });
       toast.show(`「${trimmed}」を追加しました`);
     }
     setModalOpen(false);
   }
 
-  function handleDelete(tag: Tag) {
+  function handleDelete(tag: OrderTag) {
     if (!confirm(`「${tag.name}」を削除しますか？`)) return;
-    setTags((prev) => prev.filter((t) => t.id !== tag.id));
+    orderTagsStore.remove(tag.id);
     toast.show(`「${tag.name}」を削除しました`);
   }
 

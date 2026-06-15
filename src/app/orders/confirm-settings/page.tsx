@@ -1,38 +1,41 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-
-type Rules = {
-  paymentUnset: boolean;
-  amountLimit: boolean;
-  amountLimitValue: number;
-  addressInvalid: boolean;
-  blacklistCustomer: boolean;
-  duplicateSameDay: boolean;
-  noteFilled: boolean;
-  outOfStock: boolean;
-  firstTimeCustomer: boolean;
-};
-
-const defaults: Rules = {
-  paymentUnset: true,
-  amountLimit: true,
-  amountLimitValue: 100000,
-  addressInvalid: true,
-  blacklistCustomer: true,
-  duplicateSameDay: false,
-  noteFilled: false,
-  outOfStock: true,
-  firstTimeCustomer: false,
-};
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderConfirmRulesStore,
+  INITIAL_ORDER_CONFIRM_RULES,
+  type OrderConfirmRulesConfig,
+} from "@/lib/stores/order-confirm-rules";
 
 export default function ConfirmSettingsPage() {
   const toast = useToast();
-  const [saved, setSaved] = useState<Rules>(defaults);
-  const [draft, setDraft] = useState<Rules>(defaults);
 
-  const dirty = JSON.stringify(saved) !== JSON.stringify(draft);
+  // 永続化オーナー
+  usePersistentStore({
+    store: orderConfirmRulesStore,
+    domain: "order-confirm-rules",
+    seed: INITIAL_ORDER_CONFIRM_RULES,
+  });
+
+  const items = useSyncExternalStore(
+    orderConfirmRulesStore.subscribe,
+    orderConfirmRulesStore.getState,
+    orderConfirmRulesStore.getState,
+  );
+  const config = items[0] ?? INITIAL_ORDER_CONFIRM_RULES[0];
+
+  // ドラフト状態（フォーム編集用）
+  const [draft, setDraft] = useState<OrderConfirmRulesConfig>(config);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setDraft(config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.id]);
+
+  const dirty = JSON.stringify(config) !== JSON.stringify(draft);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -42,22 +45,24 @@ export default function ConfirmSettingsPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  function upd<K extends keyof Rules>(k: K, v: Rules[K]) {
+  function upd<K extends keyof OrderConfirmRulesConfig>(k: K, v: OrderConfirmRulesConfig[K]) {
     setDraft((prev) => ({ ...prev, [k]: v }));
   }
+
   function save() {
     if (draft.amountLimit && draft.amountLimitValue <= 0) {
       return toast.show("金額上限は1円以上で入力してください", "error");
     }
-    setSaved(draft);
+    orderConfirmRulesStore.upsert({ ...draft, id: "config" });
     toast.show("確認内容設定を保存しました");
   }
+
   function reset() {
-    setDraft(saved);
+    setDraft(config);
     toast.show("変更を取消しました", "info");
   }
 
-  const rules: { key: keyof Rules; label: string; desc: string }[] = [
+  const rules: { key: keyof OrderConfirmRulesConfig; label: string; desc: string }[] = [
     { key: "paymentUnset", label: "支払方法チェック", desc: "支払方法が未設定の場合に確認ステータスへ" },
     { key: "amountLimit", label: "金額上限チェック", desc: "合計金額が一定額以上の場合に確認" },
     { key: "addressInvalid", label: "住所不備チェック", desc: "住所が未入力・不正な場合に確認" },
@@ -94,7 +99,7 @@ export default function ConfirmSettingsPage() {
                   <input
                     type="checkbox"
                     checked={draft[r.key] as boolean}
-                    onChange={(e) => upd(r.key, e.target.checked as Rules[typeof r.key])}
+                    onChange={(e) => upd(r.key, e.target.checked as OrderConfirmRulesConfig[typeof r.key])}
                     className="sr-only peer"
                   />
                   <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />

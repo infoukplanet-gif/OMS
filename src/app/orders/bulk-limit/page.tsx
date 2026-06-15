@@ -1,36 +1,41 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-
-type Settings = {
-  enabled: boolean;
-  maxPerDay: number;
-  maxPerSession: number;
-  intervalSec: number;
-  stopOnError: boolean;
-  notifyOnLimit: boolean;
-  autoPause: boolean;
-  adminOnly: boolean;
-};
-
-const defaults: Settings = {
-  enabled: true,
-  maxPerDay: 500,
-  maxPerSession: 100,
-  intervalSec: 2,
-  stopOnError: true,
-  notifyOnLimit: true,
-  autoPause: false,
-  adminOnly: false,
-};
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  bulkImportLimitStore,
+  INITIAL_BULK_IMPORT_LIMIT,
+  type BulkImportLimitConfig,
+} from "@/lib/stores/bulk-import-limit";
 
 export default function BulkLimitPage() {
   const toast = useToast();
-  const [saved, setSaved] = useState<Settings>(defaults);
-  const [draft, setDraft] = useState<Settings>(defaults);
 
-  const dirty = JSON.stringify(saved) !== JSON.stringify(draft);
+  // 永続化オーナー
+  usePersistentStore({
+    store: bulkImportLimitStore,
+    domain: "bulk-import-limit",
+    seed: INITIAL_BULK_IMPORT_LIMIT,
+  });
+
+  const items = useSyncExternalStore(
+    bulkImportLimitStore.subscribe,
+    bulkImportLimitStore.getState,
+    bulkImportLimitStore.getState,
+  );
+  const config = items[0] ?? INITIAL_BULK_IMPORT_LIMIT[0];
+
+  // ドラフト状態（フォーム編集用）
+  const [draft, setDraft] = useState<BulkImportLimitConfig>(config);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setDraft(config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.id]);
+
+  const dirty = JSON.stringify(config) !== JSON.stringify(draft);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -40,7 +45,7 @@ export default function BulkLimitPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  function upd<K extends keyof Settings>(k: K, v: Settings[K]) {
+  function upd<K extends keyof BulkImportLimitConfig>(k: K, v: BulkImportLimitConfig[K]) {
     setDraft((prev) => ({ ...prev, [k]: v }));
   }
 
@@ -48,15 +53,16 @@ export default function BulkLimitPage() {
     if (draft.maxPerDay < 1) return toast.show("1日の上限件数は1以上で入力してください", "error");
     if (draft.maxPerSession < 1) return toast.show("1セッションの上限件数は1以上で入力してください", "error");
     if (draft.intervalSec < 0) return toast.show("処理間隔は0以上で入力してください", "error");
-    setSaved(draft);
+    bulkImportLimitStore.upsert({ ...draft, id: "config" });
     toast.show("一括登録制限を保存しました");
   }
+
   function reset() {
-    setDraft(saved);
+    setDraft(config);
     toast.show("変更を取消しました", "info");
   }
 
-  const toggles: { key: keyof Settings; label: string; desc: string }[] = [
+  const toggles: { key: keyof BulkImportLimitConfig; label: string; desc: string }[] = [
     { key: "enabled", label: "一括登録制限を有効化", desc: "オフにすると全ての制限が無効になります" },
     { key: "stopOnError", label: "エラー発生時に処理を中断", desc: "1件でも失敗したら以降の処理を止めます" },
     { key: "notifyOnLimit", label: "上限到達時に通知", desc: "上限に達したら管理者へメール通知します" },
@@ -105,7 +111,7 @@ export default function BulkLimitPage() {
                 <input
                   type="checkbox"
                   checked={draft[t.key] as boolean}
-                  onChange={(e) => upd(t.key, e.target.checked as Settings[typeof t.key])}
+                  onChange={(e) => upd(t.key, e.target.checked as BulkImportLimitConfig[typeof t.key])}
                   className="sr-only peer"
                 />
                 <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />

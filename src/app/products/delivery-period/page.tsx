@@ -1,23 +1,15 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Plus, Clock, Trash2, Edit2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type Period = {
-  id: number;
-  code: string;
-  label: string;
-  minDays: number;
-  maxDays: number;
-  displayTextForCustomer: string;
-  badgeColor: string;
-  showOnShippingFee: boolean;
-  applyToOrderCutoff: string;
-  productCount: number;
-  active: boolean;
-};
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  deliveryPeriodStore,
+  INITIAL_DELIVERY_PERIODS,
+  type DeliveryPeriod,
+} from "@/lib/stores/delivery-periods";
 
 const BADGE_COLORS = [
   { key: "emerald", label: "緑", className: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30" },
@@ -32,56 +24,77 @@ function colorClass(key: string) {
   return BADGE_COLORS.find((c) => c.key === key)?.className ?? BADGE_COLORS[0].className;
 }
 
-const initialPeriods: Period[] = [
-  { id: 1, code: "TODAY", label: "即日出荷", minDays: 0, maxDays: 0, displayTextForCustomer: "本日出荷（15時までのご注文）", badgeColor: "emerald", showOnShippingFee: true, applyToOrderCutoff: "15:00", productCount: 842, active: true },
-  { id: 2, code: "NEXT", label: "翌営業日", minDays: 1, maxDays: 1, displayTextForCustomer: "翌営業日出荷", badgeColor: "blue", showOnShippingFee: true, applyToOrderCutoff: "", productCount: 520, active: true },
-  { id: 3, code: "2-3D", label: "2〜3営業日", minDays: 2, maxDays: 3, displayTextForCustomer: "2〜3営業日以内に出荷", badgeColor: "amber", showOnShippingFee: true, applyToOrderCutoff: "", productCount: 312, active: true },
-  { id: 4, code: "1W", label: "1週間以内", minDays: 4, maxDays: 7, displayTextForCustomer: "ご注文から1週間以内に出荷", badgeColor: "orange", showOnShippingFee: false, applyToOrderCutoff: "", productCount: 124, active: true },
-  { id: 5, code: "ORDER", label: "受注生産", minDays: 14, maxDays: 30, displayTextForCustomer: "受注生産（2〜4週間）", badgeColor: "red", showOnShippingFee: false, applyToOrderCutoff: "", productCount: 44, active: true },
-  { id: 6, code: "SOLD", label: "販売終了", minDays: 0, maxDays: 0, displayTextForCustomer: "販売終了", badgeColor: "gray", showOnShippingFee: false, applyToOrderCutoff: "", productCount: 0, active: false },
-];
-
 export default function DeliveryPeriodPage() {
   const toast = useToast();
-  const [periods, setPeriods] = useState<Period[]>(initialPeriods);
-  const [editing, setEditing] = useState<Period | null>(null);
+
+  // 永続化オーナー（このページがストアの正規オーナー）
+  usePersistentStore({
+    store: deliveryPeriodStore,
+    domain: "delivery-periods",
+    seed: INITIAL_DELIVERY_PERIODS,
+  });
+
+  // ストアを購読
+  const periods = useSyncExternalStore(
+    deliveryPeriodStore.subscribe,
+    deliveryPeriodStore.getState,
+    deliveryPeriodStore.getState,
+  );
+
+  // 編集用ローカル state（モーダル内ドラフトのみ）
+  const [editing, setEditing] = useState<DeliveryPeriod | null>(null);
   const [isNew, setIsNew] = useState(false);
+
+  function nextId(): string {
+    const ids = Array.from(periods).map((p) =>
+      Number(p.id.replace("dp-", ""))
+    );
+    return `dp-${Math.max(0, ...ids) + 1}`;
+  }
 
   function openNew() {
     setEditing({
-      id: Math.max(0, ...periods.map((p) => p.id)) + 1,
-      code: "", label: "", minDays: 0, maxDays: 0,
-      displayTextForCustomer: "", badgeColor: "blue",
-      showOnShippingFee: true, applyToOrderCutoff: "",
-      productCount: 0, active: true,
+      id: nextId(),
+      code: "",
+      label: "",
+      minDays: 0,
+      maxDays: 0,
+      displayTextForCustomer: "",
+      badgeColor: "blue",
+      showOnShippingFee: true,
+      applyToOrderCutoff: "",
+      productCount: 0,
+      active: true,
     });
     setIsNew(true);
   }
-  function openEdit(p: Period) { setEditing({ ...p }); setIsNew(false); }
+
+  function openEdit(p: DeliveryPeriod) {
+    setEditing({ ...p });
+    setIsNew(false);
+  }
 
   function save() {
     if (!editing) return;
     if (!editing.code.trim()) return toast.show("区分コードを入力してください", "error");
     if (!editing.label.trim()) return toast.show("区分名を入力してください", "error");
     if (editing.maxDays < editing.minDays) return toast.show("最大日数は最小日数以上にしてください", "error");
-    setPeriods((prev) => {
-      const exists = prev.some((p) => p.id === editing.id);
-      if (exists) return prev.map((p) => (p.id === editing.id ? editing : p));
-      return [...prev, editing];
-    });
+    deliveryPeriodStore.upsert(editing);
     toast.show(`「${editing.label}」を保存しました`);
     setEditing(null);
   }
 
-  function remove(p: Period) {
+  function remove(p: DeliveryPeriod) {
     if (p.productCount > 0) return toast.show(`${p.productCount}件の商品で使用中のため削除できません`, "error");
     if (!confirm(`「${p.label}」を削除しますか？`)) return;
-    setPeriods((prev) => prev.filter((x) => x.id !== p.id));
+    deliveryPeriodStore.remove(p.id);
     toast.show(`「${p.label}」を削除しました`);
   }
 
-  function toggle(id: number) {
-    setPeriods((prev) => prev.map((p) => (p.id === id ? { ...p, active: !p.active } : p)));
+  function toggle(id: string) {
+    const period = deliveryPeriodStore.findById(id);
+    if (!period) return;
+    deliveryPeriodStore.upsert({ ...period, active: !period.active });
   }
 
   return (
@@ -113,7 +126,7 @@ export default function DeliveryPeriodPage() {
               </tr>
             </thead>
             <tbody>
-              {periods.map((p) => (
+              {Array.from(periods).map((p) => (
                 <tr key={p.id} className={cn("border-b border-white/40 hover:bg-white/40 transition-colors", !p.active && "opacity-60")}>
                   <td className="py-2 px-2 font-mono text-xs text-gray-700">{p.code}</td>
                   <td className="py-2 px-2">
@@ -242,7 +255,12 @@ export default function DeliveryPeriodPage() {
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={editing.showOnShippingFee} onChange={(e) => setEditing({ ...editing, showOnShippingFee: e.target.checked })} className="rounded" />
+              <input
+                type="checkbox"
+                checked={editing.showOnShippingFee}
+                onChange={(e) => setEditing({ ...editing, showOnShippingFee: e.target.checked })}
+                className="rounded"
+              />
               <span className="text-gray-700">送料・配送画面にも表示する</span>
             </label>
           </div>

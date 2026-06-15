@@ -1,109 +1,101 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Plus, Copy, Trash2, MoveUp, MoveDown, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type Rule = {
-  warehouse: string;
-  priority: number;
-};
-
-type Pattern = {
-  id: number;
-  name: string;
-  description: string;
-  rules: Rule[];
-  appliedShops: string[];
-  strategy: "priority" | "ratio" | "nearest";
-  enabled: boolean;
-};
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  allocationPatternStore,
+  INITIAL_ALLOCATION_PATTERNS,
+  type AllocationPattern,
+  type AllocationRule,
+  type AllocationStrategy,
+} from "@/lib/stores/allocation-patterns";
 
 const WAREHOUSES = ["本社倉庫", "大阪倉庫", "福岡倉庫", "FBA倉庫", "3PL東京"];
 const SHOPS = ["楽天市場店", "Yahoo!店", "Amazon店", "自社Shopify", "BASE店"];
 
-const STRATEGY_LABEL: Record<Pattern["strategy"], string> = {
+const STRATEGY_LABEL: Record<AllocationStrategy, string> = {
   priority: "優先順位（上から順に引当）",
   ratio: "比率配分（指定比率で分割）",
   nearest: "最寄り優先（配送先から近い順）",
 };
 
-const initialPatterns: Pattern[] = [
-  {
-    id: 1,
-    name: "標準パターン",
-    description: "本社 → 大阪 → 福岡の順で引当",
-    rules: [
-      { warehouse: "本社倉庫", priority: 1 },
-      { warehouse: "大阪倉庫", priority: 2 },
-      { warehouse: "福岡倉庫", priority: 3 },
-    ],
-    appliedShops: ["楽天市場店", "Yahoo!店", "自社Shopify"],
-    strategy: "priority",
-    enabled: true,
-  },
-  {
-    id: 2,
-    name: "Amazon FBA専用",
-    description: "FBA倉庫のみから引当",
-    rules: [{ warehouse: "FBA倉庫", priority: 1 }],
-    appliedShops: ["Amazon店"],
-    strategy: "priority",
-    enabled: true,
-  },
-  {
-    id: 3,
-    name: "3PL優先パターン",
-    description: "3PL東京を優先して自社倉庫を温存",
-    rules: [
-      { warehouse: "3PL東京", priority: 1 },
-      { warehouse: "本社倉庫", priority: 2 },
-    ],
-    appliedShops: ["BASE店"],
-    strategy: "priority",
-    enabled: false,
-  },
-];
-
 export default function AllocationPatternPage() {
   const toast = useToast();
-  const [patterns, setPatterns] = useState<Pattern[]>(initialPatterns);
-  const [editing, setEditing] = useState<Pattern | null>(null);
+
+  // 永続化オーナー（このページがストアの正規オーナー）
+  usePersistentStore({
+    store: allocationPatternStore,
+    domain: "allocation-patterns",
+    seed: INITIAL_ALLOCATION_PATTERNS,
+  });
+
+  // ストアを購読
+  const patterns = useSyncExternalStore(
+    allocationPatternStore.subscribe,
+    allocationPatternStore.getState,
+    allocationPatternStore.getState,
+  );
+
+  // 編集用ローカル state（モーダル内ドラフトのみ）
+  const [editing, setEditing] = useState<AllocationPattern | null>(null);
   const [isNew, setIsNew] = useState(false);
+
+  function nextId(): string {
+    const ids = Array.from(patterns).map((p) =>
+      Number(p.id.replace("ap-", ""))
+    );
+    return `ap-${Math.max(0, ...ids) + 1}`;
+  }
 
   function openNew() {
     setEditing({
-      id: Math.max(0, ...patterns.map((p) => p.id)) + 1,
-      name: "", description: "", rules: [{ warehouse: WAREHOUSES[0], priority: 1 }],
-      appliedShops: [], strategy: "priority", enabled: true,
+      id: nextId(),
+      name: "",
+      description: "",
+      rules: [{ warehouse: WAREHOUSES[0], priority: 1 }],
+      appliedShops: [],
+      strategy: "priority",
+      enabled: true,
     });
     setIsNew(true);
   }
-  function openEdit(p: Pattern) { setEditing({ ...p, rules: [...p.rules] }); setIsNew(false); }
-  function duplicate(p: Pattern) {
-    const id = Math.max(0, ...patterns.map((p) => p.id)) + 1;
-    setPatterns((prev) => [...prev, { ...p, id, name: `${p.name} のコピー`, appliedShops: [] }]);
+
+  function openEdit(p: AllocationPattern) {
+    setEditing({ ...p, rules: [...p.rules] });
+    setIsNew(false);
+  }
+
+  function duplicate(p: AllocationPattern) {
+    const id = nextId();
+    allocationPatternStore.upsert({
+      ...p,
+      id,
+      name: `${p.name} のコピー`,
+      appliedShops: [],
+    });
     toast.show(`「${p.name}」を複製しました`);
   }
-  function remove(p: Pattern) {
+
+  function remove(p: AllocationPattern) {
     if (!confirm(`「${p.name}」を削除しますか？`)) return;
-    setPatterns((prev) => prev.filter((x) => x.id !== p.id));
+    allocationPatternStore.remove(p.id);
     toast.show(`「${p.name}」を削除しました`);
   }
-  function toggleEnabled(id: number) {
-    setPatterns((prev) => prev.map((p) => (p.id === id ? { ...p, enabled: !p.enabled } : p)));
+
+  function toggleEnabled(id: string) {
+    const pattern = allocationPatternStore.findById(id);
+    if (!pattern) return;
+    allocationPatternStore.upsert({ ...pattern, enabled: !pattern.enabled });
   }
 
   function save() {
     if (!editing) return;
     if (!editing.name.trim()) return toast.show("パターン名を入力してください", "error");
     if (editing.rules.length === 0) return toast.show("拠点ルールを1つ以上追加してください", "error");
-    setPatterns((prev) => {
-      const exists = prev.some((p) => p.id === editing.id);
-      if (exists) return prev.map((p) => (p.id === editing.id ? editing : p));
-      return [...prev, editing];
-    });
+    allocationPatternStore.upsert(editing);
     toast.show(`「${editing.name}」を保存しました`);
     setEditing(null);
   }
@@ -112,11 +104,12 @@ export default function AllocationPatternPage() {
     if (!editing) return;
     const target = idx + dir;
     if (target < 0 || target >= editing.rules.length) return;
-    const rules = [...editing.rules];
+    const rules: AllocationRule[] = [...editing.rules];
     [rules[idx], rules[target]] = [rules[target], rules[idx]];
     rules.forEach((r, i) => { r.priority = i + 1; });
     setEditing({ ...editing, rules });
   }
+
   function addRule() {
     if (!editing) return;
     setEditing({
@@ -124,18 +117,22 @@ export default function AllocationPatternPage() {
       rules: [...editing.rules, { warehouse: WAREHOUSES[0], priority: editing.rules.length + 1 }],
     });
   }
+
   function removeRule(idx: number) {
     if (!editing) return;
     const rules = editing.rules.filter((_, i) => i !== idx);
     rules.forEach((r, i) => { r.priority = i + 1; });
     setEditing({ ...editing, rules });
   }
+
   function toggleShop(shop: string) {
     if (!editing) return;
     const has = editing.appliedShops.includes(shop);
     setEditing({
       ...editing,
-      appliedShops: has ? editing.appliedShops.filter((s) => s !== shop) : [...editing.appliedShops, shop],
+      appliedShops: has
+        ? editing.appliedShops.filter((s) => s !== shop)
+        : [...editing.appliedShops, shop],
     });
   }
 
@@ -153,7 +150,7 @@ export default function AllocationPatternPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {patterns.map((p) => (
+        {Array.from(patterns).map((p) => (
           <GlassCard key={p.id}>
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1 min-w-0">
@@ -169,7 +166,12 @@ export default function AllocationPatternPage() {
                 <p className="text-xs text-gray-500 mt-1">{p.description}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer ml-2 shrink-0">
-                <input type="checkbox" checked={p.enabled} onChange={() => toggleEnabled(p.id)} className="sr-only peer" />
+                <input
+                  type="checkbox"
+                  checked={p.enabled}
+                  onChange={() => toggleEnabled(p.id)}
+                  className="sr-only peer"
+                />
                 <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
               </label>
             </div>
@@ -197,11 +199,26 @@ export default function AllocationPatternPage() {
             </div>
 
             <div className="flex items-center gap-1 pt-3 border-t border-white/60">
-              <button type="button" onClick={() => openEdit(p)} className="px-3 py-1 rounded-lg text-xs bg-white/70 border border-white/60 hover:bg-white">編集</button>
-              <button type="button" onClick={() => duplicate(p)} className="px-3 py-1 rounded-lg text-xs bg-white/70 border border-white/60 hover:bg-white flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => openEdit(p)}
+                className="px-3 py-1 rounded-lg text-xs bg-white/70 border border-white/60 hover:bg-white"
+              >
+                編集
+              </button>
+              <button
+                type="button"
+                onClick={() => duplicate(p)}
+                className="px-3 py-1 rounded-lg text-xs bg-white/70 border border-white/60 hover:bg-white flex items-center gap-1"
+              >
                 <Copy className="h-3 w-3" />複製
               </button>
-              <button type="button" onClick={() => remove(p)} aria-label={`${p.name} を削除`} className="px-3 py-1 rounded-lg text-xs text-red-600 hover:bg-red-100 flex items-center gap-1 ml-auto">
+              <button
+                type="button"
+                onClick={() => remove(p)}
+                aria-label={`${p.name} を削除`}
+                className="px-3 py-1 rounded-lg text-xs text-red-600 hover:bg-red-100 flex items-center gap-1 ml-auto"
+              >
                 <Trash2 className="h-3 w-3" />削除
               </button>
             </div>
@@ -246,10 +263,10 @@ export default function AllocationPatternPage() {
               <label className="block text-xs font-medium text-gray-600 mb-1">引当戦略</label>
               <select
                 value={editing.strategy}
-                onChange={(e) => setEditing({ ...editing, strategy: e.target.value as Pattern["strategy"] })}
+                onChange={(e) => setEditing({ ...editing, strategy: e.target.value as AllocationStrategy })}
                 className="w-full h-9 px-3 rounded-xl text-sm bg-white/70 border border-white/60"
               >
-                {(Object.keys(STRATEGY_LABEL) as Pattern["strategy"][]).map((s) => (
+                {(Object.keys(STRATEGY_LABEL) as AllocationStrategy[]).map((s) => (
                   <option key={s} value={s}>{STRATEGY_LABEL[s]}</option>
                 ))}
               </select>
@@ -287,11 +304,21 @@ export default function AllocationPatternPage() {
               <label className="block text-xs font-medium text-gray-600 mb-2">適用する店舗</label>
               <div className="grid grid-cols-2 gap-1.5">
                 {SHOPS.map((s) => (
-                  <label key={s} className={cn(
-                    "flex items-center gap-2 text-sm cursor-pointer rounded-lg px-2 py-1.5 border transition-colors",
-                    editing.appliedShops.includes(s) ? "bg-blue-500/10 border-blue-400/60" : "bg-white/60 border-white/60 hover:bg-white/80"
-                  )}>
-                    <input type="checkbox" checked={editing.appliedShops.includes(s)} onChange={() => toggleShop(s)} className="rounded" />
+                  <label
+                    key={s}
+                    className={cn(
+                      "flex items-center gap-2 text-sm cursor-pointer rounded-lg px-2 py-1.5 border transition-colors",
+                      editing.appliedShops.includes(s)
+                        ? "bg-blue-500/10 border-blue-400/60"
+                        : "bg-white/60 border-white/60 hover:bg-white/80"
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={editing.appliedShops.includes(s)}
+                      onChange={() => toggleShop(s)}
+                      className="rounded"
+                    />
                     <span className="text-gray-700">{s}</span>
                   </label>
                 ))}

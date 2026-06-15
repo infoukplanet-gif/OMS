@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  customerRanksStore,
+  INITIAL_CUSTOMER_RANKS,
+  type CustomerRanksConfig,
+  type Rank,
+} from "@/lib/stores/customer-ranks";
 import { cn } from "@/lib/utils";
 import {
   Save,
@@ -18,59 +25,43 @@ import {
   Users,
 } from "lucide-react";
 
-type Rank = {
-  id: string;
-  label: string;
-  minCount: number;
-  minAmount: number;
-  color: string;
-  benefits: string;
-  active: boolean;
-};
-
-const initialRanks: Rank[] = [
-  { id: "regular", label: "一般", minCount: 0, minAmount: 0, color: "bg-gray-500/15 text-gray-700", benefits: "通常価格", active: true },
-  { id: "silver", label: "シルバー", minCount: 5, minAmount: 30000, color: "bg-slate-400/15 text-slate-700", benefits: "ポイント1.5倍・送料無料月1回", active: true },
-  { id: "gold", label: "ゴールド", minCount: 15, minAmount: 100000, color: "bg-amber-500/15 text-amber-700", benefits: "ポイント2倍・送料無料・優先サポート", active: true },
-  { id: "platinum", label: "プラチナ", minCount: 30, minAmount: 300000, color: "bg-purple-500/15 text-purple-700", benefits: "ポイント3倍・送料無料・専任担当", active: true },
-  { id: "vip", label: "VIP", minCount: 50, minAmount: 1000000, color: "bg-pink-500/15 text-pink-700", benefits: "ポイント5倍・限定商品・誕生日ギフト", active: false },
-];
-
 export default function PurchaseCountPage() {
   const toast = useToast();
-  const [ranks, setRanks] = useState<Rank[]>(initialRanks);
 
-  // カウント基準
-  const [cancelCount, setCancelCount] = useState<"exclude" | "include">("exclude");
-  const [returnCount, setReturnCount] = useState<"exclude" | "include">("exclude");
-  const [holdCount, setHoldCount] = useState<"exclude" | "include">("exclude");
-  const [minAmount, setMinAmount] = useState(0);
-  const [duplicateWindow, setDuplicateWindow] = useState(30);
-  const [duplicateMode, setDuplicateMode] = useState<"merge" | "count_each">("merge");
+  // 永続化オーナー（このページのみ usePersistentStore を張る）
+  usePersistentStore({
+    store: customerRanksStore,
+    domain: "customer-ranks",
+    seed: INITIAL_CUSTOMER_RANKS,
+  });
 
-  // 集計範囲
-  const [periodMode, setPeriodMode] = useState<"all" | "ytd" | "rolling12" | "rolling24">("rolling12");
-  const [calendarBase, setCalendarBase] = useState<"calendar" | "fiscal">("fiscal");
-  const [fiscalStart, setFiscalStart] = useState("4");
+  // ストア購読
+  const items = useSyncExternalStore(
+    customerRanksStore.subscribe,
+    customerRanksStore.getState,
+    customerRanksStore.getState,
+  );
+  const config: CustomerRanksConfig = items[0] ?? INITIAL_CUSTOMER_RANKS[0];
 
-  // 自動更新
-  const [autoRecalc, setAutoRecalc] = useState(true);
-  const [recalcCron, setRecalcCron] = useState("daily");
-  const [demoteEnabled, setDemoteEnabled] = useState(true);
-  const [demoteGrace, setDemoteGrace] = useState(60);
+  // ───── 個別フィールド更新ヘルパー ─────
+  function patch(diff: Partial<CustomerRanksConfig>) {
+    customerRanksStore.upsert({ ...config, ...diff });
+  }
 
-  // 通知
-  const [notifyRankUp, setNotifyRankUp] = useState(true);
-  const [notifyMilestone, setNotifyMilestone] = useState(true);
-  const [milestones, setMilestones] = useState("10,30,50,100");
+  function updateRank(id: string, rankPatch: Partial<Rank>) {
+    const nextRanks = config.ranks.map((r) =>
+      r.id === id ? { ...r, ...rankPatch } : r,
+    );
+    patch({ ranks: nextRanks });
+  }
 
-  const updateRank = (id: string, patch: Partial<Rank>) =>
-    setRanks((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-
-  const handleSave = () => {
-    const active = ranks.filter((r) => r.active).length;
-    toast.show(`購入回数ルールを保存しました（${active}/${ranks.length} ランクが有効）`, "success");
-  };
+  function handleSave() {
+    const active = config.ranks.filter((r) => r.active).length;
+    toast.show(
+      `購入回数ルールを保存しました（${active}/${config.ranks.length} ランクが有効）`,
+      "success",
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -110,7 +101,9 @@ export default function PurchaseCountPage() {
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <TrendingUp className="h-4 w-4" />リピーター率
           </div>
-          <p className="mt-2 text-3xl font-bold text-blue-700 tabular-nums">38.4<span className="text-sm font-normal ml-1">%</span></p>
+          <p className="mt-2 text-3xl font-bold text-blue-700 tabular-nums">
+            38.4<span className="text-sm font-normal ml-1">%</span>
+          </p>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -139,8 +132,8 @@ export default function PurchaseCountPage() {
               { value: "exclude", label: "除外する（推奨）" },
               { value: "include", label: "カウントに含める" },
             ]}
-            value={cancelCount}
-            onChange={(v) => setCancelCount(v as "exclude" | "include")}
+            value={config.cancelCount}
+            onChange={(v) => patch({ cancelCount: v as "exclude" | "include" })}
           />
           <RadioBlock
             label="返品済み受注"
@@ -149,8 +142,8 @@ export default function PurchaseCountPage() {
               { value: "exclude", label: "除外する（推奨）" },
               { value: "include", label: "カウントに含める" },
             ]}
-            value={returnCount}
-            onChange={(v) => setReturnCount(v as "exclude" | "include")}
+            value={config.returnCount}
+            onChange={(v) => patch({ returnCount: v as "exclude" | "include" })}
           />
           <RadioBlock
             label="保留中の受注"
@@ -159,8 +152,8 @@ export default function PurchaseCountPage() {
               { value: "exclude", label: "除外する（推奨）" },
               { value: "include", label: "カウントに含める" },
             ]}
-            value={holdCount}
-            onChange={(v) => setHoldCount(v as "exclude" | "include")}
+            value={config.holdCount}
+            onChange={(v) => patch({ holdCount: v as "exclude" | "include" })}
           />
         </div>
         <div className="mt-4 pt-4 border-t border-white/40 grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -172,8 +165,8 @@ export default function PurchaseCountPage() {
             <div className="relative">
               <input
                 type="number"
-                value={minAmount}
-                onChange={(e) => setMinAmount(Number(e.target.value))}
+                value={config.minAmount}
+                onChange={(e) => patch({ minAmount: Number(e.target.value) })}
                 className="w-full h-9 px-3 pr-10 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">円</span>
@@ -187,8 +180,8 @@ export default function PurchaseCountPage() {
             <div className="relative">
               <input
                 type="number"
-                value={duplicateWindow}
-                onChange={(e) => setDuplicateWindow(Number(e.target.value))}
+                value={config.duplicateWindow}
+                onChange={(e) => patch({ duplicateWindow: Number(e.target.value) })}
                 className="w-full h-9 px-3 pr-10 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">分以内</span>
@@ -200,8 +193,8 @@ export default function PurchaseCountPage() {
               <HelpHint side="right">同一顧客の連続受注を1回として数えるか、別々に数えるか。</HelpHint>
             </label>
             <select
-              value={duplicateMode}
-              onChange={(e) => setDuplicateMode(e.target.value as "merge" | "count_each")}
+              value={config.duplicateMode}
+              onChange={(e) => patch({ duplicateMode: e.target.value as "merge" | "count_each" })}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
               <option value="merge">1回として集約（推奨）</option>
@@ -222,8 +215,8 @@ export default function PurchaseCountPage() {
           <div className="space-y-1.5 col-span-2">
             <label className="text-sm font-medium text-gray-700">期間モード</label>
             <select
-              value={periodMode}
-              onChange={(e) => setPeriodMode(e.target.value as typeof periodMode)}
+              value={config.periodMode}
+              onChange={(e) => patch({ periodMode: e.target.value as CustomerRanksConfig["periodMode"] })}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
               <option value="all">通算（取引開始からすべて）</option>
@@ -235,8 +228,8 @@ export default function PurchaseCountPage() {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">基準カレンダー</label>
             <select
-              value={calendarBase}
-              onChange={(e) => setCalendarBase(e.target.value as "calendar" | "fiscal")}
+              value={config.calendarBase}
+              onChange={(e) => patch({ calendarBase: e.target.value as "calendar" | "fiscal" })}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
               <option value="calendar">暦年（1月〜12月）</option>
@@ -246,9 +239,9 @@ export default function PurchaseCountPage() {
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">期首月</label>
             <select
-              value={fiscalStart}
-              onChange={(e) => setFiscalStart(e.target.value)}
-              disabled={calendarBase === "calendar"}
+              value={config.fiscalStart}
+              onChange={(e) => patch({ fiscalStart: e.target.value })}
+              disabled={config.calendarBase === "calendar"}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
             >
               {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
@@ -281,7 +274,7 @@ export default function PurchaseCountPage() {
               </tr>
             </thead>
             <tbody>
-              {ranks.map((r) => (
+              {config.ranks.map((r) => (
                 <tr key={r.id} className="border-t border-white/30">
                   <td className="px-4 py-3">
                     <span className={cn("px-2.5 py-1 rounded-md text-xs font-bold", r.color)}>{r.label}</span>
@@ -337,13 +330,18 @@ export default function PurchaseCountPage() {
           </HelpHint>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Toggle label="自動再計算を有効化" checked={autoRecalc} onChange={setAutoRecalc} hint="OFFの場合、ランクは手動更新のみとなります。" />
+          <Toggle
+            label="自動再計算を有効化"
+            checked={config.autoRecalc}
+            onChange={(v) => patch({ autoRecalc: v })}
+            hint="OFFの場合、ランクは手動更新のみとなります。"
+          />
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">再計算スケジュール</label>
             <select
-              value={recalcCron}
-              onChange={(e) => setRecalcCron(e.target.value)}
-              disabled={!autoRecalc}
+              value={config.recalcCron}
+              onChange={(e) => patch({ recalcCron: e.target.value })}
+              disabled={!config.autoRecalc}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
             >
               <option value="hourly">毎時</option>
@@ -353,15 +351,20 @@ export default function PurchaseCountPage() {
               <option value="event">受注確定時イベント駆動</option>
             </select>
           </div>
-          <Toggle label="ランク降格を有効化" checked={demoteEnabled} onChange={setDemoteEnabled} hint="集計期間内の購入が閾値未満になった場合、自動で降格します。" />
+          <Toggle
+            label="ランク降格を有効化"
+            checked={config.demoteEnabled}
+            onChange={(v) => patch({ demoteEnabled: v })}
+            hint="集計期間内の購入が閾値未満になった場合、自動で降格します。"
+          />
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-gray-700">降格までの猶予日数</label>
             <div className="relative">
               <input
                 type="number"
-                value={demoteGrace}
-                onChange={(e) => setDemoteGrace(Number(e.target.value))}
-                disabled={!demoteEnabled}
+                value={config.demoteGrace}
+                onChange={(e) => patch({ demoteGrace: Number(e.target.value) })}
+                disabled={!config.demoteEnabled}
                 className="w-full h-9 px-3 pr-10 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">日</span>
@@ -379,14 +382,14 @@ export default function PurchaseCountPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Toggle
             label="ランクアップを顧客にメール通知"
-            checked={notifyRankUp}
-            onChange={setNotifyRankUp}
+            checked={config.notifyRankUp}
+            onChange={(v) => patch({ notifyRankUp: v })}
             hint="ランクアップ時に対象顧客へお祝いメールを送信します。テンプレートは通知設定から編集できます。"
           />
           <Toggle
             label="マイルストーン購入を通知"
-            checked={notifyMilestone}
-            onChange={setNotifyMilestone}
+            checked={config.notifyMilestone}
+            onChange={(v) => patch({ notifyMilestone: v })}
             hint="特定回数の購入到達時に、社内とお客様へ通知します。"
           />
           <div className="space-y-1.5">
@@ -396,9 +399,9 @@ export default function PurchaseCountPage() {
             </label>
             <input
               type="text"
-              value={milestones}
-              onChange={(e) => setMilestones(e.target.value)}
-              disabled={!notifyMilestone}
+              value={config.milestones}
+              onChange={(e) => patch({ milestones: e.target.value })}
+              disabled={!config.notifyMilestone}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
             />
           </div>
@@ -488,7 +491,7 @@ function RadioBlock({
               "flex items-center gap-2 px-3 py-2 rounded-xl text-sm cursor-pointer transition-all",
               value === o.value
                 ? "bg-blue-500/10 border border-blue-300/50 text-blue-700"
-                : "bg-white/50 border border-white/50 text-gray-700 hover:bg-white/70"
+                : "bg-white/50 border border-white/50 text-gray-700 hover:bg-white/70",
             )}
           >
             <input

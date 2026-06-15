@@ -1,30 +1,17 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderNumberingStore,
+  INITIAL_ORDER_NUMBERING,
+  type OrderNumberingConfig,
+  type ResetCycle,
+  type DateFormat,
+} from "@/lib/stores/order-numbering";
 
-type ResetCycle = "never" | "daily" | "monthly" | "yearly";
-type DateFormat = "none" | "yyyymmdd" | "yymmdd" | "yymm" | "yy";
-
-type Settings = {
-  prefix: string;
-  dateFormat: DateFormat;
-  digits: number;
-  resetCycle: ResetCycle;
-  startNumber: number;
-  includeSeparator: boolean;
-};
-
-const defaults: Settings = {
-  prefix: "ORD",
-  dateFormat: "yyyymmdd",
-  digits: 5,
-  resetCycle: "daily",
-  startNumber: 1,
-  includeSeparator: true,
-};
-
-function generateNumber(s: Settings, base: Date, offset: number): string {
+function generateNumber(s: OrderNumberingConfig, base: Date, offset: number): string {
   const pad = (n: number, d: number) => String(n).padStart(d, "0");
   const y = base.getFullYear();
   const m = base.getMonth() + 1;
@@ -45,10 +32,31 @@ function generateNumber(s: Settings, base: Date, offset: number): string {
 
 export default function NumberingPage() {
   const toast = useToast();
-  const [saved, setSaved] = useState<Settings>(defaults);
-  const [draft, setDraft] = useState<Settings>(defaults);
 
-  const dirty = JSON.stringify(saved) !== JSON.stringify(draft);
+  // 永続化オーナー
+  usePersistentStore({
+    store: orderNumberingStore,
+    domain: "order-numbering",
+    seed: INITIAL_ORDER_NUMBERING,
+  });
+
+  const items = useSyncExternalStore(
+    orderNumberingStore.subscribe,
+    orderNumberingStore.getState,
+    orderNumberingStore.getState,
+  );
+  const config = items[0] ?? INITIAL_ORDER_NUMBERING[0];
+
+  // ドラフト状態（フォーム編集用）
+  const [draft, setDraft] = useState<OrderNumberingConfig>(config);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setDraft(config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.id]);
+
+  const dirty = JSON.stringify(config) !== JSON.stringify(draft);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -63,9 +71,10 @@ export default function NumberingPage() {
     return [0, 1, 2].map((i) => generateNumber(draft, base, i));
   }, [draft]);
 
-  function upd<K extends keyof Settings>(k: K, v: Settings[K]) {
+  function upd<K extends keyof OrderNumberingConfig>(k: K, v: OrderNumberingConfig[K]) {
     setDraft((prev) => ({ ...prev, [k]: v }));
   }
+
   function save() {
     if (!draft.prefix.trim() && draft.dateFormat === "none") {
       return toast.show("プレフィックスか日付フォーマットのいずれかは必須です", "error");
@@ -76,11 +85,12 @@ export default function NumberingPage() {
     if (draft.startNumber < 0) {
       return toast.show("開始番号は0以上で入力してください", "error");
     }
-    setSaved(draft);
+    orderNumberingStore.upsert({ ...draft, id: "config" });
     toast.show("採番設定を保存しました");
   }
+
   function reset() {
-    setDraft(saved);
+    setDraft(config);
     toast.show("変更を取消しました", "info");
   }
 

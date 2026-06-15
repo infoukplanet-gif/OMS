@@ -1,37 +1,47 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Package, Shield, RefreshCw, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  channelAllocationStore,
+  INITIAL_CHANNEL_ALLOCATION,
+  type ChannelAlloc,
+  type ChannelAllocationConfig,
+} from "@/lib/stores/channel-allocation";
 
-type ChannelAlloc = {
-  key: string;
-  label: string;
-  ratio: number;
-  reservedUnits: number;
-  enabled: boolean;
-  overSellAllowed: boolean;
-};
-
-const initialChannels: ChannelAlloc[] = [
-  { key: "rakuten", label: "楽天市場", ratio: 35, reservedUnits: 3, enabled: true, overSellAllowed: false },
-  { key: "yahoo", label: "Yahoo!ショッピング", ratio: 15, reservedUnits: 2, enabled: true, overSellAllowed: false },
-  { key: "amazon", label: "Amazon", ratio: 25, reservedUnits: 5, enabled: true, overSellAllowed: false },
-  { key: "shopify", label: "自社Shopify", ratio: 15, reservedUnits: 2, enabled: true, overSellAllowed: true },
-  { key: "base", label: "BASE", ratio: 5, reservedUnits: 1, enabled: true, overSellAllowed: false },
-  { key: "wholesale", label: "卸販売", ratio: 5, reservedUnits: 0, enabled: true, overSellAllowed: false },
-];
+const CONFIG_ID = "config";
 
 export default function StockAllocationPage() {
   const toast = useToast();
-  const [channels, setChannels] = useState<ChannelAlloc[]>(initialChannels);
-  const [syncInterval, setSyncInterval] = useState("5");
-  const [applyScope, setApplyScope] = useState("all");
-  const [lowStockAction, setLowStockAction] = useState("pause");
-  const [lowStockThreshold, setLowStockThreshold] = useState(3);
-  const [autoRedistribute, setAutoRedistribute] = useState(true);
-  const [priorityOnShortage, setPriorityOnShortage] = useState("自社EC");
+
+  // 永続化オーナー（このページがストアの正規オーナー）
+  usePersistentStore({
+    store: channelAllocationStore,
+    domain: "channel-allocation",
+    seed: INITIAL_CHANNEL_ALLOCATION,
+  });
+
+  // ストアを購読し、1レコード設定を取り出す
+  const allItems = useSyncExternalStore(
+    channelAllocationStore.subscribe,
+    channelAllocationStore.getState,
+    channelAllocationStore.getState,
+  );
+
+  const savedConfig: ChannelAllocationConfig =
+    allItems.find((c) => c.id === CONFIG_ID) ?? INITIAL_CHANNEL_ALLOCATION[0];
+
+  // 編集用ローカルドラフト（保存ボタンまでストアに反映しない）
+  const [channels, setChannels] = useState<ChannelAlloc[]>(() => [...savedConfig.channels]);
+  const [syncInterval, setSyncInterval] = useState(() => savedConfig.syncInterval);
+  const [applyScope, setApplyScope] = useState(() => savedConfig.applyScope);
+  const [lowStockAction, setLowStockAction] = useState(() => savedConfig.lowStockAction);
+  const [lowStockThreshold, setLowStockThreshold] = useState(() => savedConfig.lowStockThreshold);
+  const [autoRedistribute, setAutoRedistribute] = useState(() => savedConfig.autoRedistribute);
+  const [priorityOnShortage, setPriorityOnShortage] = useState(() => savedConfig.priorityOnShortage);
 
   const total = channels.filter((c) => c.enabled).reduce((s, c) => s + c.ratio, 0);
   const totalValid = total === 100;
@@ -45,17 +55,41 @@ export default function StockAllocationPage() {
     if (enabled.length === 0) return;
     const base = Math.floor(100 / enabled.length);
     const remainder = 100 - base * enabled.length;
-    setChannels((prev) => prev.map((c) => {
-      if (!c.enabled) return { ...c, ratio: 0 };
-      const idx = enabled.findIndex((e) => e.key === c.key);
-      return { ...c, ratio: base + (idx < remainder ? 1 : 0) };
-    }));
+    setChannels((prev) =>
+      prev.map((c) => {
+        if (!c.enabled) return { ...c, ratio: 0 };
+        const idx = enabled.findIndex((e) => e.key === c.key);
+        return { ...c, ratio: base + (idx < remainder ? 1 : 0) };
+      })
+    );
     toast.show("有効チャネルに均等配分しました");
   }
 
   function handleSave() {
     if (!totalValid) return toast.show(`合計が${total}%です。100%になるよう調整してください`, "error");
+    channelAllocationStore.upsert({
+      id: CONFIG_ID,
+      channels,
+      syncInterval,
+      applyScope,
+      lowStockAction,
+      lowStockThreshold,
+      autoRedistribute,
+      priorityOnShortage,
+    });
     toast.show("在庫振り分け設定を保存しました");
+  }
+
+  function handleDiscard() {
+    const current = channelAllocationStore.findById(CONFIG_ID) ?? INITIAL_CHANNEL_ALLOCATION[0];
+    setChannels([...current.channels]);
+    setSyncInterval(current.syncInterval);
+    setApplyScope(current.applyScope);
+    setLowStockAction(current.lowStockAction);
+    setLowStockThreshold(current.lowStockThreshold);
+    setAutoRedistribute(current.autoRedistribute);
+    setPriorityOnShortage(current.priorityOnShortage);
+    toast.show("変更を破棄しました");
   }
 
   return (
@@ -118,13 +152,21 @@ export default function StockAllocationPage() {
         </div>
         <div className="space-y-2">
           {channels.map((c) => (
-            <div key={c.key} className={cn(
-              "grid grid-cols-12 gap-3 items-center p-3 rounded-xl bg-white/50 border border-white/60",
-              !c.enabled && "opacity-50"
-            )}>
+            <div
+              key={c.key}
+              className={cn(
+                "grid grid-cols-12 gap-3 items-center p-3 rounded-xl bg-white/50 border border-white/60",
+                !c.enabled && "opacity-50"
+              )}
+            >
               <div className="col-span-3 flex items-center gap-2">
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" checked={c.enabled} onChange={(e) => update(c.key, "enabled", e.target.checked)} className="sr-only peer" />
+                  <input
+                    type="checkbox"
+                    checked={c.enabled}
+                    onChange={(e) => update(c.key, "enabled", e.target.checked)}
+                    className="sr-only peer"
+                  />
                   <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
                 </label>
                 <span className="text-sm font-medium text-gray-800">{c.label}</span>
@@ -161,7 +203,8 @@ export default function StockAllocationPage() {
               <div className="col-span-2 flex items-center justify-end">
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer">
                   <input
-                    type="checkbox" checked={c.overSellAllowed}
+                    type="checkbox"
+                    checked={c.overSellAllowed}
                     onChange={(e) => update(c.key, "overSellAllowed", e.target.checked)}
                     disabled={!c.enabled}
                     className="rounded"
@@ -172,10 +215,12 @@ export default function StockAllocationPage() {
             </div>
           ))}
         </div>
-        <div className={cn(
-          "mt-4 p-3 rounded-xl border flex items-center justify-between",
-          totalValid ? "bg-emerald-500/10 border-emerald-400/40" : "bg-amber-500/10 border-amber-400/40"
-        )}>
+        <div
+          className={cn(
+            "mt-4 p-3 rounded-xl border flex items-center justify-between",
+            totalValid ? "bg-emerald-500/10 border-emerald-400/40" : "bg-amber-500/10 border-amber-400/40"
+          )}
+        >
           <span className="text-sm text-gray-700">有効チャネルの合計配分</span>
           <span className={cn("text-lg font-bold", totalValid ? "text-emerald-700" : "text-amber-700")}>
             {total}%
@@ -219,18 +264,25 @@ export default function StockAllocationPage() {
               onChange={(e) => setPriorityOnShortage(e.target.value)}
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/70 border border-white/60"
             >
-              {channels.map((c) => <option key={c.key} value={c.label}>{c.label}</option>)}
+              {channels.map((c) => (
+                <option key={c.key} value={c.label}>{c.label}</option>
+              ))}
             </select>
           </div>
         </div>
         <label className="flex items-center gap-2 mt-4 text-sm cursor-pointer">
-          <input type="checkbox" checked={autoRedistribute} onChange={(e) => setAutoRedistribute(e.target.checked)} className="rounded" />
+          <input
+            type="checkbox"
+            checked={autoRedistribute}
+            onChange={(e) => setAutoRedistribute(e.target.checked)}
+            className="rounded"
+          />
           <span className="text-gray-700">欠品発生時に余剰在庫を自動再配分する</span>
         </label>
       </GlassCard>
 
       <div className="flex justify-end gap-2">
-        <SecondaryButton onClick={() => setChannels(initialChannels)}>変更を破棄</SecondaryButton>
+        <SecondaryButton onClick={handleDiscard}>変更を破棄</SecondaryButton>
         <PrimaryButton onClick={handleSave}>設定を保存</PrimaryButton>
       </div>
     </div>
