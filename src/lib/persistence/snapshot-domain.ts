@@ -23,7 +23,8 @@ export type SnapshotDomain =
   | "document-templates"
   | "instruction-templates"
   | "delivery-note-templates"
-  | "mails";
+  | "mails"
+  | "blacklist";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;
