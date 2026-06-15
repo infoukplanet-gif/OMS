@@ -1,110 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CreditCard } from "lucide-react";
-import { setPaymentMessages, resetPaymentMessages } from "@/lib/settings/payment-message-settings";
-
-type Message = {
-  id: string;
-  method: string;
-  thanksMessage: string;
-  shipMessage: string;
-  invoicePrint: string;
-  showInOrderForm: boolean;
-  showInThanksMail: boolean;
-  showInShipMail: boolean;
-  enabled: boolean;
-};
-
-const initial: Message[] = [
-  {
-    id: "pm-credit",
-    method: "クレジットカード",
-    thanksMessage: "ご利用のクレジットカードへ請求いたします。引落日はカード会社の締日に応じます。",
-    shipMessage: "クレジットカードでの決済が完了しました。",
-    invoicePrint: "クレジット決済済",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: false,
-    enabled: true,
-  },
-  {
-    id: "pm-cod",
-    method: "代金引換",
-    thanksMessage: "商品お受取り時に配達員へお支払いください。代引手数料 {{cod_fee}} 円が加算されます。",
-    shipMessage: "代金引換でお届けします。お支払金額：{{total_with_cod}} 円",
-    invoicePrint: "代金引換にて配達員にお支払いください",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: true,
-    enabled: true,
-  },
-  {
-    id: "pm-bank",
-    method: "銀行振込（前払い）",
-    thanksMessage: "下記口座へ {{payment_deadline}} までにお振込みください。\n\n■ 振込先\n{{bank_account}}",
-    shipMessage: "ご入金確認後、商品を発送いたしました。",
-    invoicePrint: "銀行振込にてご入金済",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: false,
-    enabled: true,
-  },
-  {
-    id: "pm-conveni",
-    method: "コンビニ決済（後払い）",
-    thanksMessage: "請求書は商品到着後に別送いたします。お近くのコンビニでお支払いください。",
-    shipMessage: "請求書は本商品とは別便でお送りします（最長14日以内）。",
-    invoicePrint: "コンビニ後払い（請求書は別送）",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: true,
-    enabled: true,
-  },
-  {
-    id: "pm-amazonpay",
-    method: "Amazon Pay",
-    thanksMessage: "Amazonアカウントに紐付くお支払い方法で決済いたしました。",
-    shipMessage: "Amazon Pay の決済が完了しました。",
-    invoicePrint: "Amazon Pay 決済済",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: false,
-    enabled: true,
-  },
-  {
-    id: "pm-paypay",
-    method: "PayPay",
-    thanksMessage: "PayPay 残高またはあと払いから決済いたしました。",
-    shipMessage: "PayPay の決済が完了しました。",
-    invoicePrint: "PayPay 決済済",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: false,
-    enabled: true,
-  },
-  {
-    id: "pm-np",
-    method: "NP後払い",
-    thanksMessage: "請求書は商品到着後に別送（NP後払い）。コンビニ・銀行・LINE Pay でお支払いいただけます。",
-    shipMessage: "NP後払いの請求書は別便でお送りします。",
-    invoicePrint: "NP後払い（請求書は別送）",
-    showInOrderForm: true,
-    showInThanksMail: true,
-    showInShipMail: true,
-    enabled: false,
-  },
-];
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  paymentMessageStore,
+  INITIAL_PAYMENT_MESSAGES,
+  type PaymentMessage,
+} from "@/lib/stores/payment-message-store";
 
 export default function PaymentMessagePage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
-  const update = (id: string, patch: Partial<Message>) =>
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({
+    store: paymentMessageStore,
+    domain: "payment-message-settings",
+    seed: INITIAL_PAYMENT_MESSAGES,
+  });
+
+  // 共有ストアを購読
+  const items = useSyncExternalStore(
+    paymentMessageStore.subscribe,
+    paymentMessageStore.getState,
+    paymentMessageStore.getState,
+  );
+
+  const update = (id: string, patch: Partial<PaymentMessage>) => {
+    const current = paymentMessageStore.findById(id);
+    if (!current) return;
+    paymentMessageStore.upsert({ ...current, ...patch });
+  };
+
+  const handleReset = () => {
+    paymentMessageStore.setItems(INITIAL_PAYMENT_MESSAGES.map((m) => ({ ...m })));
+    toast.show("初期値に戻しました", "info");
+  };
 
   return (
     <div className="space-y-5">
@@ -117,8 +52,8 @@ export default function PaymentMessagePage() {
           <p className="text-sm text-gray-500 mt-1">受注確認メール・発送通知・伝票印字での表示文面を支払方法別にカスタマイズします。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => { resetPaymentMessages(); setItems(initial); toast.show("初期値に戻しました", "info"); }}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => { setPaymentMessages(items); toast.show("支払方法別メッセージを保存しました", "success"); }}>保存</PrimaryButton>
+          <SecondaryButton onClick={handleReset}>初期値に戻す</SecondaryButton>
+          <PrimaryButton onClick={() => toast.show("支払方法別メッセージを保存しました", "success")}>保存</PrimaryButton>
         </div>
       </div>
 

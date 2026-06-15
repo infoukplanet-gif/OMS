@@ -1,47 +1,75 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Calendar, Plus, Trash2 } from "lucide-react";
-import { setDateAutoRules, setDateAutoGlobal, resetDateAutoSettings } from "@/lib/settings/date-auto-settings";
-
-type Rule = {
-  id: string;
-  field: string;
-  trigger: string;
-  basis: string;
-  offsetDays: number;
-  offsetUnit: "営業日" | "日";
-  skipHolidays: boolean;
-  carryWeekend: "next" | "previous" | "no";
-  enabled: boolean;
-};
-
-const initialRules: Rule[] = [
-  { id: "r1", field: "発送予定日", trigger: "受注確定", basis: "受注日", offsetDays: 1, offsetUnit: "営業日", skipHolidays: true, carryWeekend: "next", enabled: true },
-  { id: "r2", field: "入金期限", trigger: "受注確定", basis: "受注日", offsetDays: 7, offsetUnit: "日", skipHolidays: false, carryWeekend: "no", enabled: true },
-  { id: "r3", field: "支払期日（卸先）", trigger: "売上計上", basis: "売上日", offsetDays: 30, offsetUnit: "日", skipHolidays: true, carryWeekend: "next", enabled: true },
-  { id: "r4", field: "返品期限", trigger: "出荷完了", basis: "発送日", offsetDays: 14, offsetUnit: "日", skipHolidays: false, carryWeekend: "no", enabled: true },
-  { id: "r5", field: "保証終了日", trigger: "出荷完了", basis: "発送日", offsetDays: 365, offsetUnit: "日", skipHolidays: false, carryWeekend: "no", enabled: true },
-  { id: "r6", field: "再入金催促日", trigger: "入金未確認", basis: "入金期限", offsetDays: 3, offsetUnit: "営業日", skipHolidays: true, carryWeekend: "next", enabled: true },
-  { id: "r7", field: "フォロー送信日", trigger: "出荷完了", basis: "発送日", offsetDays: 3, offsetUnit: "日", skipHolidays: false, carryWeekend: "no", enabled: false },
-];
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  dateAutoSettingsStore,
+  INITIAL_DATE_AUTO_SETTINGS,
+  type DateAutoRule,
+  type DateAutoGlobal,
+} from "@/lib/stores/date-auto-settings-store";
 
 const fieldOptions = ["発送予定日", "入金期限", "支払期日（卸先）", "返品期限", "保証終了日", "再入金催促日", "フォロー送信日", "レビュー依頼日"];
 const triggerOptions = ["受注確定", "売上計上", "出荷完了", "入金確認", "入金未確認", "発注確定"];
 const basisOptions = ["受注日", "売上日", "発送日", "入金日", "発注日", "入金期限"];
 
+const carryWeekendOptions: { value: DateAutoGlobal["defaultCarryWeekend"]; label: string }[] = [
+  { value: "next", label: "翌営業日に繰越" },
+  { value: "previous", label: "前営業日に繰上げ" },
+  { value: "no", label: "そのまま" },
+];
+
+function cloneRules(rules: DateAutoRule[]): DateAutoRule[] {
+  return rules.map((r) => ({ ...r }));
+}
+
 export default function SettingsDateAutoPage() {
   const toast = useToast();
-  const [rules, setRules] = useState(initialRules);
-  const [defaultUnit, setDefaultUnit] = useState<"営業日" | "日">("営業日");
-  const [holidayCalendar, setHolidayCalendar] = useState("japan");
 
-  const update = (id: string, patch: Partial<Rule>) =>
+  // 永続化オーナー
+  usePersistentStore({
+    store: dateAutoSettingsStore,
+    domain: "date-auto-settings",
+    seed: INITIAL_DATE_AUTO_SETTINGS,
+  });
+
+  const items = useSyncExternalStore(
+    dateAutoSettingsStore.subscribe,
+    dateAutoSettingsStore.getState,
+    dateAutoSettingsStore.getState,
+  );
+  const config = items[0] ?? INITIAL_DATE_AUTO_SETTINGS[0];
+
+  // ドラフト状態（フォーム編集用）。初期値は保存済み config から。
+  const [rules, setRules] = useState<DateAutoRule[]>(config.rules);
+  const [global, setGlobal] = useState<DateAutoGlobal>(config.global);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setRules(config.rules);
+    setGlobal(config.global);
+  }, [config]);
+
+  const update = (id: string, patch: Partial<DateAutoRule>) =>
     setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const save = () => {
+    dateAutoSettingsStore.upsert({ id: "config", rules: cloneRules(rules), global: { ...global } });
+    toast.show("日付自動登録設定を保存しました", "success");
+  };
+
+  const reset = () => {
+    const defaults = INITIAL_DATE_AUTO_SETTINGS[0];
+    dateAutoSettingsStore.upsert({ id: "config", rules: cloneRules(defaults.rules), global: { ...defaults.global } });
+    setRules(cloneRules(defaults.rules));
+    setGlobal({ ...defaults.global });
+    toast.show("初期値に戻しました", "info");
+  };
 
   return (
     <div className="space-y-5">
@@ -54,12 +82,8 @@ export default function SettingsDateAutoPage() {
           <p className="text-sm text-gray-500 mt-1">営業日換算・休業日スキップ・週末繰越のロジックも個別設定できます。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => { resetDateAutoSettings(); setRules(initialRules); setDefaultUnit("営業日"); setHolidayCalendar("japan"); toast.show("初期値に戻しました", "info"); }}>初期値に戻す</SecondaryButton>
-          <PrimaryButton onClick={() => {
-            setDateAutoRules(rules);
-            setDateAutoGlobal({ defaultUnit, holidayCalendar });
-            toast.show("日付自動登録設定を保存しました", "success");
-          }}>保存</PrimaryButton>
+          <SecondaryButton onClick={reset}>初期値に戻す</SecondaryButton>
+          <PrimaryButton onClick={save}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -89,14 +113,14 @@ export default function SettingsDateAutoPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
           <label className="space-y-1">
             <span className="text-xs text-gray-500">デフォルト単位</span>
-            <select value={defaultUnit} onChange={(e) => setDefaultUnit(e.target.value as Rule["offsetUnit"])} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={global.defaultUnit} onChange={(e) => setGlobal((g) => ({ ...g, defaultUnit: e.target.value as DateAutoGlobal["defaultUnit"] }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               <option value="営業日">営業日</option>
               <option value="日">暦日</option>
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">休業日カレンダー</span>
-            <select value={holidayCalendar} onChange={(e) => setHolidayCalendar(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={global.holidayCalendar} onChange={(e) => setGlobal((g) => ({ ...g, holidayCalendar: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               <option value="japan">日本（祝日含む）</option>
               <option value="japan-no-holiday">日本（土日のみ）</option>
               <option value="custom">カスタム（店舗別）</option>
@@ -104,10 +128,8 @@ export default function SettingsDateAutoPage() {
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">週末繰越のデフォルト</span>
-            <select className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
-              <option>翌営業日に繰越</option>
-              <option>前営業日に繰上げ</option>
-              <option>そのまま</option>
+            <select value={global.defaultCarryWeekend} onChange={(e) => setGlobal((g) => ({ ...g, defaultCarryWeekend: e.target.value as DateAutoGlobal["defaultCarryWeekend"] }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+              {carryWeekendOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </label>
         </div>
@@ -161,7 +183,7 @@ export default function SettingsDateAutoPage() {
                   <input type="number" value={r.offsetDays} onChange={(e) => update(r.id, { offsetDays: Number(e.target.value) })} className="w-16 px-2 py-1 rounded-lg bg-white/70 border border-white/60 text-xs text-right" />
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <select value={r.offsetUnit} onChange={(e) => update(r.id, { offsetUnit: e.target.value as Rule["offsetUnit"] })} className="px-2 py-1 rounded-lg bg-white/70 border border-white/60 text-xs">
+                  <select value={r.offsetUnit} onChange={(e) => update(r.id, { offsetUnit: e.target.value as DateAutoRule["offsetUnit"] })} className="px-2 py-1 rounded-lg bg-white/70 border border-white/60 text-xs">
                     <option value="営業日">営業日</option>
                     <option value="日">暦日</option>
                   </select>
@@ -170,7 +192,7 @@ export default function SettingsDateAutoPage() {
                   <input type="checkbox" checked={r.skipHolidays} onChange={(e) => update(r.id, { skipHolidays: e.target.checked })} className="accent-blue-500" />
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <select value={r.carryWeekend} onChange={(e) => update(r.id, { carryWeekend: e.target.value as Rule["carryWeekend"] })} className="px-2 py-1 rounded-lg bg-white/70 border border-white/60 text-xs">
+                  <select value={r.carryWeekend} onChange={(e) => update(r.id, { carryWeekend: e.target.value as DateAutoRule["carryWeekend"] })} className="px-2 py-1 rounded-lg bg-white/70 border border-white/60 text-xs">
                     <option value="next">翌営業日</option>
                     <option value="previous">前営業日</option>
                     <option value="no">そのまま</option>

@@ -1,94 +1,24 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Info, Link as LinkIcon, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  codeMappingStore,
+  INITIAL_CODE_MAPPINGS,
+  type CodeMapping,
+} from "@/lib/stores/code-mapping";
 
 type ChannelStatus = "ok" | "warning" | "error";
 
-type Mapping = {
-  id: string;
-  code: string;
-  name: string;
-  rakutenNumber: string;
-  rakutenSku: string;
-  amazonSku: string;
-  yahooCode: string;
-  yahooSubcode: string;
-  shopifySku: string;
-  status: ChannelStatus;
-};
-
-function computeStatus(m: Omit<Mapping, "id" | "status">): ChannelStatus {
+function computeStatus(m: Pick<CodeMapping, "rakutenNumber" | "amazonSku" | "yahooCode" | "shopifySku">): ChannelStatus {
   const filled = [m.rakutenNumber, m.amazonSku, m.yahooCode, m.shopifySku].filter(Boolean).length;
   if (filled === 4) return "ok";
   if (filled === 0) return "error";
   return "warning";
 }
-
-const INITIAL_MAPPINGS: Mapping[] = [
-  {
-    id: "1",
-    code: "WEP-001",
-    name: "ワイヤレスイヤホン Pro",
-    rakutenNumber: "wep-001-r",
-    rakutenSku: "",
-    amazonSku: "B0WEP001",
-    yahooCode: "wep001y",
-    yahooSubcode: "",
-    shopifySku: "wep-001",
-    status: "ok",
-  },
-  {
-    id: "2",
-    code: "WEP-001-BK",
-    name: "ワイヤレスイヤホン Pro / ブラック",
-    rakutenNumber: "wep-001-r",
-    rakutenSku: "wep-001-bk",
-    amazonSku: "B0WEP001BK",
-    yahooCode: "wep001y",
-    yahooSubcode: "bk",
-    shopifySku: "wep-001-bk",
-    status: "ok",
-  },
-  {
-    id: "3",
-    code: "UCB-002",
-    name: "USB-Cケーブル 2m",
-    rakutenNumber: "ucb-002-r",
-    rakutenSku: "",
-    amazonSku: "B0UCB002",
-    yahooCode: "ucb002y",
-    yahooSubcode: "",
-    shopifySku: "ucb-002",
-    status: "ok",
-  },
-  {
-    id: "4",
-    code: "MBT-004",
-    name: "モバイルバッテリー 20000mAh",
-    rakutenNumber: "mbt-004-r",
-    rakutenSku: "",
-    amazonSku: "B0MBT004",
-    yahooCode: "",
-    yahooSubcode: "",
-    shopifySku: "mbt-004",
-    status: "warning",
-  },
-  {
-    id: "5",
-    code: "CHG-007",
-    name: "急速充電器 65W",
-    rakutenNumber: "chg-007-r",
-    rakutenSku: "",
-    amazonSku: "",
-    yahooCode: "chg007y",
-    yahooSubcode: "",
-    shopifySku: "chg-007",
-    status: "warning",
-  },
-];
 
 const sb: Record<ChannelStatus, string> = {
   ok: "bg-emerald-500/15 text-emerald-700",
@@ -124,11 +54,18 @@ const EMPTY_FORM: FormState = {
   shopifySku: "",
 };
 
-let nextId = INITIAL_MAPPINGS.length + 1;
-
 export default function CodeMappingPage() {
   const toast = useToast();
-  const [mappings, setMappings] = useState<Mapping[]>(INITIAL_MAPPINGS);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({ store: codeMappingStore, domain: "code-mapping", seed: INITIAL_CODE_MAPPINGS });
+
+  // 共有ストアを購読
+  const mappings = useSyncExternalStore(
+    codeMappingStore.subscribe,
+    codeMappingStore.getState,
+    codeMappingStore.getState,
+  );
   const [search, setSearch] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -155,7 +92,7 @@ export default function CodeMappingPage() {
     setModalOpen(true);
   }
 
-  function openEdit(m: Mapping) {
+  function openEdit(m: CodeMapping) {
     setEditId(m.id);
     setForm({
       code: m.code,
@@ -175,23 +112,23 @@ export default function CodeMappingPage() {
       toast.show("自社コードと商品名は必須です", "error");
       return;
     }
-    const status = computeStatus(form);
     if (editId) {
-      setMappings((prev) =>
-        prev.map((m) =>
-          m.id === editId
-            ? { ...m, ...form, status }
-            : m,
-        ),
-      );
+      const existing = codeMappingStore.findById(editId);
+      if (existing) {
+        codeMappingStore.upsert({ ...existing, ...form });
+      }
       toast.show("紐付けを更新しました", "success");
     } else {
-      const newMapping: Mapping = {
-        id: String(nextId++),
+      // 新規 ID 採番: 既存の数値 id の最大値 + 1
+      const maxN = mappings.reduce((acc, m) => {
+        const n = parseInt(m.id, 10);
+        return Number.isNaN(n) ? acc : Math.max(acc, n);
+      }, 0);
+      const newMapping: CodeMapping = {
+        id: String(maxN + 1),
         ...form,
-        status,
       };
-      setMappings((prev) => [...prev, newMapping]);
+      codeMappingStore.upsert(newMapping);
       toast.show("新しい紐付けを追加しました", "success");
     }
     setModalOpen(false);
@@ -201,7 +138,7 @@ export default function CodeMappingPage() {
     const target = mappings.find((m) => m.id === id);
     if (!target) return;
     if (!confirm(`「${target.code} / ${target.name}」の紐付けを削除しますか？`)) return;
-    setMappings((prev) => prev.filter((m) => m.id !== id));
+    codeMappingStore.remove(id);
     toast.show("紐付けを削除しました", "success");
   }
 
@@ -304,7 +241,9 @@ export default function CodeMappingPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((m) => (
+              {filtered.map((m) => {
+                const status = computeStatus(m);
+                return (
                 <tr key={m.id} className="border-t border-white/30 hover:bg-white/40 transition-colors">
                   <td className="px-3 py-2.5 font-mono text-xs font-medium text-gray-800 whitespace-nowrap">{m.code}</td>
                   <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{m.name}</td>
@@ -347,8 +286,8 @@ export default function CodeMappingPage() {
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-center">
-                    <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium", sb[m.status])}>
-                      {statusLabel[m.status]}
+                    <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-medium", sb[status])}>
+                      {statusLabel[status]}
                     </span>
                   </td>
                   <td className="px-3 py-2.5">
@@ -370,7 +309,8 @@ export default function CodeMappingPage() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-3 py-12 text-center text-sm text-gray-400">

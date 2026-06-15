@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-import { setDefaultsSettings, resetDefaultsSettings } from "@/lib/settings/defaults-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  defaultsSettingsStore,
+  INITIAL_DEFAULTS_SETTINGS,
+  DEFAULT_DEFAULTS_SETTINGS,
+} from "@/lib/stores/defaults-settings-store";
 
 type FieldDef = {
   key: string;
@@ -54,10 +59,34 @@ const purchaseFields: FieldDef[] = [
 
 export default function DefaultsPage() {
   const toast = useToast();
-  const [orderVals, setOrderVals] = useState<Record<string, string>>(Object.fromEntries(orderFields.map((f) => [f.key, f.defaultValue])));
-  const [productVals, setProductVals] = useState<Record<string, string>>(Object.fromEntries(productFields.map((f) => [f.key, f.defaultValue])));
-  const [customerVals, setCustomerVals] = useState<Record<string, string>>(Object.fromEntries(customerFields.map((f) => [f.key, f.defaultValue])));
-  const [purchaseVals, setPurchaseVals] = useState<Record<string, string>>(Object.fromEntries(purchaseFields.map((f) => [f.key, f.defaultValue])));
+
+  // 永続化オーナー
+  usePersistentStore({
+    store: defaultsSettingsStore,
+    domain: "defaults-settings",
+    seed: INITIAL_DEFAULTS_SETTINGS,
+  });
+
+  const items = useSyncExternalStore(
+    defaultsSettingsStore.subscribe,
+    defaultsSettingsStore.getState,
+    defaultsSettingsStore.getState,
+  );
+  const config = items[0] ?? INITIAL_DEFAULTS_SETTINGS[0];
+
+  // ドラフト状態（フォーム編集用）。初期値は保存済み config から。
+  const [orderVals, setOrderVals] = useState<Record<string, string>>(config.order);
+  const [productVals, setProductVals] = useState<Record<string, string>>(config.product);
+  const [customerVals, setCustomerVals] = useState<Record<string, string>>(config.customer);
+  const [purchaseVals, setPurchaseVals] = useState<Record<string, string>>(config.purchase);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setOrderVals(config.order);
+    setProductVals(config.product);
+    setCustomerVals(config.customer);
+    setPurchaseVals(config.purchase);
+  }, [config]);
 
   const renderField = (
     f: FieldDef,
@@ -101,22 +130,22 @@ export default function DefaultsPage() {
         <div className="flex gap-2">
           <SecondaryButton
             onClick={() => {
-              const defaults = Object.fromEntries(orderFields.map((f) => [f.key, f.defaultValue]));
-              const productDefaults = Object.fromEntries(productFields.map((f) => [f.key, f.defaultValue]));
-              const customerDefaults = Object.fromEntries(customerFields.map((f) => [f.key, f.defaultValue]));
-              const purchaseDefaults = Object.fromEntries(purchaseFields.map((f) => [f.key, f.defaultValue]));
-              setOrderVals(defaults);
-              setProductVals(productDefaults);
-              setCustomerVals(customerDefaults);
-              setPurchaseVals(purchaseDefaults);
-              resetDefaultsSettings();
+              const order = { ...DEFAULT_DEFAULTS_SETTINGS.order };
+              const product = { ...DEFAULT_DEFAULTS_SETTINGS.product };
+              const customer = { ...DEFAULT_DEFAULTS_SETTINGS.customer };
+              const purchase = { ...DEFAULT_DEFAULTS_SETTINGS.purchase };
+              setOrderVals(order);
+              setProductVals(product);
+              setCustomerVals(customer);
+              setPurchaseVals(purchase);
+              defaultsSettingsStore.upsert({ id: "config", order, product, customer, purchase });
               toast.show("既定値を初期値に戻しました", "info");
             }}
           >
             初期値に戻す
           </SecondaryButton>
           <PrimaryButton onClick={() => {
-            setDefaultsSettings({ order: orderVals, product: productVals, customer: customerVals, purchase: purchaseVals });
+            defaultsSettingsStore.upsert({ id: "config", order: orderVals, product: productVals, customer: customerVals, purchase: purchaseVals });
             toast.show("既定値設定を保存しました", "success");
           }}>変更を保存</PrimaryButton>
         </div>

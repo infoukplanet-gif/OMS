@@ -1,47 +1,38 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Plus, ChevronRight, ChevronDown, Folder, FolderOpen, Edit2, Trash2, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  productCategoryStore,
+  INITIAL_CATEGORIES,
+  type CategoryRecord,
+} from "@/lib/stores/product-category";
 
-type Category = {
-  id: number;
-  parentId: number | null;
-  name: string;
-  slug: string;
-  displayOrder: number;
-  productCount: number;
-  enabled: boolean;
-};
-
-const initialCategories: Category[] = [
-  { id: 1, parentId: null, name: "ファッション", slug: "fashion", displayOrder: 1, productCount: 384, enabled: true },
-  { id: 2, parentId: 1, name: "レディース", slug: "ladies", displayOrder: 1, productCount: 220, enabled: true },
-  { id: 3, parentId: 2, name: "トップス", slug: "tops", displayOrder: 1, productCount: 95, enabled: true },
-  { id: 4, parentId: 2, name: "ボトムス", slug: "bottoms", displayOrder: 2, productCount: 76, enabled: true },
-  { id: 5, parentId: 2, name: "ワンピース", slug: "onepiece", displayOrder: 3, productCount: 49, enabled: true },
-  { id: 6, parentId: 1, name: "メンズ", slug: "mens", displayOrder: 2, productCount: 164, enabled: true },
-  { id: 7, parentId: 6, name: "トップス", slug: "mens-tops", displayOrder: 1, productCount: 84, enabled: true },
-  { id: 8, parentId: 6, name: "ボトムス", slug: "mens-bottoms", displayOrder: 2, productCount: 80, enabled: true },
-  { id: 9, parentId: null, name: "雑貨", slug: "goods", displayOrder: 2, productCount: 132, enabled: true },
-  { id: 10, parentId: 9, name: "アクセサリー", slug: "accessories", displayOrder: 1, productCount: 78, enabled: true },
-  { id: 11, parentId: 9, name: "バッグ", slug: "bags", displayOrder: 2, productCount: 54, enabled: false },
-  { id: 12, parentId: null, name: "セール", slug: "sale", displayOrder: 3, productCount: 42, enabled: true },
-];
-
-function buildTree(all: Category[], parentId: number | null = null): Category[] {
+function buildTree(all: readonly CategoryRecord[], parentId: string | null = null): CategoryRecord[] {
   return all.filter((c) => c.parentId === parentId).sort((a, b) => a.displayOrder - b.displayOrder);
 }
 
 export default function ProductCategoriesPage() {
   const toast = useToast();
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
-  const [expanded, setExpanded] = useState<Set<number>>(new Set([1, 2, 6, 9]));
-  const [editing, setEditing] = useState<Category | null>(null);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({ store: productCategoryStore, domain: "product-categories", seed: INITIAL_CATEGORIES });
+
+  // 共有ストアを購読
+  const categories = useSyncExternalStore(
+    productCategoryStore.subscribe,
+    productCategoryStore.getState,
+    productCategoryStore.getState,
+  );
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(["1", "2", "6", "9"]));
+  const [editing, setEditing] = useState<CategoryRecord | null>(null);
   const [isNew, setIsNew] = useState(false);
 
-  function toggle(id: number) {
+  function toggle(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -49,38 +40,42 @@ export default function ProductCategoriesPage() {
     });
   }
 
-  function openNew(parentId: number | null = null) {
+  function nextId(): string {
+    const maxN = categories.reduce((acc, c) => {
+      const n = Number(c.id);
+      return Number.isFinite(n) ? Math.max(acc, n) : acc;
+    }, 0);
+    return String(maxN + 1);
+  }
+
+  function openNew(parentId: string | null = null) {
     const siblings = categories.filter((c) => c.parentId === parentId);
     setEditing({
-      id: Math.max(0, ...categories.map((c) => c.id)) + 1,
+      id: nextId(),
       parentId, name: "", slug: "",
       displayOrder: siblings.length + 1, productCount: 0, enabled: true,
     });
     setIsNew(true);
   }
-  function openEdit(c: Category) { setEditing({ ...c }); setIsNew(false); }
+  function openEdit(c: CategoryRecord) { setEditing({ ...c }); setIsNew(false); }
 
   function save() {
     if (!editing) return;
     if (!editing.name.trim()) return toast.show("カテゴリ名を入力してください", "error");
-    setCategories((prev) => {
-      const exists = prev.some((c) => c.id === editing.id);
-      if (exists) return prev.map((c) => (c.id === editing.id ? editing : c));
-      return [...prev, editing];
-    });
+    productCategoryStore.upsert(editing);
     toast.show(`「${editing.name}」を保存しました`);
     setEditing(null);
   }
 
-  function remove(c: Category) {
+  function remove(c: CategoryRecord) {
     const hasChildren = categories.some((x) => x.parentId === c.id);
     if (hasChildren) return toast.show("子カテゴリを先に削除してください", "error");
     if (!confirm(`「${c.name}」を削除しますか？`)) return;
-    setCategories((prev) => prev.filter((x) => x.id !== c.id));
+    productCategoryStore.remove(c.id);
     toast.show(`「${c.name}」を削除しました`);
   }
 
-  function renderNode(c: Category, depth: number) {
+  function renderNode(c: CategoryRecord, depth: number) {
     const children = buildTree(categories, c.id);
     const isOpen = expanded.has(c.id);
     return (
@@ -121,7 +116,7 @@ export default function ProductCategoriesPage() {
   }
 
   const roots = buildTree(categories, null);
-  const parentOptions = [{ id: null as number | null, label: "（ルート）" }, ...categories.filter((c) => c.id !== editing?.id).map((c) => ({ id: c.id, label: c.name }))];
+  const parentOptions = [{ id: null as string | null, label: "（ルート）" }, ...categories.filter((c) => c.id !== editing?.id).map((c) => ({ id: c.id, label: c.name }))];
 
   return (
     <div className="space-y-5">
@@ -181,7 +176,7 @@ export default function ProductCategoriesPage() {
               <label className="block text-xs font-medium text-gray-600 mb-1">親カテゴリ</label>
               <select
                 value={editing.parentId ?? ""}
-                onChange={(e) => setEditing({ ...editing, parentId: e.target.value === "" ? null : Number(e.target.value) })}
+                onChange={(e) => setEditing({ ...editing, parentId: e.target.value === "" ? null : e.target.value })}
                 className="w-full h-9 px-3 rounded-xl text-sm bg-white/70 border border-white/60"
               >
                 {parentOptions.map((o) => (

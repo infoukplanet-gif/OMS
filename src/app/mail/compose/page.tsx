@@ -6,6 +6,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { DatePicker } from "@/components/ui/date-picker";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { mailStore } from "@/lib/stores/mail";
+import type { MailRecord } from "@/lib/state-machines/mail";
 import { cn } from "@/lib/utils";
 import {
   ChevronLeft,
@@ -121,6 +123,21 @@ function genId() {
   return `rec-${++recipientCounter}-${Date.now()}`;
 }
 
+let mailCounter = 0;
+
+function genMailId() {
+  return `mail-manual-${Date.now()}-${++mailCounter}`;
+}
+
+function formatDateTime(d: Date, time: string) {
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${time}`;
+}
+
+function nowStamp() {
+  const now = new Date();
+  return `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
 export default function MailComposePage() {
   const router = useRouter();
   const toast = useToast();
@@ -194,7 +211,33 @@ export default function MailComposePage() {
       return;
     }
     const validRecipients = recipients.filter((r) => r.to.trim() !== "");
-    if (sendMode === "即時") {
+    const stamp = nowStamp();
+    const isImmediate = sendMode === "即時";
+    const scheduledStamp = scheduledDate ? formatDateTime(scheduledDate, scheduledTime) : stamp;
+
+    // 宛先ごとに 1 レコードを生成しメールストアへ登録（送信/予約を実際に永続化）
+    for (const r of validRecipients) {
+      const record: MailRecord = {
+        id: genMailId(),
+        orderId: "",
+        to: r.to.trim(),
+        customer: r.customer.trim(),
+        subject: subject.trim(),
+        body,
+        type: mailType,
+        trigger: "フリーメール",
+        triggerType: null,
+        priority,
+        scheduled: isImmediate ? stamp : scheduledStamp,
+        sentAt: isImmediate ? stamp : null,
+        retry: 0,
+        status: isImmediate ? "送信済" : "送信待ち",
+        source: "manual",
+      };
+      mailStore.register(record);
+    }
+
+    if (isImmediate) {
       toast.show(`${validRecipients.length} 件のメールを送信しました`, "success");
     } else {
       const dateStr = scheduledDate
@@ -203,7 +246,7 @@ export default function MailComposePage() {
       toast.show(`${validRecipients.length} 件を ${dateStr} ${scheduledTime} に予約しました`, "success");
     }
     router.push("/mail");
-  }, [validate, recipients, sendMode, scheduledDate, scheduledTime, router, toast]);
+  }, [validate, recipients, subject, body, mailType, priority, sendMode, scheduledDate, scheduledTime, router, toast]);
 
   // ---------- 本文へ変数挿入 ----------
 

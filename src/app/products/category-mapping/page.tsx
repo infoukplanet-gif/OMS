@@ -1,19 +1,16 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Plus, ArrowRight, Trash2, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type Mall = "rakuten" | "yahoo" | "amazon" | "shopify";
-type Mapping = {
-  id: number;
-  internalCategory: string;
-  mall: Mall;
-  mallCategoryPath: string;
-  mallCategoryId: string;
-  active: boolean;
-};
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  categoryMappingStore,
+  INITIAL_CATEGORY_MAPPINGS,
+  type CategoryMappingRecord,
+  type Mall,
+} from "@/lib/stores/category-mapping";
 
 const MALL_LABEL: Record<Mall, string> = {
   rakuten: "楽天市場",
@@ -32,60 +29,78 @@ const INTERNAL_CATEGORIES = [
   "雑貨 / バッグ",
 ];
 
-const initialMappings: Mapping[] = [
-  { id: 1, internalCategory: "ファッション / レディース / トップス", mall: "rakuten", mallCategoryPath: "レディースファッション > トップス > Tシャツ・カットソー", mallCategoryId: "100371", active: true },
-  { id: 2, internalCategory: "ファッション / レディース / トップス", mall: "yahoo", mallCategoryPath: "ファッション > レディースファッション > トップス", mallCategoryId: "2497", active: true },
-  { id: 3, internalCategory: "ファッション / レディース / トップス", mall: "amazon", mallCategoryPath: "Fashion > Women > Tops & Tees", mallCategoryId: "7141123051", active: true },
-  { id: 4, internalCategory: "ファッション / レディース / ボトムス", mall: "rakuten", mallCategoryPath: "レディースファッション > パンツ", mallCategoryId: "100371A", active: true },
-  { id: 5, internalCategory: "雑貨 / アクセサリー", mall: "shopify", mallCategoryPath: "Jewelry > Necklaces", mallCategoryId: "ap-neck", active: true },
-  { id: 6, internalCategory: "雑貨 / バッグ", mall: "rakuten", mallCategoryPath: "レディースバッグ > ハンドバッグ", mallCategoryId: "216131", active: false },
-];
-
 export default function CategoryMappingPage() {
   const toast = useToast();
-  const [mappings, setMappings] = useState<Mapping[]>(initialMappings);
-  const [editing, setEditing] = useState<Mapping | null>(null);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({
+    store: categoryMappingStore,
+    domain: "category-mapping",
+    seed: INITIAL_CATEGORY_MAPPINGS,
+  });
+
+  // 共有ストアを購読
+  const mappings = useSyncExternalStore(
+    categoryMappingStore.subscribe,
+    categoryMappingStore.getState,
+    categoryMappingStore.getState,
+  );
+
+  const [editing, setEditing] = useState<CategoryMappingRecord | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [filterMall, setFilterMall] = useState<string>("all");
   const [filterInternal, setFilterInternal] = useState<string>("all");
 
-  const filtered = mappings.filter((m) => {
-    if (filterMall !== "all" && m.mall !== filterMall) return false;
-    if (filterInternal !== "all" && m.internalCategory !== filterInternal) return false;
-    return true;
-  });
+  const filtered = useMemo(
+    () =>
+      mappings.filter((m) => {
+        if (filterMall !== "all" && m.mall !== filterMall) return false;
+        if (filterInternal !== "all" && m.internalCategory !== filterInternal) return false;
+        return true;
+      }),
+    [mappings, filterMall, filterInternal],
+  );
+
+  function nextId(): string {
+    const maxN = mappings.reduce((acc, m) => {
+      const n = Number(m.id);
+      return Number.isFinite(n) ? Math.max(acc, n) : acc;
+    }, 0);
+    return String(maxN + 1);
+  }
 
   function openNew() {
     setEditing({
-      id: Math.max(0, ...mappings.map((m) => m.id)) + 1,
+      id: nextId(),
       internalCategory: INTERNAL_CATEGORIES[0],
       mall: "rakuten",
-      mallCategoryPath: "", mallCategoryId: "", active: true,
+      mallCategoryPath: "",
+      mallCategoryId: "",
+      active: true,
     });
     setIsNew(true);
   }
-  function openEdit(m: Mapping) { setEditing({ ...m }); setIsNew(false); }
+  function openEdit(m: CategoryMappingRecord) {
+    setEditing({ ...m });
+    setIsNew(false);
+  }
 
   function save() {
     if (!editing) return;
     if (!editing.mallCategoryPath.trim()) return toast.show("モール側カテゴリを入力してください", "error");
-    setMappings((prev) => {
-      const exists = prev.some((m) => m.id === editing.id);
-      if (exists) return prev.map((m) => (m.id === editing.id ? editing : m));
-      return [...prev, editing];
-    });
+    categoryMappingStore.upsert(editing);
     toast.show("マッピングを保存しました");
     setEditing(null);
   }
 
-  function remove(m: Mapping) {
+  function remove(m: CategoryMappingRecord) {
     if (!confirm("このマッピングを削除しますか？")) return;
-    setMappings((prev) => prev.filter((x) => x.id !== m.id));
+    categoryMappingStore.remove(m.id);
     toast.show("マッピングを削除しました");
   }
 
-  function toggle(id: number) {
-    setMappings((prev) => prev.map((m) => (m.id === id ? { ...m, active: !m.active } : m)));
+  function toggle(m: CategoryMappingRecord) {
+    categoryMappingStore.upsert({ ...m, active: !m.active });
   }
 
   return (
@@ -156,7 +171,7 @@ export default function CategoryMappingPage() {
                   <td className="py-2 px-2 text-xs font-mono text-gray-500">{m.mallCategoryId}</td>
                   <td className="py-2 px-2 text-center">
                     <label className="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" checked={m.active} onChange={() => toggle(m.id)} className="sr-only peer" />
+                      <input type="checkbox" checked={m.active} onChange={() => toggle(m)} className="sr-only peer" />
                       <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
                     </label>
                   </td>

@@ -1,37 +1,19 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  INITIAL_SETTINGS_TEMPLATES,
+  settingsTemplateStore,
+  type SettingsTemplate,
+} from "@/lib/stores/settings-template";
 import { cn } from "@/lib/utils";
 import { Copy, Edit, Eye, FileText, Plus, Search, Star, Trash2, X } from "lucide-react";
 
-type Template = {
-  id: string;
-  name: string;
-  type: "納品書" | "出荷指示書" | "ピッキングリスト" | "送り状" | "請求書" | "見積書";
-  paperSize: "A4縦" | "A4横" | "A5" | "A6" | "ハガキ" | "サーマル76mm" | "サーマル100mm";
-  shop: string;
-  isDefault: boolean;
-  usage: number;
-  lastUpdated: string;
-  enabled: boolean;
-  description: string;
-};
-
-const INITIAL: Template[] = [
-  { id: "t-001", name: "標準納品書（A4縦）", type: "納品書", paperSize: "A4縦", shop: "全店舗共通", isDefault: true, usage: 1245, lastUpdated: "2026/04/01", enabled: true, description: "通常の宅配伝票同梱用納品書" },
-  { id: "t-002", name: "卸売向け納品書", type: "納品書", paperSize: "A4縦", shop: "本店", isDefault: false, usage: 56, lastUpdated: "2026/03/15", enabled: true, description: "卸先用、税抜表示・取引区分明記" },
-  { id: "t-003", name: "ギフト用納品書（金額非表示）", type: "納品書", paperSize: "A5", shop: "全店舗共通", isDefault: false, usage: 320, lastUpdated: "2026/02/20", enabled: true, description: "ギフト発送時の金額レス納品書" },
-  { id: "t-004", name: "出荷指示書A", type: "出荷指示書", paperSize: "A4横", shop: "全店舗共通", isDefault: true, usage: 890, lastUpdated: "2026/03/28", enabled: true, description: "標準フォーマット、QRコード付き" },
-  { id: "t-005", name: "簡易出荷指示", type: "出荷指示書", paperSize: "A5", shop: "全店舗共通", isDefault: false, usage: 234, lastUpdated: "2026/03/10", enabled: true, description: "メール便用簡易版" },
-  { id: "t-006", name: "ピッキングリスト（ロケーション順）", type: "ピッキングリスト", paperSize: "A4縦", shop: "全店舗共通", isDefault: true, usage: 720, lastUpdated: "2026/04/10", enabled: true, description: "倉庫ロケ順にソート、バーコード付き" },
-  { id: "t-007", name: "ヤマト送り状（B2クラウド）", type: "送り状", paperSize: "A6", shop: "全店舗共通", isDefault: true, usage: 4520, lastUpdated: "2026/04/05", enabled: true, description: "ヤマトB2クラウド連携用" },
-  { id: "t-008", name: "佐川e飛伝送り状", type: "送り状", paperSize: "A6", shop: "全店舗共通", isDefault: false, usage: 1240, lastUpdated: "2026/04/03", enabled: true, description: "佐川急便e飛伝専用フォーマット" },
-  { id: "t-009", name: "請求書（インボイス対応）", type: "請求書", paperSize: "A4縦", shop: "本店", isDefault: true, usage: 124, lastUpdated: "2026/04/01", enabled: true, description: "適格請求書発行事業者番号入り" },
-  { id: "t-010", name: "見積書（標準）", type: "見積書", paperSize: "A4縦", shop: "本店", isDefault: true, usage: 88, lastUpdated: "2026/03/20", enabled: true, description: "見積有効期限・条件入り" },
-];
+type Template = SettingsTemplate;
 
 const typeBadge: Record<string, string> = {
   納品書: "bg-blue-500/15 text-blue-700",
@@ -42,7 +24,9 @@ const typeBadge: Record<string, string> = {
   見積書: "bg-amber-500/15 text-amber-700",
 };
 
-const EMPTY_TEMPLATE: Omit<Template, "id"> = {
+// 新規作成用の空テンプレート。id は保存時に handleSave で正規採番される。
+const EMPTY_TEMPLATE: Template = {
+  id: "",
   name: "",
   type: "納品書",
   paperSize: "A4縦",
@@ -66,9 +50,7 @@ function TemplateModal({
   onClose: () => void;
 }) {
   const isEdit = template !== null;
-  const [form, setForm] = useState<Template>(() =>
-    template ?? { ...EMPTY_TEMPLATE, id: `t-${Date.now()}` }
-  );
+  const [form, setForm] = useState<Template>(() => template ?? EMPTY_TEMPLATE);
   const set = (patch: Partial<Template>) => setForm((prev) => ({ ...prev, ...patch }));
 
   return (
@@ -240,9 +222,32 @@ function TemplatePreviewModal({ template, onClose }: { template: Template; onClo
   );
 }
 
+/** 既存の t-0NN 形式 ID から次の連番 ID（ゼロ詰め3桁）を採番する。 */
+function nextTemplateId(items: readonly Template[]): string {
+  const maxN = items.reduce((acc, t) => {
+    const m = t.id.match(/^t-(\d+)$/);
+    return m ? Math.max(acc, parseInt(m[1], 10)) : acc;
+  }, 0);
+  return `t-${String(maxN + 1).padStart(3, "0")}`;
+}
+
 export default function TemplatesPage() {
   const toast = useToast();
-  const [items, setItems] = useState<Template[]>(INITIAL);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({
+    store: settingsTemplateStore,
+    domain: "settings-templates",
+    seed: INITIAL_SETTINGS_TEMPLATES,
+  });
+
+  // 共有ストアを購読
+  const items = useSyncExternalStore(
+    settingsTemplateStore.subscribe,
+    settingsTemplateStore.getState,
+    settingsTemplateStore.getState,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [shopFilter, setShopFilter] = useState("all");
@@ -262,25 +267,41 @@ export default function TemplatesPage() {
 
   const shops = Array.from(new Set(items.map((i) => i.shop)));
 
-  const setDefault = (id: string, type: string) =>
-    setItems((prev) => prev.map((t) => (t.type === type ? { ...t, isDefault: t.id === id } : t)));
+  // 同種別の既定を排他にする: 対象を既定にし、同種別の他テンプレを既定解除する。
+  const setDefault = (id: string, type: string) => {
+    for (const t of settingsTemplateStore.getState()) {
+      if (t.type !== type) continue;
+      const nextIsDefault = t.id === id;
+      if (t.isDefault !== nextIsDefault) {
+        settingsTemplateStore.upsert({ ...t, isDefault: nextIsDefault });
+      }
+    }
+  };
 
-  const dupSeq = useRef(0);
   const handleDuplicate = (t: Template) => {
-    dupSeq.current += 1;
-    const newItem: Template = { ...t, id: `t-copy-${dupSeq.current}`, name: `${t.name}（複製）`, isDefault: false, usage: 0 };
-    setItems((prev) => [...prev, newItem]);
+    const newItem: Template = {
+      ...t,
+      id: nextTemplateId(settingsTemplateStore.getState()),
+      name: `${t.name}（複製）`,
+      isDefault: false,
+      usage: 0,
+    };
+    settingsTemplateStore.upsert(newItem);
     toast.show(`「${t.name}」を複製しました`, "success");
   };
 
   const handleSave = (t: Template) => {
     if (!t.name.trim()) { toast.show("テンプレート名は必須です", "error"); return; }
-    setItems((prev) => {
-      const idx = prev.findIndex((x) => x.id === t.id);
-      if (idx >= 0) return prev.map((x) => (x.id === t.id ? t : x));
-      return [...prev, { ...t, lastUpdated: new Date().toLocaleDateString("ja-JP").replace(/\//g, "/") }];
-    });
-    toast.show(modalTarget !== null ? `「${t.name}」を更新しました` : `「${t.name}」を追加しました`, "success");
+    const isNew = modalTarget === null;
+    const record: Template = isNew
+      ? {
+          ...t,
+          id: nextTemplateId(settingsTemplateStore.getState()),
+          lastUpdated: new Date().toLocaleDateString("ja-JP"),
+        }
+      : t;
+    settingsTemplateStore.upsert(record);
+    toast.show(isNew ? `「${t.name}」を追加しました` : `「${t.name}」を更新しました`, "success");
     setModalTarget(false);
   };
 
@@ -391,7 +412,7 @@ export default function TemplatesPage() {
                   <Star className="h-3 w-3" />
                 </button>
               )}
-              <button onClick={() => { setItems((p) => p.filter((x) => x.id !== t.id)); toast.show("テンプレートを削除しました", "info"); }} disabled={t.isDefault} className="px-2 py-1.5 rounded-lg text-xs bg-red-500/15 text-red-700 hover:bg-red-500/25 disabled:opacity-30 disabled:cursor-not-allowed" title="削除">
+              <button onClick={() => { settingsTemplateStore.remove(t.id); toast.show("テンプレートを削除しました", "info"); }} disabled={t.isDefault} className="px-2 py-1.5 rounded-lg text-xs bg-red-500/15 text-red-700 hover:bg-red-500/25 disabled:opacity-30 disabled:cursor-not-allowed" title="削除">
                 <Trash2 className="h-3 w-3" />
               </button>
             </div>

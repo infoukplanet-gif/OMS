@@ -9,6 +9,7 @@ import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } 
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
 import { DetailModal } from "@/components/ui/detail-modal";
+import { wholesaleStore, type WholesaleRecord } from "@/lib/stores/wholesale";
 
 type ImportMode = "new" | "update" | "upsert";
 
@@ -160,24 +161,65 @@ export default function WholesaleImportPage() {
   }
 
   function confirmImport() {
-    const n = counts.ok + counts.warning;
     const d = new Date();
     const p = (x: number) => String(x).padStart(2, "0");
     const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const startedAt = `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
+
+    // 取込対象は error 以外（卸先コードあり）。登録モードで新規/更新を分岐し、
+    // 実際に卸先マスタへ upsert された件数のみを成功件数として集計する。
+    const importable = previewData.filter((row) => row.status !== "error" && row.code.trim() !== "");
+    let applied = 0;
+    for (const row of importable) {
+      const existing = wholesaleStore.findById(row.code);
+      if (mode === "new" && existing) continue;
+      if (mode === "update" && !existing) continue;
+
+      const next: WholesaleRecord = existing
+        ? {
+            ...existing,
+            name: row.name,
+            contact: row.contact,
+            email: row.email,
+            ...(updateCreditLimit ? { creditLimit: row.creditLimit } : {}),
+            ...(updatePaymentTerms ? { terms: row.paymentTerms } : {}),
+          }
+        : {
+            id: row.code,
+            code: row.code,
+            name: row.name,
+            kana: "",
+            contact: row.contact,
+            email: row.email,
+            terms: row.paymentTerms,
+            creditLimit: row.creditLimit,
+            creditUsed: 0,
+            group: "C",
+            status: "新規",
+            monthSales: 0,
+            ytdSales: 0,
+            delays: 0,
+            prefecture: "",
+            startedAt,
+          };
+      wholesaleStore.upsert(next);
+      applied += 1;
+    }
+
     historySeq.current += 1;
     const record: ImportHistory = {
       id: historySeq.current,
       filename: file?.name ?? "import.csv",
       rows: counts.all,
-      success: n,
-      error: counts.error,
+      success: applied,
+      error: counts.error + (counts.ok + counts.warning - applied),
       mode,
       template: templateKey,
       user: "現在のユーザー",
       at,
     };
     setHistory((prev) => [record, ...prev]);
-    toast.show(`${n} 件を ${MODE_LABEL[mode]} で取込しました`);
+    toast.show(`${applied} 件を ${MODE_LABEL[mode]} で卸先マスタに反映しました`, "success");
     setStep(1);
     setFile(null);
   }
