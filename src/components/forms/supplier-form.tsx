@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -15,6 +15,8 @@ const Field = ({
   className,
   type = "text",
   defaultValue,
+  value,
+  onChange,
 }: {
   label: string;
   required?: boolean;
@@ -22,6 +24,8 @@ const Field = ({
   className?: string;
   type?: string;
   defaultValue?: string;
+  value?: string;
+  onChange?: (v: string) => void;
 }) => (
   <div className={cn("space-y-1.5", className)}>
     <label className="text-sm font-medium text-gray-700">
@@ -30,7 +34,9 @@ const Field = ({
     <input
       type={type}
       placeholder={placeholder}
-      defaultValue={defaultValue}
+      {...(value !== undefined
+        ? { value, onChange: (e: ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value) }
+        : { defaultValue })}
       className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
     />
   </div>
@@ -41,17 +47,26 @@ const Select = ({
   required,
   options,
   className,
+  value,
+  onChange,
 }: {
   label: string;
   required?: boolean;
   options: string[];
   className?: string;
+  value?: string;
+  onChange?: (v: string) => void;
 }) => (
   <div className={cn("space-y-1.5", className)}>
     <label className="text-sm font-medium text-gray-700">
       {label} {required && <span className="text-red-500 text-xs">*必須</span>}
     </label>
-    <select className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+    <select
+      {...(value !== undefined
+        ? { value, onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange?.(e.target.value) }
+        : {})}
+      className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+    >
       {options.map((o) => (
         <option key={o}>{o}</option>
       ))}
@@ -73,9 +88,18 @@ export function SupplierForm({ mode, recordId }: SupplierFormProps) {
   // SSR/CSR とも初期レンダーで同じ値が読める＝lazy 初期化で hydration ズレなし）
   const prefill = isEdit && recordId ? supplierStore.findById(recordId) : undefined;
 
-  // 必須フィールドを controlled で管理
+  // 永続スキーマ項目を controlled で管理（保存時のデータ欠落を防ぐ）
   const [code, setCode] = useState(() => prefill?.code ?? "");
   const [name, setName] = useState(() => prefill?.name ?? "");
+  const [contact, setContact] = useState(() => String(prefill?.contact ?? ""));
+  const [phone, setPhone] = useState(() => String(prefill?.phone ?? ""));
+  const [email, setEmail] = useState(() => String(prefill?.email ?? ""));
+  const [leadTime, setLeadTime] = useState(() =>
+    prefill?.leadTime !== undefined ? String(prefill.leadTime) : ""
+  );
+  const [rating, setRating] = useState<SupplierRecord["rating"]>(
+    () => (prefill?.rating as SupplierRecord["rating"]) ?? "B"
+  );
 
   const existingRecord = prefill;
   const d = existingRecord
@@ -102,14 +126,14 @@ export function SupplierForm({ mode, recordId }: SupplierFormProps) {
       id: trimmedCode,
       code: trimmedCode,
       name: trimmedName,
-      contact: String(existing?.contact ?? d.contact ?? ""),
-      phone: String(existing?.phone ?? ""),
-      email: String(existing?.email ?? ""),
+      contact: contact.trim() || String(existing?.contact ?? d.contact ?? ""),
+      phone: phone.trim() || String(existing?.phone ?? ""),
+      email: email.trim() || String(existing?.email ?? ""),
       monthVolume: Number(existing?.monthVolume ?? 0),
       ytdVolume: Number(existing?.ytdVolume ?? 0),
       unpaid: Number(existing?.unpaid ?? 0),
-      leadTime: Number(existing?.leadTime ?? 7),
-      rating: (existing?.rating as SupplierRecord["rating"]) ?? "B",
+      leadTime: leadTime.trim() ? Number(leadTime) : Number(existing?.leadTime ?? 7),
+      rating,
       status: (existing?.status as SupplierRecord["status"]) ?? "新規",
     };
 
@@ -208,12 +232,12 @@ export function SupplierForm({ mode, recordId }: SupplierFormProps) {
       <GlassCard>
         <h2 className="text-base font-semibold text-gray-800 mb-4">担当者情報</h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="担当者名" required placeholder="鈴木 直子" defaultValue={d.contact} />
+          <Field label="担当者名" required placeholder="鈴木 直子" value={contact} onChange={setContact} />
           <Field label="担当者カナ" placeholder="スズキ ナオコ" />
           <Field label="部署名" placeholder="営業部" />
           <Field label="役職" placeholder="課長" />
-          <Field label="担当者電話" placeholder="090-0000-0000" type="tel" />
-          <Field label="担当者メール" placeholder="suzuki@example.com" type="email" />
+          <Field label="担当者電話" placeholder="090-0000-0000" type="tel" value={phone} onChange={setPhone} />
+          <Field label="担当者メール" placeholder="suzuki@example.com" type="email" value={email} onChange={setEmail} />
           <Field label="副担当者" placeholder="田中 次郎" />
           <Field label="副担当者連絡先" placeholder="03-0000-0000" type="tel" />
         </div>
@@ -251,10 +275,15 @@ export function SupplierForm({ mode, recordId }: SupplierFormProps) {
           <Select label="支払方法" options={["銀行振込", "現金", "小切手", "手形"]} />
           <Select label="支払サイト" options={["翌月末払い", "翌々月末払い", "30日後", "60日後", "90日後"]} />
           <Field label="最低発注金額" type="number" placeholder="50000" />
-          <Field label="発注リードタイム（日）" type="number" placeholder="7" />
+          <Field label="発注リードタイム（日）" type="number" placeholder="7" value={leadTime} onChange={setLeadTime} />
           <Field label="最小ロット数" type="number" placeholder="10" />
           <Field label="送料負担" placeholder="自社負担/仕入先負担" />
-          <Select label="評価ランク" options={["A", "B", "C", "D"]} />
+          <Select
+            label="評価ランク"
+            options={["A", "B", "C", "D"]}
+            value={rating}
+            onChange={(v) => setRating(v as SupplierRecord["rating"])}
+          />
         </div>
       </GlassCard>
 

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -29,6 +29,8 @@ const Field = ({
   className,
   type = "text",
   defaultValue,
+  value,
+  onChange,
   hint,
   unit,
 }: {
@@ -38,6 +40,8 @@ const Field = ({
   className?: string;
   type?: string;
   defaultValue?: string;
+  value?: string;
+  onChange?: (v: string) => void;
   hint?: string;
   unit?: string;
 }) => (
@@ -51,7 +55,9 @@ const Field = ({
       <input
         type={type}
         placeholder={placeholder}
-        defaultValue={defaultValue}
+        {...(value !== undefined
+          ? { value, onChange: (e: ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value) }
+          : { defaultValue })}
         className={cn(
           "w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20",
           unit && "pr-10"
@@ -70,6 +76,8 @@ const Select = ({
   options,
   className,
   defaultValue,
+  value,
+  onChange,
   hint,
 }: {
   label: string;
@@ -77,6 +85,8 @@ const Select = ({
   options: string[];
   className?: string;
   defaultValue?: string;
+  value?: string;
+  onChange?: (v: string) => void;
   hint?: string;
 }) => (
   <div className={cn("space-y-1.5", className)}>
@@ -86,7 +96,9 @@ const Select = ({
       {hint && <HelpHint side="right">{hint}</HelpHint>}
     </label>
     <select
-      defaultValue={defaultValue}
+      {...(value !== undefined
+        ? { value, onChange: (e: ChangeEvent<HTMLSelectElement>) => onChange?.(e.target.value) }
+        : { defaultValue })}
       className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
     >
       {options.map((o) => (
@@ -141,6 +153,21 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
   const [code, setCode] = useState(() => prefill?.code ?? "");
   const [name, setName] = useState(() => prefill?.name ?? "");
 
+  // 永続スキーマフィールドを controlled 化（保存時のデータ欠落を防ぐ）
+  const [kana, setKana] = useState(() => String(prefill?.kana ?? ""));
+  const [contact, setContact] = useState(() => String(prefill?.contact ?? ""));
+  const [prefecture, setPrefecture] = useState(() => String(prefill?.prefecture ?? ""));
+  const [creditLimit, setCreditLimit] = useState(() =>
+    prefill?.creditLimit !== undefined ? String(prefill.creditLimit) : ""
+  );
+
+  // controlled select が off-list 値を失わないよう、現在値を選択肢に含める
+  const PREFECTURE_OPTIONS = ["選択", "東京都", "大阪府", "北海道", "福岡県"];
+  const prefectureOptions =
+    prefecture && !PREFECTURE_OPTIONS.includes(prefecture)
+      ? [...PREFECTURE_OPTIONS, prefecture]
+      : PREFECTURE_OPTIONS;
+
   const existingRecord = prefill;
   const d = existingRecord
     ? { code: existingRecord.code, name: existingRecord.name, contact: String(existingRecord.contact ?? "") }
@@ -175,17 +202,17 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
       id: trimmedCode,
       code: trimmedCode,
       name: trimmedName,
-      kana: String(existing?.kana ?? ""),
-      contact: String(existing?.contact ?? d.contact ?? ""),
+      kana: kana.trim() || String(existing?.kana ?? ""),
+      contact: contact.trim() || String(existing?.contact ?? d.contact ?? ""),
       terms: String(existing?.terms ?? "月末締翌月末払"),
-      creditLimit: Number(existing?.creditLimit ?? 0),
+      creditLimit: creditLimit.trim() ? Number(creditLimit) : Number(existing?.creditLimit ?? 0),
       creditUsed: Number(existing?.creditUsed ?? 0),
       group: (existing?.group as WholesaleRecord["group"]) ?? "B",
       status: (existing?.status as WholesaleRecord["status"]) ?? "通常",
       monthSales: Number(existing?.monthSales ?? 0),
       ytdSales: Number(existing?.ytdSales ?? 0),
       delays: Number(existing?.delays ?? 0),
-      prefecture: String(existing?.prefecture ?? ""),
+      prefecture: prefecture.trim() || String(existing?.prefecture ?? ""),
       startedAt: String(existing?.startedAt ?? now),
       tags,
     };
@@ -309,7 +336,7 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
               className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
             />
           </div>
-          <Field label="法人名カナ" placeholder="カブシキガイシャサンプル" className="col-span-2" />
+          <Field label="法人名カナ" placeholder="カブシキガイシャサンプル" className="col-span-2" value={kana} onChange={setKana} />
           <Field label="法人番号" placeholder="1234567890123" hint="国税庁が指定する13桁の法人番号。" />
           <Field label="インボイス登録番号" placeholder="T1234567890123" hint="2023年10月以降、適格請求書発行に必要。" />
           <Field label="代表者名" placeholder="山田 太郎" />
@@ -356,7 +383,12 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
               )}
             </div>
             <div className="grid grid-cols-4 gap-4">
-              <Field label="担当者名" required placeholder="田中 花子" defaultValue={i === 1 ? d.contact : ""} />
+              <Field
+                label="担当者名"
+                required
+                placeholder="田中 花子"
+                {...(i === 1 ? { value: contact, onChange: setContact } : { defaultValue: "" })}
+              />
               <Field label="担当者カナ" placeholder="タナカ ハナコ" />
               <Field label="部署名" placeholder="仕入部" />
               <Field label="役職" placeholder="主任" />
@@ -379,7 +411,13 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
           <Field label="代表FAX" placeholder="03-0000-0000" className="col-span-2" type="tel" />
           <Field label="代表メール" placeholder="info@example.com" className="col-span-2" type="email" />
           <Field label="郵便番号" placeholder="100-0001" className="col-span-1" />
-          <Select label="都道府県" options={["選択", "東京都", "大阪府", "北海道", "福岡県"]} className="col-span-1" />
+          <Select
+            label="都道府県"
+            options={prefectureOptions}
+            className="col-span-1"
+            value={prefecture || "選択"}
+            onChange={(v) => setPrefecture(v === "選択" ? "" : v)}
+          />
           <Field label="市区町村" placeholder="千代田区" className="col-span-2" />
           <Field label="番地" placeholder="千代田1-1-1" className="col-span-2" />
           <Field label="建物名・部屋番号" placeholder="サンプルビル 10F" className="col-span-6" />
@@ -425,7 +463,7 @@ export function WholesaleForm({ mode, recordId }: WholesaleFormProps) {
           <HelpHint>与信限度額を超える未払残高があると新規受注を自動ホールドします。</HelpHint>
         </h2>
         <div className="grid grid-cols-4 gap-4">
-          <Field label="与信限度額" type="number" placeholder="500000" unit="円" />
+          <Field label="与信限度額" type="number" placeholder="500000" unit="円" value={creditLimit} onChange={setCreditLimit} />
           <Field label="現在の与信使用額" type="number" defaultValue={isEdit ? "482000" : "0"} unit="円" />
           <Field label="与信使用率" type="number" defaultValue={isEdit ? "78" : "0"} unit="%" />
           <Select label="与信ランク" options={["A（優良）", "B（標準）", "C（要注意）", "D（取引制限）"]} />
