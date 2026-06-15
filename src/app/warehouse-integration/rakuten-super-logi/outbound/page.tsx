@@ -47,18 +47,23 @@ export default function RsrLogiOutboundPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Outbound["status"]>("all");
+  const [cutoffFilter, setCutoffFilter] = useState<Date | undefined>(undefined);
   const [items, setItems] = useState(data);
   const [retrying, setRetrying] = useState(false);
   const [sending, setSending] = useState(false);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
+    const cut = cutoffFilter
+      ? `${cutoffFilter.getFullYear()}/${String(cutoffFilter.getMonth() + 1).padStart(2, "0")}/${String(cutoffFilter.getDate()).padStart(2, "0")}`
+      : null;
     return items.filter((d) => {
       if (k && !`${d.id} ${d.orderNo} ${d.customer} ${d.trackingNo}`.toLowerCase().includes(k)) return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (cut && !d.cutoff.startsWith(cut)) return false;
       return true;
     });
-  }, [items, keyword, statusFilter]);
+  }, [items, keyword, statusFilter, cutoffFilter]);
 
   function handleRetryFailed() {
     if (retrying) return;
@@ -141,7 +146,7 @@ export default function RsrLogiOutboundPage() {
               className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             />
           </div>
-          <DatePicker placeholder="締切日" />
+          <DatePicker placeholder="締切日" value={cutoffFilter} onChange={setCutoffFilter} />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
             <option value="all">状態: すべて</option>
             <option value="指示送信">指示送信</option>
@@ -151,7 +156,7 @@ export default function RsrLogiOutboundPage() {
             <option value="保留">保留</option>
             <option value="失敗">失敗</option>
           </select>
-          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); }}>クリア</SecondaryButton>
+          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); setCutoffFilter(undefined); }}>クリア</SecondaryButton>
         </div>
       </GlassCard>
 

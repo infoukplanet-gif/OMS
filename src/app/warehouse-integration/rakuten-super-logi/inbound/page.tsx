@@ -54,6 +54,7 @@ export default function RsrLogiInboundPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Inbound["status"]>("all");
+  const [scheduledFilter, setScheduledFilter] = useState<Date | undefined>(undefined);
   const [items, setItems] = useState(data);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewInboundForm>(EMPTY_FORM);
@@ -61,12 +62,16 @@ export default function RsrLogiInboundPage() {
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
+    const sched = scheduledFilter
+      ? `${scheduledFilter.getFullYear()}/${String(scheduledFilter.getMonth() + 1).padStart(2, "0")}/${String(scheduledFilter.getDate()).padStart(2, "0")}`
+      : null;
     return items.filter((d) => {
       if (k && !`${d.id} ${d.poNo} ${d.supplier} ${d.trackingNo}`.toLowerCase().includes(k)) return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (sched && d.scheduled !== sched) return false;
       return true;
     });
-  }, [items, keyword, statusFilter]);
+  }, [items, keyword, statusFilter, scheduledFilter]);
 
   function handleRegister() {
     if (!form.poNo.trim() || !form.supplier.trim() || !form.qty.trim()) {
@@ -147,7 +152,7 @@ export default function RsrLogiInboundPage() {
               className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             />
           </div>
-          <DatePicker placeholder="入荷予定日" />
+          <DatePicker placeholder="入荷予定日" value={scheduledFilter} onChange={setScheduledFilter} />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
             <option value="all">状態: すべて</option>
             <option value="予定">予定</option>
@@ -157,7 +162,7 @@ export default function RsrLogiInboundPage() {
             <option value="完了">完了</option>
             <option value="差異あり">差異あり</option>
           </select>
-          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); }}>クリア</SecondaryButton>
+          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); setScheduledFilter(undefined); }}>クリア</SecondaryButton>
         </div>
       </GlassCard>
 

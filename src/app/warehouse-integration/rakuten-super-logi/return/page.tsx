@@ -57,6 +57,7 @@ export default function RsrLogiReturnPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Return["status"]>("all");
+  const [receivedFilter, setReceivedFilter] = useState<Date | undefined>(undefined);
   const [items, setItems] = useState(data);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewReturnForm>(EMPTY_RETURN_FORM);
@@ -64,12 +65,16 @@ export default function RsrLogiReturnPage() {
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
+    const recv = receivedFilter
+      ? `${receivedFilter.getFullYear()}/${String(receivedFilter.getMonth() + 1).padStart(2, "0")}/${String(receivedFilter.getDate()).padStart(2, "0")}`
+      : null;
     return items.filter((d) => {
       if (k && !`${d.id} ${d.orderNo} ${d.customer} ${d.trackingNo}`.toLowerCase().includes(k)) return false;
       if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (recv && !d.receivedAt.startsWith(recv)) return false;
       return true;
     });
-  }, [items, keyword, statusFilter]);
+  }, [items, keyword, statusFilter, receivedFilter]);
 
   function handleRegister() {
     if (!form.orderNo.trim() || !form.customer.trim() || !form.product.trim()) {
@@ -148,7 +153,7 @@ export default function RsrLogiReturnPage() {
               className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             />
           </div>
-          <DatePicker placeholder="受領日" />
+          <DatePicker placeholder="受領日" value={receivedFilter} onChange={setReceivedFilter} />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
             <option value="all">状態: すべて</option>
             <option value="受付">受付</option>
@@ -158,7 +163,7 @@ export default function RsrLogiReturnPage() {
             <option value="在庫戻し済">在庫戻し済</option>
             <option value="廃棄処理済">廃棄処理済</option>
           </select>
-          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); }}>クリア</SecondaryButton>
+          <SecondaryButton onClick={() => { setKeyword(""); setStatusFilter("all"); setReceivedFilter(undefined); }}>クリア</SecondaryButton>
         </div>
       </GlassCard>
 
