@@ -63,6 +63,12 @@ export default function OrderDetailPage() {
     return typeof o?.memo === "string" ? o.memo : "";
   });
 
+  // 追跡番号も orderStore に永続化（既存値があれば初期表示）
+  const [trackingNumber, setTrackingNumber] = useState<string>(() => {
+    const o = orderStore.getState().find((x) => x.id === DEMO_ORDER_ID);
+    return typeof o?.trackingNumber === "string" ? o.trackingNumber : "";
+  });
+
   useEffect(() => {
     function onClick(e: MouseEvent) {
       if (statusRef.current && !statusRef.current.contains(e.target as Node)) setStatusOpen(false);
@@ -75,6 +81,12 @@ export default function OrderDetailPage() {
   function saveMemo() {
     orderStore.patch(DEMO_ORDER_ID, { memo });
     toast.show("メモを保存しました", "success");
+  }
+
+  function saveTrackingNumber() {
+    const trimmed = trackingNumber.trim();
+    orderStore.patch(DEMO_ORDER_ID, { trackingNumber: trimmed });
+    toast.show(trimmed ? `追跡番号「${trimmed}」を保存しました` : "追跡番号をクリアしました", "success");
   }
 
   function handleStatusChange(next: StatusKey) {
@@ -243,7 +255,22 @@ export default function OrderDetailPage() {
               <div><span className="text-gray-500 w-16 inline-block">配送方法</span><span className="text-gray-700">ヤマト運輸</span></div>
               <div className="pt-2">
                 <label className="text-gray-500 text-xs block mb-1">追跡番号</label>
-                <input type="text" placeholder="追跡番号を入力..." className="w-full h-8 px-3 rounded-lg text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500/20" />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={trackingNumber}
+                    onChange={(e) => setTrackingNumber(e.target.value)}
+                    placeholder="追跡番号を入力..."
+                    className="flex-1 h-8 px-3 rounded-lg text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveTrackingNumber}
+                    className="px-3 h-8 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-700 hover:bg-blue-500/25 transition-colors shrink-0"
+                  >
+                    保存
+                  </button>
+                </div>
               </div>
             </div>
           </GlassCard>
