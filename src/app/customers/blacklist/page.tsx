@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
@@ -230,6 +230,64 @@ export default function BlacklistPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selected, setSelected] = useState<BlacklistEntry | null>(null);
   const [entries, setEntries] = useState<BlacklistEntry[]>(INITIAL_ENTRIES);
+  const seqRef = useRef(INITIAL_ENTRIES.length);
+
+  const emptyDraft = { code: "", name: "", reason: "", severity: "", blocks: "", expires: "", detail: "" };
+  const [draft, setDraft] = useState(emptyDraft);
+  const updateDraft = (key: keyof typeof emptyDraft, value: string) =>
+    setDraft((prev) => ({ ...prev, [key]: value }));
+
+  const submitEntry = () => {
+    if (!draft.code.trim()) {
+      toast.show("対象顧客コードを入力してください", "error");
+      return;
+    }
+    const reasonList: Reason[] = [
+      "代金未払い",
+      "受取拒否",
+      "不正カード",
+      "なりすまし",
+      "悪質クレーム",
+      "脅迫・暴言",
+      "規約違反",
+      "その他",
+    ];
+    const matchedReason = reasonList.find((r) => draft.reason.includes(r)) ?? "その他";
+    const matchedSeverity =
+      [...SEVERITY_LADDER].reverse().find((s) => draft.severity.includes(s)) ?? "警告";
+    const blocks: BlockTarget[] = [];
+    if (/受注|order/i.test(draft.blocks)) blocks.push("order");
+    if (/配送|shipping/i.test(draft.blocks)) blocks.push("shipping");
+    if (/連絡|contact/i.test(draft.blocks)) blocks.push("contact");
+    if (/決済|payment/i.test(draft.blocks)) blocks.push("payment");
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const registeredAt = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    const expires = draft.expires.trim();
+    const seq = (seqRef.current += 1);
+    const entry: BlacklistEntry = {
+      id: `BL-${String(seq).padStart(3, "0")}`,
+      code: draft.code.trim(),
+      name: draft.name.trim() || "（自動取得）",
+      kana: "",
+      email: "",
+      phone: "",
+      reason: matchedReason,
+      detail: draft.detail.trim(),
+      severity: matchedSeverity,
+      blocks: blocks.length ? blocks : ["order"],
+      registeredAt,
+      registeredBy: "現在のユーザー",
+      expiresAt: expires && !/無期限/.test(expires) ? expires : null,
+      status: "active",
+      evidenceCount: 0,
+    };
+    setEntries((prev) => [entry, ...prev]);
+    setDraft(emptyDraft);
+    setStatusTab("有効");
+    setShowAddModal(false);
+    toast.show(`${entry.code} をブラックリストに登録しました`, "success");
+  };
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -656,17 +714,51 @@ export default function BlacklistPage() {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <ModalField label="対象顧客コード" placeholder="CUS-0099" required />
-              <ModalField label="顧客名" placeholder="氏名（自動取得）" />
-              <ModalField label="登録理由" placeholder="代金未払い" />
-              <ModalField label="重要度" placeholder="完全ブロック / 警告 / 注意 / 観察" />
-              <ModalField label="ブロック範囲" placeholder="受注 / 配送 / 連絡 / 決済" className="col-span-2" />
-              <ModalField label="有効期限" placeholder="無期限 or 日付" />
+              <ModalField
+                label="対象顧客コード"
+                placeholder="CUS-0099"
+                required
+                value={draft.code}
+                onChange={(v) => updateDraft("code", v)}
+              />
+              <ModalField
+                label="顧客名"
+                placeholder="氏名（自動取得）"
+                value={draft.name}
+                onChange={(v) => updateDraft("name", v)}
+              />
+              <ModalField
+                label="登録理由"
+                placeholder="代金未払い"
+                value={draft.reason}
+                onChange={(v) => updateDraft("reason", v)}
+              />
+              <ModalField
+                label="重要度"
+                placeholder="完全ブロック / 警告 / 注意 / 観察"
+                value={draft.severity}
+                onChange={(v) => updateDraft("severity", v)}
+              />
+              <ModalField
+                label="ブロック範囲"
+                placeholder="受注 / 配送 / 連絡 / 決済"
+                className="col-span-2"
+                value={draft.blocks}
+                onChange={(v) => updateDraft("blocks", v)}
+              />
+              <ModalField
+                label="有効期限"
+                placeholder="無期限 or 日付"
+                value={draft.expires}
+                onChange={(v) => updateDraft("expires", v)}
+              />
               <ModalField label="証拠ファイル" placeholder="ドラッグ&ドロップ or 参照" />
               <div className="col-span-2 space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">詳細・証拠の説明</label>
                 <textarea
                   rows={4}
+                  value={draft.detail}
+                  onChange={(e) => updateDraft("detail", e.target.value)}
                   placeholder="経緯・対応履歴・社内決裁番号など..."
                   className="w-full px-3 py-2 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
                 />
@@ -680,10 +772,7 @@ export default function BlacklistPage() {
                 キャンセル
               </button>
               <button
-                onClick={() => {
-                  toast.show("ブラックリストに登録しました", "success");
-                  setShowAddModal(false);
-                }}
+                onClick={submitEntry}
                 className="px-4 py-2 rounded-xl text-sm font-medium bg-red-500/80 border border-red-400/50 text-white hover:bg-red-500/90"
               >
                 登録する
@@ -711,11 +800,15 @@ function ModalField({
   placeholder,
   required,
   className,
+  value,
+  onChange,
 }: {
   label: string;
   placeholder?: string;
   required?: boolean;
   className?: string;
+  value?: string;
+  onChange?: (v: string) => void;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
@@ -725,6 +818,9 @@ function ModalField({
       <input
         type="text"
         placeholder={placeholder}
+        value={value ?? ""}
+        onChange={(e) => onChange?.(e.target.value)}
+        readOnly={onChange === undefined}
         className="w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
       />
     </div>

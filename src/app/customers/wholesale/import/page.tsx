@@ -122,6 +122,8 @@ export default function WholesaleImportPage() {
   const [templates, setTemplates] = useState<string[]>(initialTemplates);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
   const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
+  const [history, setHistory] = useState<ImportHistory[]>(initialHistory);
+  const historySeq = useRef(initialHistory.length);
 
   const counts = {
     all: previewData.length,
@@ -159,6 +161,22 @@ export default function WholesaleImportPage() {
 
   function confirmImport() {
     const n = counts.ok + counts.warning;
+    const d = new Date();
+    const p = (x: number) => String(x).padStart(2, "0");
+    const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    historySeq.current += 1;
+    const record: ImportHistory = {
+      id: historySeq.current,
+      filename: file?.name ?? "import.csv",
+      rows: counts.all,
+      success: n,
+      error: counts.error,
+      mode,
+      template: templateKey,
+      user: "現在のユーザー",
+      at,
+    };
+    setHistory((prev) => [record, ...prev]);
     toast.show(`${n} 件を ${MODE_LABEL[mode]} で取込しました`);
     setStep(1);
     setFile(null);
@@ -510,7 +528,7 @@ export default function WholesaleImportPage() {
               </tr>
             </thead>
             <tbody>
-              {initialHistory.map((h) => (
+              {history.map((h) => (
                 <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{h.at}</td>
                   <td className="py-2 px-2 text-gray-800">

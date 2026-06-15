@@ -107,6 +107,8 @@ export default function CustomerAutoCreatePage() {
   const [defaultRank, setDefaultRank] = useState("一般");
   const [logs, setLogs] = useState<ExecutionLog[]>(executionLogs);
   const [reloading, setReloading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const totals = {
     created: sourceRules.reduce((s, r) => s + r.createdThisMonth, 0),
@@ -148,8 +150,17 @@ export default function CustomerAutoCreatePage() {
   }
 
   function handleSave() {
-    const running = processes.filter((p) => p.status === "running").length;
-    toast.show(`自動実行処理を保存しました（${running}/${processes.length} 処理を起動中）`);
+    if (saving) return;
+    setSaving(true);
+    setTimeout(() => {
+      const running = processes.filter((p) => p.status === "running").length;
+      const d = new Date();
+      const p = (n: number) => String(n).padStart(2, "0");
+      const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      setSavedAt(at);
+      setSaving(false);
+      toast.show(`自動実行処理を保存しました（${running}/${processes.length} 処理を起動中）`);
+    }, 700);
   }
 
   return (
@@ -167,9 +178,14 @@ export default function CustomerAutoCreatePage() {
             重複判定ルールで既存顧客と一致した場合は、設定に従ってマージ・スキップ・新規作成のいずれかが行われます。
           </HelpHint>
         </div>
-        <PrimaryButton onClick={handleSave}>
-          <Wrench className="h-4 w-4" />自動実行処理を変更
-        </PrimaryButton>
+        <div className="flex flex-col items-end gap-1.5">
+          <PrimaryButton onClick={handleSave} disabled={saving}>
+            <Wrench className="h-4 w-4" />{saving ? "保存中…" : "自動実行処理を変更"}
+          </PrimaryButton>
+          {savedAt && (
+            <span className="text-xs text-gray-400">最終保存: {savedAt}</span>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
