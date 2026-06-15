@@ -24,7 +24,20 @@ export type SnapshotDomain =
   | "instruction-templates"
   | "delivery-note-templates"
   | "mails"
-  | "blacklist";
+  | "blacklist"
+  | "customer-ranks"
+  | "order-confirm-rules"
+  | "order-numbering"
+  | "bulk-import-limit"
+  | "channel-allocation"
+  | "delivery-periods"
+  | "allocation-patterns"
+  | "import-patterns"
+  | "order-tags"
+  | "product-tags"
+  | "cancel-reasons"
+  | "payment-methods"
+  | "shipping-methods";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;
