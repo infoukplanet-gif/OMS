@@ -61,16 +61,24 @@ export default function DownloadHistoryPage() {
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState<"all" | Job["status"]>("all");
+  const [fromDate, setFromDate] = useState<Date | undefined>(undefined);
+  const [toDate, setToDate] = useState<Date | undefined>(undefined);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
+    const fmt = (dt: Date) => `${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, "0")}/${String(dt.getDate()).padStart(2, "0")}`;
+    const from = fromDate ? fmt(fromDate) : null;
+    const to = toDate ? fmt(toDate) : null;
     return jobs.filter((d) => {
       if (k && !`${d.id} ${d.filename} ${d.user}`.toLowerCase().includes(k)) return false;
       if (category !== "all" && d.category !== category) return false;
       if (status !== "all" && d.status !== status) return false;
+      const day = d.startedAt.slice(0, 10);
+      if (from && day < from) return false;
+      if (to && day > to) return false;
       return true;
     });
-  }, [jobs, keyword, category, status]);
+  }, [jobs, keyword, category, status, fromDate, toDate]);
 
   const kpis = [
     { label: "総ダウンロード", value: jobs.length, color: "text-gray-700" },
@@ -151,8 +159,8 @@ export default function DownloadHistoryPage() {
               className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
             />
           </div>
-          <DatePicker placeholder="開始日" />
-          <DatePicker placeholder="終了日" />
+          <DatePicker placeholder="開始日" value={fromDate} onChange={setFromDate} />
+          <DatePicker placeholder="終了日" value={toDate} onChange={setToDate} />
           <select value={category} onChange={(e) => setCategory(e.target.value)} className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
             <option value="all">カテゴリ: すべて</option>
             {categories.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -164,7 +172,7 @@ export default function DownloadHistoryPage() {
             <option value="failed">失敗</option>
             <option value="expired">期限切れ</option>
           </select>
-          <SecondaryButton onClick={() => { setKeyword(""); setCategory("all"); setStatus("all"); }}>クリア</SecondaryButton>
+          <SecondaryButton onClick={() => { setKeyword(""); setCategory("all"); setStatus("all"); setFromDate(undefined); setToDate(undefined); }}>クリア</SecondaryButton>
         </div>
       </GlassCard>
 
