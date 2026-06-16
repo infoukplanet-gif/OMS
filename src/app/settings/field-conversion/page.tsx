@@ -1,36 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
-import { setFieldMappings, upsertFieldMapping, removeFieldMapping } from "@/lib/settings/field-conversion-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  fieldConversionStore,
+  INITIAL_FIELD_MAPPINGS,
+  type FieldMapping as Mapping,
+} from "@/lib/stores/field-conversion-store";
 import { downloadCsv } from "@/lib/export/csv";
-
-type Mapping = {
-  id: string;
-  source: string;
-  sourceField: string;
-  target: string;
-  targetField: string;
-  transform: "そのまま" | "全角→半角" | "半角→全角" | "前後トリム" | "数値化" | "日付フォーマット変換" | "正規表現" | "辞書変換";
-  defaultValue: string;
-  required: boolean;
-  enabled: boolean;
-};
-
-const initial: Mapping[] = [
-  { id: "m-1", source: "楽天RMS", sourceField: "rcvOrderNum", target: "OMS受注", targetField: "external_order_no", transform: "そのまま", defaultValue: "—", required: true, enabled: true },
-  { id: "m-2", source: "楽天RMS", sourceField: "rcvOrderName", target: "OMS受注", targetField: "customer_name", transform: "前後トリム", defaultValue: "—", required: true, enabled: true },
-  { id: "m-3", source: "楽天RMS", sourceField: "telephone", target: "OMS受注", targetField: "tel", transform: "全角→半角", defaultValue: "—", required: true, enabled: true },
-  { id: "m-4", source: "Yahoo!", sourceField: "OrderTime", target: "OMS受注", targetField: "ordered_at", transform: "日付フォーマット変換", defaultValue: "—", required: true, enabled: true },
-  { id: "m-5", source: "Yahoo!", sourceField: "Subtotal", target: "OMS受注", targetField: "subtotal", transform: "数値化", defaultValue: "0", required: true, enabled: true },
-  { id: "m-6", source: "Amazon SP-API", sourceField: "OrderStatus", target: "OMS受注", targetField: "order_status", transform: "辞書変換", defaultValue: "未処理", required: true, enabled: true },
-  { id: "m-7", source: "FAX手入力", sourceField: "memo_freetext", target: "OMS受注", targetField: "remarks", transform: "そのまま", defaultValue: "—", required: false, enabled: true },
-  { id: "m-8", source: "楽天RMS", sourceField: "shopOrderItemNum", target: "OMS明細", targetField: "external_line_no", transform: "数値化", defaultValue: "0", required: false, enabled: false },
-];
 
 const sources = ["楽天RMS", "Yahoo!", "Amazon SP-API", "au PAY マーケット", "Qoo10", "FAX手入力", "電話手入力", "CSVアップロード"];
 const targets = ["OMS受注", "OMS明細", "OMS顧客", "OMS出荷", "OMS入金"];
@@ -38,7 +20,21 @@ const transforms: Mapping["transform"][] = ["そのまま", "全角→半角", "
 
 export default function FieldConversionPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({
+    store: fieldConversionStore,
+    domain: "field-conversion-settings",
+    seed: INITIAL_FIELD_MAPPINGS,
+  });
+
+  // 共有ストアを購読（編集は即ストアへ反映＝保存ボタンは確認用）
+  const items = useSyncExternalStore(
+    fieldConversionStore.subscribe,
+    fieldConversionStore.getState,
+    fieldConversionStore.getState,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
 
@@ -51,8 +47,11 @@ export default function FieldConversionPage() {
     });
   }, [items, keyword, sourceFilter]);
 
-  const update = (id: string, patch: Partial<Mapping>) =>
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  const update = (id: string, patch: Partial<Mapping>) => {
+    const current = fieldConversionStore.findById(id);
+    if (!current) return;
+    fieldConversionStore.upsert({ ...current, ...patch });
+  };
 
   return (
     <div className="space-y-5">
@@ -73,7 +72,7 @@ export default function FieldConversionPage() {
             );
             toast.show(`${items.length} 件のマッピング設定をエクスポートしました`, "success");
           }}>エクスポート</SecondaryButton>
-          <PrimaryButton onClick={() => { setFieldMappings(items); toast.show("項目変換設定を保存しました", "success"); }}>保存</PrimaryButton>
+          <PrimaryButton onClick={() => toast.show("項目変換設定を保存しました", "success")}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -115,8 +114,7 @@ export default function FieldConversionPage() {
           <SecondaryButton onClick={() => { setKeyword(""); setSourceFilter("all"); }}>クリア</SecondaryButton>
           <SecondaryButton onClick={() => {
             const newItem: Mapping = { id: `m-${Date.now()}`, source: "楽天RMS", sourceField: "", target: "OMS受注", targetField: "", transform: "そのまま", defaultValue: "—", required: false, enabled: true };
-            upsertFieldMapping(newItem);
-            setItems((prev) => [...prev, newItem]);
+            fieldConversionStore.upsert(newItem);
           }}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />新規追加</span>
           </SecondaryButton>
@@ -180,7 +178,7 @@ export default function FieldConversionPage() {
                   </label>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { removeFieldMapping(i.id); setItems((p) => p.filter((x) => x.id !== i.id)); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { fieldConversionStore.remove(i.id); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

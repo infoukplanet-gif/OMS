@@ -1,42 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Plus, Search, Trash2 } from "lucide-react";
-import { setConversions as persistConversions, upsertConversion, removeConversion as persistRemove } from "@/lib/settings/payment-shipping-conversion-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  paymentShippingConversionStore,
+  INITIAL_CONVERSIONS,
+  type Conv,
+  type ConvType,
+} from "@/lib/stores/payment-shipping-conversion-store";
 import { downloadCsv } from "@/lib/export/csv";
-
-type ConvType = "payment" | "shipping";
-
-type Conv = {
-  id: string;
-  type: ConvType;
-  source: string;
-  sourceValue: string;
-  target: string;
-  enabled: boolean;
-  priority: number;
-};
-
-const initial: Conv[] = [
-  { id: "p-1", type: "payment", source: "楽天RMS", sourceValue: "credit", target: "クレジットカード", enabled: true, priority: 1 },
-  { id: "p-2", type: "payment", source: "楽天RMS", sourceValue: "cod", target: "代金引換", enabled: true, priority: 1 },
-  { id: "p-3", type: "payment", source: "楽天RMS", sourceValue: "bank", target: "銀行振込（前払い）", enabled: true, priority: 1 },
-  { id: "p-4", type: "payment", source: "楽天RMS", sourceValue: "rakutenpay", target: "クレジットカード", enabled: true, priority: 2 },
-  { id: "p-5", type: "payment", source: "Yahoo!", sourceValue: "クレジットカード", target: "クレジットカード", enabled: true, priority: 1 },
-  { id: "p-6", type: "payment", source: "Yahoo!", sourceValue: "代金引換", target: "代金引換", enabled: true, priority: 1 },
-  { id: "p-7", type: "payment", source: "Amazon SP-API", sourceValue: "Other", target: "Amazon Pay", enabled: true, priority: 1 },
-  { id: "s-1", type: "shipping", source: "楽天RMS", sourceValue: "宅配便A", target: "ヤマト運輸", enabled: true, priority: 1 },
-  { id: "s-2", type: "shipping", source: "楽天RMS", sourceValue: "宅配便B", target: "佐川急便", enabled: true, priority: 1 },
-  { id: "s-3", type: "shipping", source: "楽天RMS", sourceValue: "メール便", target: "ゆうパケット", enabled: true, priority: 1 },
-  { id: "s-4", type: "shipping", source: "Yahoo!", sourceValue: "宅配便", target: "ヤマト運輸", enabled: true, priority: 1 },
-  { id: "s-5", type: "shipping", source: "Amazon SP-API", sourceValue: "Standard", target: "ヤマト運輸", enabled: true, priority: 1 },
-  { id: "s-6", type: "shipping", source: "Amazon SP-API", sourceValue: "Expedited", target: "ヤマト運輸（翌日）", enabled: true, priority: 1 },
-  { id: "s-7", type: "shipping", source: "FAX手入力", sourceValue: "—", target: "ヤマト運輸", enabled: false, priority: 9 },
-];
 
 const sources = ["楽天RMS", "Yahoo!", "Amazon SP-API", "au PAY マーケット", "Qoo10", "FAX手入力"];
 const paymentTargets = ["クレジットカード", "代金引換", "銀行振込（前払い）", "コンビニ決済（後払い）", "Amazon Pay", "PayPay", "NP後払い"];
@@ -44,7 +21,21 @@ const shippingTargets = ["ヤマト運輸", "ヤマト運輸（翌日）", "佐�
 
 export default function PaymentShippingConversionPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // 永続化オーナー（このページのみ呼ぶ）
+  usePersistentStore({
+    store: paymentShippingConversionStore,
+    domain: "payment-shipping-conversion-settings",
+    seed: INITIAL_CONVERSIONS,
+  });
+
+  // 共有ストアを購読（編集は即ストアへ反映＝保存ボタンは確認用）
+  const items = useSyncExternalStore(
+    paymentShippingConversionStore.subscribe,
+    paymentShippingConversionStore.getState,
+    paymentShippingConversionStore.getState,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | ConvType>("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -61,8 +52,11 @@ export default function PaymentShippingConversionPage() {
       .sort((a, b) => a.priority - b.priority);
   }, [items, keyword, typeFilter, sourceFilter]);
 
-  const update = (id: string, patch: Partial<Conv>) =>
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+  const update = (id: string, patch: Partial<Conv>) => {
+    const current = paymentShippingConversionStore.findById(id);
+    if (!current) return;
+    paymentShippingConversionStore.upsert({ ...current, ...patch });
+  };
 
   return (
     <div className="space-y-5">
@@ -83,7 +77,7 @@ export default function PaymentShippingConversionPage() {
             );
             toast.show(`${items.length} 件のマッピング設定をエクスポートしました`, "success");
           }}>エクスポート</SecondaryButton>
-          <PrimaryButton onClick={() => { persistConversions(items); toast.show("変換設定を保存しました", "success"); }}>保存</PrimaryButton>
+          <PrimaryButton onClick={() => toast.show("変換設定を保存しました", "success")}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -130,8 +124,7 @@ export default function PaymentShippingConversionPage() {
           <SecondaryButton onClick={() => { setKeyword(""); setTypeFilter("all"); setSourceFilter("all"); }}>クリア</SecondaryButton>
           <SecondaryButton onClick={() => {
             const newConv: Conv = { id: `c-${Date.now()}`, type: "payment", source: "楽天RMS", sourceValue: "", target: "クレジットカード", enabled: true, priority: 99 };
-            upsertConversion(newConv);
-            setItems((prev) => [...prev, newConv]);
+            paymentShippingConversionStore.upsert(newConv);
           }}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-4 w-4" />追加</span>
           </SecondaryButton>
@@ -187,7 +180,7 @@ export default function PaymentShippingConversionPage() {
                   </label>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { persistRemove(i.id); setItems((p) => p.filter((x) => x.id !== i.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { paymentShippingConversionStore.remove(i.id); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

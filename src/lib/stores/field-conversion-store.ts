@@ -1,3 +1,13 @@
+/**
+ * 項目変換設定 共有マスタストア
+ *
+ * 外部モール・取込データの項目を OMS 内部項目へマッピングするルールの CRUD を
+ * 画面横断で共有する。永続化（domain: "field-conversion-settings"）の
+ * 正規オーナーページは src/app/settings/field-conversion/page.tsx
+ */
+
+import { createMasterStore, type MasterStore } from "./create-master-store";
+
 export type FieldTransform =
   | "そのまま"
   | "全角→半角"
@@ -18,9 +28,10 @@ export interface FieldMapping {
   defaultValue: string;
   required: boolean;
   enabled: boolean;
+  [extra: string]: unknown;
 }
 
-const DEFAULT: FieldMapping[] = [
+export const INITIAL_FIELD_MAPPINGS: FieldMapping[] = [
   { id: "m-1", source: "楽天RMS", sourceField: "rcvOrderNum", target: "OMS受注", targetField: "external_order_no", transform: "そのまま", defaultValue: "—", required: true, enabled: true },
   { id: "m-2", source: "楽天RMS", sourceField: "rcvOrderName", target: "OMS受注", targetField: "customer_name", transform: "前後トリム", defaultValue: "—", required: true, enabled: true },
   { id: "m-3", source: "楽天RMS", sourceField: "telephone", target: "OMS受注", targetField: "tel", transform: "全角→半角", defaultValue: "—", required: true, enabled: true },
@@ -31,29 +42,6 @@ const DEFAULT: FieldMapping[] = [
   { id: "m-8", source: "楽天RMS", sourceField: "shopOrderItemNum", target: "OMS明細", targetField: "external_line_no", transform: "数値化", defaultValue: "0", required: false, enabled: false },
 ];
 
-let _items: FieldMapping[] = DEFAULT.map((m) => ({ ...m }));
-
-export function getFieldMappings(): FieldMapping[] {
-  return _items;
-}
-
-export function setFieldMappings(items: FieldMapping[]): void {
-  _items = items.map((m) => ({ ...m }));
-}
-
-export function upsertFieldMapping(mapping: FieldMapping): void {
-  const idx = _items.findIndex((m) => m.id === mapping.id);
-  if (idx >= 0) {
-    _items = _items.map((m) => (m.id === mapping.id ? { ...mapping } : m));
-  } else {
-    _items = [..._items, { ...mapping }];
-  }
-}
-
-export function removeFieldMapping(id: string): void {
-  _items = _items.filter((m) => m.id !== id);
-}
-
-export function resetFieldMappings(): void {
-  _items = DEFAULT.map((m) => ({ ...m }));
-}
+/** クライアントセッション内で共有される単一の FieldConversionStore インスタンス */
+export const fieldConversionStore: MasterStore<FieldMapping> =
+  createMasterStore<FieldMapping>(INITIAL_FIELD_MAPPINGS);

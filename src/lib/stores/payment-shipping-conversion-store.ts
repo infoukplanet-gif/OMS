@@ -1,3 +1,14 @@
+/**
+ * 支払・配送変換設定 共有マスタストア
+ *
+ * 外部モールから取り込んだ支払方法・配送方法を OMS 内部の標準値へ変換する
+ * ルールの CRUD を画面横断で共有する。優先度順に最初に一致したルールを適用する。
+ * 永続化（domain: "payment-shipping-conversion-settings"）の
+ * 正規オーナーページは src/app/settings/payment-shipping-conversion/page.tsx
+ */
+
+import { createMasterStore, type MasterStore } from "./create-master-store";
+
 export type ConvType = "payment" | "shipping";
 
 export interface Conv {
@@ -8,9 +19,10 @@ export interface Conv {
   target: string;
   enabled: boolean;
   priority: number;
+  [extra: string]: unknown;
 }
 
-const DEFAULT: Conv[] = [
+export const INITIAL_CONVERSIONS: Conv[] = [
   { id: "p-1", type: "payment", source: "楽天RMS", sourceValue: "credit", target: "クレジットカード", enabled: true, priority: 1 },
   { id: "p-2", type: "payment", source: "楽天RMS", sourceValue: "cod", target: "代金引換", enabled: true, priority: 1 },
   { id: "p-3", type: "payment", source: "楽天RMS", sourceValue: "bank", target: "銀行振込（前払い）", enabled: true, priority: 1 },
@@ -27,29 +39,6 @@ const DEFAULT: Conv[] = [
   { id: "s-7", type: "shipping", source: "FAX手入力", sourceValue: "—", target: "ヤマト運輸", enabled: false, priority: 9 },
 ];
 
-let _items: Conv[] = DEFAULT.map((c) => ({ ...c }));
-
-export function getConversions(): Conv[] {
-  return _items;
-}
-
-export function setConversions(items: Conv[]): void {
-  _items = items.map((c) => ({ ...c }));
-}
-
-export function upsertConversion(conv: Conv): void {
-  const idx = _items.findIndex((c) => c.id === conv.id);
-  if (idx >= 0) {
-    _items = _items.map((c) => (c.id === conv.id ? { ...conv } : c));
-  } else {
-    _items = [..._items, { ...conv }];
-  }
-}
-
-export function removeConversion(id: string): void {
-  _items = _items.filter((c) => c.id !== id);
-}
-
-export function resetConversions(): void {
-  _items = DEFAULT.map((c) => ({ ...c }));
-}
+/** クライアントセッション内で共有される単一の PaymentShippingConversionStore インスタンス */
+export const paymentShippingConversionStore: MasterStore<Conv> =
+  createMasterStore<Conv>(INITIAL_CONVERSIONS);
