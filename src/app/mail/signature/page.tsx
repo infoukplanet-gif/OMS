@@ -1,69 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  fromAddressStore,
+  INITIAL_FROM_ADDRESSES,
+  type FromAddressRecord,
+} from "@/lib/stores/from-address-store";
+import {
+  mailSignatureStore,
+  INITIAL_MAIL_SIGNATURES,
+  type MailSignatureRecord,
+} from "@/lib/stores/mail-signature-store";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Loader2, Mail, Plus, Save, Trash2, User } from "lucide-react";
-
-type FromAddress = {
-  id: string;
-  label: string;
-  email: string;
-  displayName: string;
-  replyTo: string;
-  isDefault: boolean;
-  shop: string;
-  spf: "ok" | "warning" | "error";
-  dkim: "ok" | "warning" | "error";
-};
-
-type Signature = {
-  id: string;
-  name: string;
-  body: string;
-  isDefault: boolean;
-};
-
-const initialAddresses: FromAddress[] = [
-  { id: "addr-main", label: "メイン店舗", email: "info@example.com", displayName: "OMSショップ", replyTo: "info@example.com", isDefault: true, shop: "本店", spf: "ok", dkim: "ok" },
-  { id: "addr-rakuten", label: "楽天店", email: "rakuten@example.com", displayName: "OMSショップ 楽天市場店", replyTo: "rakuten@example.com", isDefault: false, shop: "楽天店", spf: "ok", dkim: "ok" },
-  { id: "addr-yahoo", label: "Yahoo!店", email: "yahoo@example.com", displayName: "OMSショップ Yahoo!ショッピング店", replyTo: "yahoo@example.com", isDefault: false, shop: "Yahoo!店", spf: "ok", dkim: "warning" },
-  { id: "addr-amazon", label: "Amazon店", email: "amazon@example.com", displayName: "OMSショップ Amazon店", replyTo: "amazon@example.com", isDefault: false, shop: "Amazon店", spf: "warning", dkim: "ok" },
-];
-
-const initialSignatures: Signature[] = [
-  {
-    id: "sig-default",
-    name: "通常用署名",
-    isDefault: true,
-    body: `--
-OMSショップ カスタマーサポート
-〒100-0001 東京都千代田区千代田1-1-1
-TEL: 03-1234-5678 / FAX: 03-1234-5679
-営業時間: 平日 09:00-18:00
-URL: https://example.com/`,
-  },
-  {
-    id: "sig-vip",
-    name: "VIP顧客用",
-    isDefault: false,
-    body: `--
-OMSショップ プレミアムサポート 山田 太郎
-専用ダイヤル: 03-1234-9999（24時間対応）
-URL: https://vip.example.com/`,
-  },
-  {
-    id: "sig-newsletter",
-    name: "メルマガ用（配信解除リンク付き）",
-    isDefault: false,
-    body: `--
-OMSショップ お得情報配信
-配信解除をご希望の方はこちら: {{unsubscribe_url}}
-URL: https://example.com/news`,
-  },
-];
+import { CheckCircle2, Mail, Plus, Save, Trash2, User } from "lucide-react";
 
 const sb: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-700",
@@ -73,40 +26,48 @@ const sb: Record<string, string> = {
 
 export default function MailSignaturePage() {
   const toast = useToast();
-  const [addresses, setAddresses] = useState(initialAddresses);
-  const [signatures, setSignatures] = useState(initialSignatures);
-  const [activeAddrId, setActiveAddrId] = useState(initialAddresses[0].id);
-  const [activeSigId, setActiveSigId] = useState(initialSignatures[0].id);
+
+  // 永続化オーナー（送信元アドレス・署名の正規オーナーページ）
+  usePersistentStore({ store: fromAddressStore, domain: "from-addresses", seed: INITIAL_FROM_ADDRESSES });
+  usePersistentStore({ store: mailSignatureStore, domain: "mail-signatures", seed: INITIAL_MAIL_SIGNATURES });
+
+  const addresses = useSyncExternalStore(fromAddressStore.subscribe, fromAddressStore.getState, fromAddressStore.getState);
+  const signatures = useSyncExternalStore(mailSignatureStore.subscribe, mailSignatureStore.getState, mailSignatureStore.getState);
+
+  const [activeAddrId, setActiveAddrId] = useState(INITIAL_FROM_ADDRESSES[0].id);
+  const [activeSigId, setActiveSigId] = useState(INITIAL_MAIL_SIGNATURES[0].id);
 
   const activeAddr = useMemo(() => addresses.find((a) => a.id === activeAddrId) || addresses[0], [addresses, activeAddrId]);
   const activeSig = useMemo(() => signatures.find((s) => s.id === activeSigId) || signatures[0], [signatures, activeSigId]);
 
-  const updateAddr = (patch: Partial<FromAddress>) =>
-    setAddresses((prev) => prev.map((a) => (a.id === activeAddr.id ? { ...a, ...patch } : a)));
-  const updateSig = (patch: Partial<Signature>) =>
-    setSignatures((prev) => prev.map((s) => (s.id === activeSig.id ? { ...s, ...patch } : s)));
+  const updateAddr = (patch: Partial<FromAddressRecord>) =>
+    fromAddressStore.upsert({ ...activeAddr, ...patch });
+  const updateSig = (patch: Partial<MailSignatureRecord>) =>
+    mailSignatureStore.upsert({ ...activeSig, ...patch });
 
-  const setDefaultAddr = (id: string) => setAddresses((prev) => prev.map((a) => ({ ...a, isDefault: a.id === id })));
-  const setDefaultSig = (id: string) => setSignatures((prev) => prev.map((s) => ({ ...s, isDefault: s.id === id })));
+  const setDefaultAddr = (id: string) => fromAddressStore.setItems(addresses.map((a) => ({ ...a, isDefault: a.id === id })));
+  const setDefaultSig = (id: string) => mailSignatureStore.setItems(signatures.map((s) => ({ ...s, isDefault: s.id === id })));
 
-  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // 編集は store へ即時反映され usePersistentStore が自動 snapshot するため、
+  // このボタンは「確定済み」を明示するための確認操作。
   const handleSave = () => {
-    if (saving) return;
-    setSaving(true);
-    setSaved(false);
-    setTimeout(() => {
-      setSaving(false);
-      setSaved(true);
-      toast.show("メールアドレス・署名を保存しました", "success");
-      setTimeout(() => setSaved(false), 3000);
-    }, 800);
+    setSaved(true);
+    toast.show("メールアドレス・署名を保存しました", "success");
+    setTimeout(() => setSaved(false), 3000);
+  };
+
+  const deleteSig = (id: string) => {
+    const remaining = signatures.filter((s) => s.id !== id);
+    mailSignatureStore.remove(id);
+    if (activeSigId === id && remaining[0]) setActiveSigId(remaining[0].id);
+    toast.show("署名を削除しました", "info");
   };
 
   const addAddress = () => {
     const id = `addr-${Date.now()}`;
-    const next: FromAddress = {
+    const next: FromAddressRecord = {
       id,
       label: "新規送信元",
       email: "new@example.com",
@@ -117,20 +78,20 @@ export default function MailSignaturePage() {
       spf: "warning",
       dkim: "warning",
     };
-    setAddresses((prev) => [...prev, next]);
+    fromAddressStore.upsert(next);
     setActiveAddrId(id);
     toast.show("新規送信元アドレスを追加しました。右側で内容を編集してください", "success");
   };
 
   const addSignature = () => {
     const id = `sig-${Date.now()}`;
-    const next: Signature = {
+    const next: MailSignatureRecord = {
       id,
       name: "新規署名",
       isDefault: false,
       body: `--\n{{shop_name}}\nTEL: \nURL: `,
     };
-    setSignatures((prev) => [...prev, next]);
+    mailSignatureStore.upsert(next);
     setActiveSigId(id);
     toast.show("新規署名を追加しました。右側で内容を編集してください", "success");
   };
@@ -145,10 +106,10 @@ export default function MailSignaturePage() {
           </div>
           <p className="text-sm text-gray-500 mt-1">店舗別の送信元アドレスと、署名のテンプレートを編集します。</p>
         </div>
-        <PrimaryButton onClick={handleSave} disabled={saving}>
+        <PrimaryButton onClick={handleSave}>
           <span className="inline-flex items-center gap-1.5">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-            {saving ? "保存中…" : saved ? "保存済" : "保存"}
+            {saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+            {saved ? "保存済" : "保存"}
           </span>
         </PrimaryButton>
       </div>
@@ -320,7 +281,7 @@ export default function MailSignaturePage() {
                 </SecondaryButton>
               )}
               <button
-                onClick={() => { setSignatures((prev) => prev.filter((s) => s.id !== activeSig.id)); toast.show("署名を削除しました", "info"); }}
+                onClick={() => deleteSig(activeSig.id)}
                 disabled={activeSig.isDefault}
                 className="p-2 rounded-xl bg-red-500/15 text-red-700 hover:bg-red-500/25 disabled:opacity-30 disabled:cursor-not-allowed"
               >
