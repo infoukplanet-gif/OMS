@@ -1,33 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
-import { Save, Calculator, History, Loader2, CheckCircle2 } from "lucide-react";
-
-type Fee = {
-  id: string;
-  method: string;
-  rate: number;
-  fixed: number;
-  minAmt: number;
-  maxAmt: number | null;
-  taxIncluded: boolean;
-  active: boolean;
-  scope: "顧客負担" | "自社負担";
-};
-
-const INITIAL: Fee[] = [
-  { id: "F-01", method: "クレジットカード", rate: 3.25, fixed: 0, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-  { id: "F-02", method: "代金引換", rate: 0, fixed: 330, minAmt: 0, maxAmt: 10000, taxIncluded: true, active: true, scope: "顧客負担" },
-  { id: "F-03", method: "NP後払い", rate: 3.6, fixed: 190, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-  { id: "F-04", method: "Atone", rate: 2.9, fixed: 0, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-  { id: "F-05", method: "銀行振込", rate: 0, fixed: 0, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "顧客負担" },
-  { id: "F-06", method: "コンビニ後払い", rate: 4, fixed: 210, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-  { id: "F-07", method: "Yahoo!かんたん決済", rate: 3.45, fixed: 0, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-  { id: "F-08", method: "楽天ペイ", rate: 3.3, fixed: 0, minAmt: 0, maxAmt: null, taxIncluded: false, active: true, scope: "自社負担" },
-];
+import { Save, Calculator, History, CheckCircle2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  paymentFeeStore,
+  INITIAL_PAYMENT_FEES,
+  type PaymentFeeRecord,
+} from "@/lib/stores/payment-fee-store";
 
 const HISTORY = [
   { id: 1, at: "2026-04-22 11:42", who: "佐藤 健", target: "クレジットカード", change: "3.30% → 3.25%" },
@@ -37,23 +20,31 @@ const HISTORY = [
 
 export default function PaymentFeesPage() {
   const toast = useToast();
-  const [fees, setFees] = useState<Fee[]>(INITIAL);
-  const [saving, setSaving] = useState(false);
+  usePersistentStore({
+    store: paymentFeeStore,
+    domain: "payment-fees",
+    seed: INITIAL_PAYMENT_FEES,
+  });
+  const fees = useSyncExternalStore(
+    paymentFeeStore.subscribe,
+    paymentFeeStore.getState,
+    paymentFeeStore.getState,
+  );
   const [saved, setSaved] = useState(false);
 
-  const update = <K extends keyof Fee>(id: string, key: K, value: Fee[K]) =>
-    setFees(fees.map((f) => (f.id === id ? { ...f, [key]: value } : f)));
+  const update = <K extends keyof PaymentFeeRecord>(
+    id: string,
+    key: K,
+    value: PaymentFeeRecord[K],
+  ) => {
+    const fee = paymentFeeStore.findById(id);
+    if (fee) paymentFeeStore.upsert({ ...fee, [key]: value });
+  };
 
   const handleSave = () => {
-    if (saving) return;
-    setSaving(true);
-    setSaved(false);
-    setTimeout(() => {
-      setSaving(false);
-      setSaved(true);
-      toast.show("手数料設定を保存しました", "success");
-      setTimeout(() => setSaved(false), 3000);
-    }, 800);
+    setSaved(true);
+    toast.show("手数料設定を保存しました", "success");
+    setTimeout(() => setSaved(false), 3000);
   };
 
   return (
@@ -72,9 +63,9 @@ export default function PaymentFeesPage() {
             <span className="font-semibold text-emerald-700">{fees.filter((f) => f.active).length}件</span>
           </p>
         </div>
-        <PrimaryButton onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-          {saving ? "保存中…" : saved ? "保存済" : "変更を保存"}
+        <PrimaryButton onClick={handleSave}>
+          {saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          {saved ? "保存済" : "変更を保存"}
         </PrimaryButton>
       </div>
 
@@ -136,7 +127,7 @@ export default function PaymentFeesPage() {
                 <td className="px-4 py-3 text-center">
                   <select
                     value={f.scope}
-                    onChange={(e) => update(f.id, "scope", e.target.value as Fee["scope"])}
+                    onChange={(e) => update(f.id, "scope", e.target.value as PaymentFeeRecord["scope"])}
                     className="h-7 px-2 rounded-lg text-xs bg-white/60 border border-white/50 focus:outline-none focus:ring-1 focus:ring-blue-500/20"
                   >
                     <option value="自社負担">自社負担</option>
