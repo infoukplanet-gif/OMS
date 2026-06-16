@@ -1,51 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { Save, Calendar, Truck, Package, Clock, Loader2, CheckCircle2 } from "lucide-react";
+import { Save, Calendar, Truck, Package, Clock, CheckCircle2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  shipmentAvailabilityStore,
+  INITIAL_SHIPMENT_AVAILABILITY,
+  type ShipmentAvailabilityFields,
+  type Carrier,
+  type Weekday,
+} from "@/lib/stores/shipment-availability-store";
 
 type Holiday = { date: string; label: string };
 
+const HOLIDAYS: Holiday[] = [
+  { date: "2026-04-29", label: "昭和の日" },
+  { date: "2026-05-03", label: "憲法記念日" },
+  { date: "2026-05-04", label: "みどりの日" },
+  { date: "2026-05-05", label: "こどもの日" },
+  { date: "2026-08-13", label: "夏季休業" },
+  { date: "2026-08-14", label: "夏季休業" },
+  { date: "2026-08-15", label: "夏季休業" },
+];
+
+const WEEKDAYS: Weekday[] = ["月", "火", "水", "木", "金", "土", "日"];
+const CARRIERS: Carrier[] = ["ヤマト", "佐川", "日本郵便", "西濃"];
+
 export default function ShipmentsAvailabilityPage() {
   const toast = useToast();
-  const [stockMode, setStockMode] = useState<"reserved" | "actual">("reserved");
-  const [reserveOnImport, setReserveOnImport] = useState(true);
-  const [allowBackorder, setAllowBackorder] = useState(false);
-  const [autoAlternative, setAutoAlternative] = useState(false);
-  const [allowSetSplit, setAllowSetSplit] = useState(true);
-  const [shippingDays, setShippingDays] = useState({ ヤマト: 1, 佐川: 1, 日本郵便: 2, 西濃: 2 });
-  const [cutoffByCarrier, setCutoffByCarrier] = useState({ ヤマト: "15:00", 佐川: "14:00", 日本郵便: "13:00", 西濃: "12:00" });
-  const [restDays, setRestDays] = useState<("月" | "火" | "水" | "木" | "金" | "土" | "日")[]>(["日"]);
-  const [holidays] = useState<Holiday[]>([
-    { date: "2026-04-29", label: "昭和の日" },
-    { date: "2026-05-03", label: "憲法記念日" },
-    { date: "2026-05-04", label: "みどりの日" },
-    { date: "2026-05-05", label: "こどもの日" },
-    { date: "2026-08-13", label: "夏季休業" },
-    { date: "2026-08-14", label: "夏季休業" },
-    { date: "2026-08-15", label: "夏季休業" },
-  ]);
+  usePersistentStore({
+    store: shipmentAvailabilityStore,
+    domain: "shipment-availability",
+    seed: INITIAL_SHIPMENT_AVAILABILITY,
+  });
+  const items = useSyncExternalStore(
+    shipmentAvailabilityStore.subscribe,
+    shipmentAvailabilityStore.getState,
+    shipmentAvailabilityStore.getState,
+  );
+  const config = items[0] ?? INITIAL_SHIPMENT_AVAILABILITY[0];
+  const { stockMode, reserveOnImport, allowBackorder, autoAlternative, allowSetSplit, shippingDays, cutoffByCarrier, restDays } = config;
+  const holidays = HOLIDAYS;
 
-  const [saving, setSaving] = useState(false);
+  const updateConfig = (patch: Partial<ShipmentAvailabilityFields>) =>
+    shipmentAvailabilityStore.upsert({ ...config, ...patch });
+
+  const setStockMode = (v: ShipmentAvailabilityFields["stockMode"]) => updateConfig({ stockMode: v });
+  const setReserveOnImport = (v: boolean) => updateConfig({ reserveOnImport: v });
+  const setAllowBackorder = (v: boolean) => updateConfig({ allowBackorder: v });
+  const setAutoAlternative = (v: boolean) => updateConfig({ autoAlternative: v });
+  const setAllowSetSplit = (v: boolean) => updateConfig({ allowSetSplit: v });
+
   const [saved, setSaved] = useState(false);
 
   const handleSave = () => {
-    if (saving) return;
-    setSaving(true);
-    setSaved(false);
-    setTimeout(() => {
-      setSaving(false);
-      setSaved(true);
-      toast.show("出荷可能設定を保存しました", "success");
-      setTimeout(() => setSaved(false), 3000);
-    }, 800);
+    setSaved(true);
+    toast.show("出荷可能設定を保存しました", "success");
+    setTimeout(() => setSaved(false), 3000);
   };
 
-  const toggleRestDay = (d: typeof restDays[number]) => {
-    setRestDays(restDays.includes(d) ? restDays.filter((x) => x !== d) : [...restDays, d]);
+  const toggleRestDay = (d: Weekday) => {
+    updateConfig({ restDays: restDays.includes(d) ? restDays.filter((x) => x !== d) : [...restDays, d] });
   };
 
   return (
@@ -63,9 +82,9 @@ export default function ShipmentsAvailabilityPage() {
             在庫引当ルール・締切時刻・休業カレンダーを一括管理します。
           </p>
         </div>
-        <PrimaryButton onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-          {saving ? "保存中…" : saved ? "保存済" : "設定を保存"}
+        <PrimaryButton onClick={handleSave}>
+          {saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          {saved ? "保存済" : "設定を保存"}
         </PrimaryButton>
       </div>
 
@@ -113,14 +132,14 @@ export default function ShipmentsAvailabilityPage() {
               </tr>
             </thead>
             <tbody>
-              {(["ヤマト", "佐川", "日本郵便", "西濃"] as const).map((c) => (
+              {CARRIERS.map((c) => (
                 <tr key={c} className="border-t border-white/30">
                   <td className="px-4 py-2.5 text-gray-800 font-medium">{c}</td>
                   <td className="px-4 py-2.5 text-center">
                     <input
                       type="number"
                       value={shippingDays[c]}
-                      onChange={(e) => setShippingDays({ ...shippingDays, [c]: Number(e.target.value) })}
+                      onChange={(e) => updateConfig({ shippingDays: { ...shippingDays, [c]: Number(e.target.value) } })}
                       className="w-20 h-8 px-2 rounded-lg text-sm text-right bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
                     <span className="ml-1 text-xs text-gray-500">日</span>
@@ -129,7 +148,7 @@ export default function ShipmentsAvailabilityPage() {
                     <input
                       type="text"
                       value={cutoffByCarrier[c]}
-                      onChange={(e) => setCutoffByCarrier({ ...cutoffByCarrier, [c]: e.target.value })}
+                      onChange={(e) => updateConfig({ cutoffByCarrier: { ...cutoffByCarrier, [c]: e.target.value } })}
                       className="w-20 h-8 px-2 rounded-lg text-sm text-center bg-white/60 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-mono"
                     />
                   </td>
@@ -149,7 +168,7 @@ export default function ShipmentsAvailabilityPage() {
         <div>
           <p className="text-sm font-medium text-gray-700 mb-2">毎週の定休日</p>
           <div className="flex flex-wrap gap-2 mb-4">
-            {(["月", "火", "水", "木", "金", "土", "日"] as const).map((d) => (
+            {WEEKDAYS.map((d) => (
               <button
                 key={d}
                 onClick={() => toggleRestDay(d)}
