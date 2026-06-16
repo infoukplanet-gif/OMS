@@ -1,9 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  companySettingsStore,
+  INITIAL_COMPANY_SETTINGS,
+  DEFAULT_COMPANY_SETTINGS,
+  type CompanySettingsFields,
+} from "@/lib/stores/company-settings-store";
+import {
+  aiSettingsStore,
+  INITIAL_AI_SETTINGS,
+} from "@/lib/stores/ai-settings-store";
 import { cn } from "@/lib/utils";
 import {
   Building2,
@@ -29,6 +40,7 @@ const settingCategories = [
 ];
 
 const navMap: Record<string, string> = {
+  shops: "/settings/shops",
   users: "/settings/users",
   orders: "/settings/order-rules",
   products: "/products",
@@ -81,7 +93,6 @@ export default function SettingsPage() {
         {/* Content */}
         <GlassCard className="flex-1">
           {activeCategory === "company" && <CompanySettings />}
-          {activeCategory === "shops" && <ShopSettings />}
           {activeCategory === "ai" && <AISettings />}
         </GlassCard>
       </div>
@@ -89,42 +100,57 @@ export default function SettingsPage() {
   );
 }
 
-const initialCompanyForm = {
-  name: "株式会社サンプル",
-  code: "SAMPLE-001",
-  representative: "",
-  tel: "",
-  zip: "",
-  fax: "",
-  address: "",
-  email: "",
-  timezone: "Asia/Tokyo",
-  currency: "JPY - 日本円",
-  taxRate: "10%",
-  taxMode: "included" as "included" | "excluded",
-};
+type CompanyForm = Omit<CompanySettingsFields, "logoName">;
 
-type CompanyForm = typeof initialCompanyForm;
+function toCompanyForm(record: CompanySettingsFields): CompanyForm {
+  const { logoName, ...rest } = record;
+  void logoName;
+  return rest;
+}
+
+const initialCompanyForm = toCompanyForm(DEFAULT_COMPANY_SETTINGS);
 
 function CompanySettings() {
   const toast = useToast();
-  const [form, setForm] = useState<CompanyForm>(initialCompanyForm);
-  const [logoName, setLogoName] = useState("");
+
+  // 永続化オーナー（企業設定タブ）
+  usePersistentStore({
+    store: companySettingsStore,
+    domain: "company-settings",
+    seed: INITIAL_COMPANY_SETTINGS,
+  });
+
+  const items = useSyncExternalStore(
+    companySettingsStore.subscribe,
+    companySettingsStore.getState,
+    companySettingsStore.getState,
+  );
+  const config = items[0] ?? INITIAL_COMPANY_SETTINGS[0];
+
+  const [form, setForm] = useState<CompanyForm>(() => toCompanyForm(config));
+  const [logoName, setLogoName] = useState(config.logoName);
   const set = <K extends keyof CompanyForm>(key: K, value: CompanyForm[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setForm(toCompanyForm(config));
+    setLogoName(config.logoName);
+  }, [config]);
 
   const save = () => {
     if (!form.name.trim()) {
       toast.show("企業名を入力してください", "error");
       return;
     }
+    companySettingsStore.upsert({ id: "config", ...form, logoName });
     toast.show("企業設定を保存しました", "success");
   };
 
   const reset = () => {
     setForm(initialCompanyForm);
     setLogoName("");
-    toast.show("企業設定を初期値に戻しました", "info");
+    toast.show("企業設定を初期値に戻しました（保存で確定）", "info");
   };
 
   return (
@@ -221,177 +247,28 @@ function CompanySettings() {
   );
 }
 
-type ShopStatus = "連携中" | "エラー" | "一時停止";
-
-type Shop = {
-  name: string;
-  status: ShopStatus;
-  color: string;
-  lastSync: string;
-  orders: number;
-  autoSync: boolean;
-  history: string[];
-};
-
-const initialShops: Shop[] = [
-  { name: "楽天市場", status: "連携中", color: "bg-red-500", lastSync: "2分前", orders: 547, autoSync: true, history: ["2分前 取込 12件 成功", "32分前 取込 8件 成功", "1時間前 取込 15件 成功"] },
-  { name: "Amazon", status: "連携中", color: "bg-orange-400", lastSync: "5分前", orders: 312, autoSync: true, history: ["5分前 取込 6件 成功", "35分前 取込 9件 成功", "1時間前 取込 4件 成功"] },
-  { name: "Shopify", status: "連携中", color: "bg-green-500", lastSync: "1分前", orders: 205, autoSync: true, history: ["1分前 取込 3件 成功", "31分前 取込 5件 成功", "1時間前 取込 7件 成功"] },
-  { name: "Yahoo!", status: "エラー", color: "bg-purple-500", lastSync: "3時間前", orders: 89, autoSync: false, history: ["3時間前 取込失敗（認証エラー）", "3時間前 取込 2件 成功", "4時間前 取込 5件 成功"] },
-];
-
-const shopBadgeStyles: Record<ShopStatus, string> = {
-  連携中: "bg-emerald-500/15 text-emerald-700",
-  エラー: "bg-red-500/15 text-red-700",
-  一時停止: "bg-gray-500/15 text-gray-600",
-};
-
-const CUSTOM_SHOP_COLORS = ["bg-blue-500", "bg-teal-500", "bg-pink-500", "bg-indigo-500"];
-
-function ShopSettings() {
-  const toast = useToast();
-  const [shops, setShops] = useState<Shop[]>(initialShops);
-  const [openPanel, setOpenPanel] = useState<{ shop: string; panel: "settings" | "history" } | null>(null);
-
-  const updateShop = (name: string, patch: Partial<Shop>) =>
-    setShops((prev) => prev.map((s) => (s.name === name ? { ...s, ...patch } : s)));
-
-  const addShop = () => {
-    const n = shops.filter((s) => s.name.startsWith("カスタム店舗")).length + 1;
-    const newShop: Shop = {
-      name: `カスタム店舗 ${n}`,
-      status: "連携中",
-      color: CUSTOM_SHOP_COLORS[(n - 1) % CUSTOM_SHOP_COLORS.length],
-      lastSync: "たった今",
-      orders: 0,
-      autoSync: true,
-      history: ["たった今 初回接続 成功"],
-    };
-    setShops((prev) => [...prev, newShop]);
-    toast.show(`カスタム店舗 ${n} を追加しました`, "success");
-  };
-
-  const reconnect = (name: string) => {
-    updateShop(name, { status: "連携中", lastSync: "たった今" });
-    toast.show(`${name} を再接続しました`, "success");
-  };
-
-  const togglePause = (shop: Shop) => {
-    const paused = shop.status === "一時停止";
-    updateShop(shop.name, { status: paused ? "連携中" : "一時停止", ...(paused ? { lastSync: "たった今" } : {}) });
-    toast.show(paused ? `${shop.name} の同期を再開しました` : `${shop.name} の同期を一時停止しました`, "info");
-  };
-
-  const togglePanel = (shop: string, panel: "settings" | "history") =>
-    setOpenPanel((prev) => (prev?.shop === shop && prev.panel === panel ? null : { shop, panel }));
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">店舗連携</h2>
-        <button onClick={addShop} className={cn(
-          "px-4 py-2 rounded-xl text-sm font-medium",
-          "bg-blue-500/80 backdrop-blur-xl border border-blue-400/50",
-          "text-white hover:bg-blue-500/90 transition-all"
-        )}>
-          店舗を追加
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        {shops.map((shop) => (
-          <div
-            key={shop.name}
-            className={cn(
-              "p-4 rounded-xl",
-              "bg-white/50 backdrop-blur-xl border border-white/50",
-              "shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]",
-              "hover:shadow-[0_8px_24px_rgba(0,0,0,0.06)] transition-all"
-            )}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className={cn("h-3 w-3 rounded-full", shop.color)} />
-                <span className="font-medium text-gray-800">{shop.name}</span>
-              </div>
-              <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium", shopBadgeStyles[shop.status])}>
-                {shop.status}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="text-gray-500">最終同期</div>
-              <div className="text-gray-700 text-right">{shop.lastSync}</div>
-              <div className="text-gray-500">受注取込数</div>
-              <div className="text-gray-700 text-right">{shop.orders}件</div>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <button onClick={() => togglePanel(shop.name, "settings")} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80 transition-colors">設定</button>
-              <button onClick={() => togglePanel(shop.name, "history")} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80 transition-colors">同期履歴</button>
-              {shop.status === "エラー" ? (
-                <button onClick={() => reconnect(shop.name)} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-red-700 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-colors">再接続</button>
-              ) : (
-                <button onClick={() => togglePause(shop)} className="flex-1 px-2 py-1.5 rounded-lg text-xs text-gray-600 bg-white/60 border border-white/50 hover:bg-white/80 transition-colors">
-                  {shop.status === "一時停止" ? "再開" : "一時停止"}
-                </button>
-              )}
-            </div>
-            {openPanel?.shop === shop.name && openPanel.panel === "settings" && (
-              <div className="mt-3 p-3 rounded-lg bg-white/40 border border-white/50 space-y-2">
-                <p className="text-xs font-medium text-gray-600">連携設定</p>
-                <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={shop.autoSync}
-                    onChange={(e) => {
-                      updateShop(shop.name, { autoSync: e.target.checked });
-                      toast.show(`${shop.name} の自動同期を${e.target.checked ? "有効" : "無効"}にしました`, "info");
-                    }}
-                    className="accent-blue-500"
-                  />
-                  受注を自動同期する（30分間隔）
-                </label>
-              </div>
-            )}
-            {openPanel?.shop === shop.name && openPanel.panel === "history" && (
-              <div className="mt-3 p-3 rounded-lg bg-white/40 border border-white/50 space-y-1.5">
-                <p className="text-xs font-medium text-gray-600">同期履歴</p>
-                {shop.history.map((h) => (
-                  <p key={h} className={cn("text-xs", h.includes("失敗") ? "text-red-600" : "text-gray-600")}>{h}</p>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Add new */}
-        <button
-          onClick={addShop}
-          className={cn(
-            "flex flex-col items-center justify-center gap-2 p-6 rounded-xl",
-            "border-2 border-dashed border-gray-300/50",
-            "bg-white/20 hover:bg-white/40 transition-colors cursor-pointer"
-          )}
-        >
-          <Store className="h-6 w-6 text-gray-400" />
-          <p className="text-sm text-gray-500">新しい店舗を追加</p>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-const initialProviders = [
-  { name: "OpenAI", models: "GPT-4o, GPT-4o-mini", connected: false },
-  { name: "Anthropic", models: "Claude Opus, Claude Sonnet", connected: false },
-  { name: "Google", models: "Gemini Pro, Gemini Flash", connected: false },
-];
-
 function AISettings() {
   const toast = useToast();
-  const [providers, setProviders] = useState(initialProviders);
+
+  // 永続化オーナー（AI設定タブ）。⚠ APIキー実体は保存しない（接続フラグ＋自律度のみ）
+  usePersistentStore({
+    store: aiSettingsStore,
+    domain: "ai-settings",
+    seed: INITIAL_AI_SETTINGS,
+  });
+
+  const items = useSyncExternalStore(
+    aiSettingsStore.subscribe,
+    aiSettingsStore.getState,
+    aiSettingsStore.getState,
+  );
+  const config = items[0] ?? INITIAL_AI_SETTINGS[0];
+  const providers = config.providers;
+  const autonomy = config.autonomy;
+
+  // APIキー入力は ephemeral（ストア／スナップショットには絶対に載せない）
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
-  const [autonomy, setAutonomy] = useState("Level 2");
 
   const startEdit = (name: string) => {
     setEditingProvider((prev) => (prev === name ? null : name));
@@ -403,10 +280,24 @@ function AISettings() {
       toast.show("APIキーを入力してください", "error");
       return;
     }
-    setProviders((prev) => prev.map((p) => (p.name === name ? { ...p, connected: true } : p)));
+    // 接続フラグのみ永続化（キー実体は破棄）
+    aiSettingsStore.upsert({
+      id: "config",
+      autonomy,
+      providers: providers.map((p) => (p.name === name ? { ...p, connected: true } : p)),
+    });
     setEditingProvider(null);
     setKeyDraft("");
     toast.show(`${name} のAPIキーを登録しました`, "success");
+  };
+
+  const changeAutonomy = (level: string, label: string) => {
+    aiSettingsStore.upsert({
+      id: "config",
+      autonomy: level,
+      providers: providers.map((p) => ({ ...p })),
+    });
+    toast.show(`エージェント自律度を ${level}（${label}）に変更しました`, "info");
   };
 
   return (
@@ -484,10 +375,7 @@ function AISettings() {
                 type="radio"
                 name="autonomy"
                 checked={autonomy === l.level}
-                onChange={() => {
-                  setAutonomy(l.level);
-                  toast.show(`エージェント自律度を ${l.level}（${l.label}）に変更しました`, "info");
-                }}
+                onChange={() => changeAutonomy(l.level, l.label)}
                 className="mt-0.5 accent-blue-500"
               />
               <div>
