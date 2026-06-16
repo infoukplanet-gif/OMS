@@ -1,9 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderFetchSettingsStore,
+  INITIAL_ORDER_FETCH_SETTINGS,
+  DEFAULT_ORDER_FETCH_SETTINGS,
+} from "@/lib/stores/order-fetch-settings-store";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Loader2, Pause, Play, RefreshCw, Save, Search, Settings, X } from "lucide-react";
 
@@ -50,12 +56,23 @@ export default function OrderFetchApiPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Channel["status"]>("all");
 
-  const [defaultInterval, setDefaultInterval] = useState("15分");
-  const [dedupKey, setDedupKey] = useState("受注番号＋モール");
-  const [retryMax, setRetryMax] = useState("3");
-  const [retryInterval, setRetryInterval] = useState("5");
-  const [notifyEmail, setNotifyEmail] = useState("admin@example.com");
-  const [lookbackDays, setLookbackDays] = useState("7");
+  // 共通設定（domain: "order-fetch-settings"）の永続化オーナー。
+  usePersistentStore({ store: orderFetchSettingsStore, domain: "order-fetch-settings", seed: INITIAL_ORDER_FETCH_SETTINGS });
+  const settingsItems = useSyncExternalStore(
+    orderFetchSettingsStore.subscribe,
+    orderFetchSettingsStore.getState,
+    orderFetchSettingsStore.getState,
+  );
+  const config = settingsItems[0] ?? INITIAL_ORDER_FETCH_SETTINGS[0];
+
+  const defaultInterval = config.defaultInterval;
+  const dedupKey = config.dedupKey;
+  const retryMax = config.retryMax;
+  const retryInterval = config.retryInterval;
+  const notifyEmail = config.notifyEmail;
+  const lookbackDays = config.lookbackDays;
+  const updateConfig = (patch: Partial<typeof DEFAULT_ORDER_FETCH_SETTINGS>) =>
+    orderFetchSettingsStore.upsert({ ...config, ...patch });
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -70,7 +87,6 @@ export default function OrderFetchApiPage() {
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, status: c.status === "disabled" ? "ok" : "disabled" } : c)));
 
   const [running, setRunning] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [modalChannel, setModalChannel] = useState<Channel | null>(null);
 
@@ -94,16 +110,12 @@ export default function OrderFetchApiPage() {
     toast.show(`${target?.name ?? "チャネル"} を手動実行しました`, "success");
   };
 
+  // 共通設定は入力時に即 store へ反映され usePersistentStore が自動 snapshot するため、
+  // このボタンは「確定済み」を明示するための確認操作。
   const handleSave = () => {
-    if (saving) return;
-    setSaving(true);
-    setSaved(false);
-    setTimeout(() => {
-      setSaving(false);
-      setSaved(true);
-      toast.show("API共通設定を保存しました", "success");
-      setTimeout(() => setSaved(false), 3000);
-    }, 800);
+    setSaved(true);
+    toast.show("API共通設定を保存しました", "success");
+    setTimeout(() => setSaved(false), 3000);
   };
 
   return (
@@ -123,10 +135,10 @@ export default function OrderFetchApiPage() {
               {running ? "実行中…" : "全チャネル実行"}
             </span>
           </SecondaryButton>
-          <PrimaryButton onClick={handleSave} disabled={saving}>
+          <PrimaryButton onClick={handleSave}>
             <span className="inline-flex items-center gap-1.5">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-              {saving ? "保存中…" : saved ? "保存済" : "保存"}
+              {saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+              {saved ? "保存済" : "保存"}
             </span>
           </PrimaryButton>
         </div>
@@ -161,31 +173,31 @@ export default function OrderFetchApiPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">取得間隔（デフォルト）</span>
-            <select value={defaultInterval} onChange={(e) => setDefaultInterval(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={defaultInterval} onChange={(e) => updateConfig({ defaultInterval: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["5分", "15分", "30分", "60分", "Webhookリアルタイム"].map((v) => <option key={v}>{v}</option>)}
             </select>
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">受注番号重複検出</span>
-            <select value={dedupKey} onChange={(e) => setDedupKey(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={dedupKey} onChange={(e) => updateConfig({ dedupKey: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["受注番号", "受注番号＋モール", "受注番号＋店舗"].map((v) => <option key={v}>{v}</option>)}
             </select>
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">リトライ回数</span>
-            <input type="number" value={retryMax} onChange={(e) => setRetryMax(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={retryMax} onChange={(e) => updateConfig({ retryMax: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">リトライ間隔（分）</span>
-            <input type="number" value={retryInterval} onChange={(e) => setRetryInterval(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={retryInterval} onChange={(e) => updateConfig({ retryInterval: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">取得失敗時の通知先</span>
-            <input type="email" value={notifyEmail} onChange={(e) => setNotifyEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="email" value={notifyEmail} onChange={(e) => updateConfig({ notifyEmail: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
           <label className="space-y-1 text-sm">
             <span className="text-xs text-gray-500">過去何日分を取得</span>
-            <input type="number" value={lookbackDays} onChange={(e) => setLookbackDays(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="number" value={lookbackDays} onChange={(e) => updateConfig({ lookbackDays: e.target.value })} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
         </div>
       </GlassCard>

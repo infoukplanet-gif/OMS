@@ -48,7 +48,8 @@ export type SnapshotDomain =
   | "company-settings"
   | "ai-settings"
   | "from-addresses"
-  | "mail-signatures";
+  | "mail-signatures"
+  | "order-fetch-settings";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;
