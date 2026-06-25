@@ -1,11 +1,21 @@
 /**
- * その他システム設定のモジュール内シングルトン。
+ * その他システム設定 共有マスタストア（single-config 1-record パターン）。
  *
- * - `settings/misc` ページが書き換える
- * - v1 はブラウザ module スコープでの保持（リロードで初期化）
+ * セッション・表示・バックアップ・サポート連絡先などの全般設定を
+ * id 固定の 1 レコードとして createMasterStore に載せる。
+ *
+ * 永続化（domain: "misc-settings"）の正規オーナーページは
+ * src/app/settings/misc/page.tsx。
  */
 
-export interface MiscSettings {
+import { createMasterStore, type MasterStore } from "./create-master-store";
+
+/**
+ * その他システム設定の具体フィールド（index signature なし）。
+ * フォーム側で `keyof` / `Omit` が壊れないよう、index signature を持つ
+ * Record とは別に定義する。
+ */
+export interface MiscSettingsFields {
   // システム動作トグル
   toggles: Record<string, boolean>;
   // 表示設定
@@ -30,7 +40,12 @@ export interface MiscSettings {
   companyCode: string;
 }
 
-export const DEFAULT_MISC_SETTINGS: MiscSettings = {
+export interface MiscSettingsRecord extends MiscSettingsFields {
+  id: string;
+  [extra: string]: unknown;
+}
+
+export const DEFAULT_MISC_SETTINGS: MiscSettingsFields = {
   toggles: {
     session: true,
     audit: true,
@@ -60,20 +75,9 @@ export const DEFAULT_MISC_SETTINGS: MiscSettings = {
   companyCode: "OMS-COMPANY-001",
 };
 
-let settings: MiscSettings = { ...DEFAULT_MISC_SETTINGS, toggles: { ...DEFAULT_MISC_SETTINGS.toggles } };
+export const INITIAL_MISC_SETTINGS: MiscSettingsRecord[] = [
+  { id: "config", ...DEFAULT_MISC_SETTINGS },
+];
 
-export function getMiscSettings(): MiscSettings {
-  return { ...settings, toggles: { ...settings.toggles } };
-}
-
-export function setMiscSettings(patch: Partial<MiscSettings>): void {
-  settings = {
-    ...settings,
-    ...patch,
-    toggles: patch.toggles ? { ...patch.toggles } : settings.toggles,
-  };
-}
-
-export function resetMiscSettings(): void {
-  settings = { ...DEFAULT_MISC_SETTINGS, toggles: { ...DEFAULT_MISC_SETTINGS.toggles } };
-}
+export const miscSettingsStore: MasterStore<MiscSettingsRecord> =
+  createMasterStore<MiscSettingsRecord>(INITIAL_MISC_SETTINGS);

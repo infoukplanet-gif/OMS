@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { setMiscSettings } from "@/lib/settings/misc-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  miscSettingsStore,
+  INITIAL_MISC_SETTINGS,
+} from "@/lib/stores/misc-settings-store";
 import { downloadCsv } from "@/lib/export/csv";
 
 type Toggle = { key: string; label: string; hint?: string; enabled: boolean };
@@ -21,28 +25,79 @@ const initialToggles: Toggle[] = [
   { key: "anaytics", label: "利用統計を匿名で送信する", hint: "改善のための匿名利用データ送信", enabled: true },
 ];
 
+// トグル定義からラベル/ヒントを引くための索引（永続化された有効フラグと結合する）。
+const toggleDefs = initialToggles.map(({ key, label, hint }) => ({ key, label, hint }));
+
 export default function MiscSettingsPage() {
   const toast = useToast();
-  const [toggles, setToggles] = useState(initialToggles);
+
+  // 永続化オーナー
+  usePersistentStore({
+    store: miscSettingsStore,
+    domain: "misc-settings",
+    seed: INITIAL_MISC_SETTINGS,
+  });
+
+  const items = useSyncExternalStore(
+    miscSettingsStore.subscribe,
+    miscSettingsStore.getState,
+    miscSettingsStore.getState,
+  );
+  const config = items[0] ?? INITIAL_MISC_SETTINGS[0];
+
+  // トグルはストアと同じ Record<string, boolean> で保持（pass-through で同期し
+  // set-state-in-effect を回避）。表示用の Toggle[] は派生値として useMemo で作る。
+  const [toggleMap, setToggleMap] = useState<Record<string, boolean>>(config.toggles);
+  const toggles = useMemo<Toggle[]>(
+    () => toggleDefs.map((d) => ({ ...d, enabled: toggleMap[d.key] ?? false })),
+    [toggleMap],
+  );
   const setToggle = (key: string, val: boolean) =>
-    setToggles((prev) => prev.map((t) => (t.key === key ? { ...t, enabled: val } : t)));
+    setToggleMap((prev) => ({ ...prev, [key]: val }));
 
-  const [pageSize, setPageSize] = useState("50");
-  const [sort, setSort] = useState("受注日降順");
-  const [thousands, setThousands] = useState("3桁カンマ区切り");
-  const [dateFormat, setDateFormat] = useState("YYYY-MM-DD HH:mm");
-  const [timezone, setTimezone] = useState("Asia/Tokyo (JST)");
-  const [language, setLanguage] = useState("日本語");
-  const [currency, setCurrency] = useState("JPY (¥)");
-  const [theme, setTheme] = useState("Liquid Glass（標準）");
+  const [pageSize, setPageSize] = useState(config.pageSize);
+  const [sort, setSort] = useState(config.sort);
+  const [thousands, setThousands] = useState(config.thousands);
+  const [dateFormat, setDateFormat] = useState(config.dateFormat);
+  const [timezone, setTimezone] = useState(config.timezone);
+  const [language, setLanguage] = useState(config.language);
+  const [currency, setCurrency] = useState(config.currency);
+  const [theme, setTheme] = useState(config.theme);
 
-  const [backupTime, setBackupTime] = useState("03:00");
-  const [orderRetention, setOrderRetention] = useState("5");
-  const [logRetention, setLogRetention] = useState("1");
-  const [purgeDays, setPurgeDays] = useState("30");
-  const [backupTarget, setBackupTarget] = useState("AWS S3 (s3://oms-backup/daily)");
+  const [backupTime, setBackupTime] = useState(config.backupTime);
+  const [orderRetention, setOrderRetention] = useState(config.orderRetention);
+  const [logRetention, setLogRetention] = useState(config.logRetention);
+  const [purgeDays, setPurgeDays] = useState(config.purgeDays);
+  const [backupTarget, setBackupTarget] = useState(config.backupTarget);
   const [backingUp, setBackingUp] = useState(false);
   const [lastBackup, setLastBackup] = useState("2026-06-12 03:00");
+
+  const [adminEmail, setAdminEmail] = useState(config.adminEmail);
+  const [supportTel, setSupportTel] = useState(config.supportTel);
+  const [emergency, setEmergency] = useState(config.emergency);
+  const [companyCode, setCompanyCode] = useState(config.companyCode);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setToggleMap(config.toggles);
+    setPageSize(config.pageSize);
+    setSort(config.sort);
+    setThousands(config.thousands);
+    setDateFormat(config.dateFormat);
+    setTimezone(config.timezone);
+    setLanguage(config.language);
+    setCurrency(config.currency);
+    setTheme(config.theme);
+    setBackupTime(config.backupTime);
+    setOrderRetention(config.orderRetention);
+    setLogRetention(config.logRetention);
+    setPurgeDays(config.purgeDays);
+    setBackupTarget(config.backupTarget);
+    setAdminEmail(config.adminEmail);
+    setSupportTel(config.supportTel);
+    setEmergency(config.emergency);
+    setCompanyCode(config.companyCode);
+  }, [config]);
 
   const runBackup = () => {
     if (backingUp) return;
@@ -56,11 +111,6 @@ export default function MiscSettingsPage() {
       toast.show(`バックアップが完了しました（保管先: ${backupTarget}）`, "success");
     }, 1500);
   };
-
-  const [adminEmail, setAdminEmail] = useState("admin@example.com");
-  const [supportTel, setSupportTel] = useState("03-0000-0000");
-  const [emergency, setEmergency] = useState("emergency@example.com");
-  const [companyCode, setCompanyCode] = useState("OMS-COMPANY-001");
 
   return (
     <div className="space-y-5">
@@ -98,8 +148,8 @@ export default function MiscSettingsPage() {
             toast.show(`システム設定（${rows.length}項目）をエクスポートしました`, "success");
           }}>エクスポート</SecondaryButton>
           <PrimaryButton onClick={() => {
-            const toggleMap = Object.fromEntries(toggles.map((t) => [t.key, t.enabled]));
-            setMiscSettings({
+            miscSettingsStore.upsert({
+              id: "config",
               toggles: toggleMap,
               pageSize,
               sort,

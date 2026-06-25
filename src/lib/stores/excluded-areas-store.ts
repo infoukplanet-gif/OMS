@@ -1,9 +1,12 @@
 /**
- * 配送除外地域設定のモジュール内シングルトン。
+ * 配送除外地域設定 共有マスタストア
  *
- * - `settings/excluded-areas` ページが書き換える
- * - v1 はブラウザ module スコープでの保持（リロードで初期化）
+ * 離島・遠隔地など通常配送できない地域ルールの CRUD を画面横断で共有する。
+ * 永続化（domain: "excluded-areas"）の正規オーナーページは
+ * src/app/settings/excluded-areas/page.tsx
  */
+
+import { createMasterStore, type MasterStore } from "./create-master-store";
 
 export interface AreaRule {
   id: string;
@@ -14,9 +17,10 @@ export interface AreaRule {
   surcharge: number;
   cod: boolean;
   enabled: boolean;
+  [extra: string]: unknown;
 }
 
-export const DEFAULT_AREA_RULES: AreaRule[] = [
+export const INITIAL_EXCLUDED_AREAS: AreaRule[] = [
   { id: "ar-1", prefecture: "北海道", zipPattern: "040-0000〜099-9999", reason: "離島・遠隔地", carriers: ["ヤマト", "佐川"], surcharge: 880, cod: false, enabled: true },
   { id: "ar-2", prefecture: "沖縄県", zipPattern: "900-0000〜907-9999", reason: "離島", carriers: ["ヤマト", "佐川", "ゆうパック"], surcharge: 1100, cod: false, enabled: true },
   { id: "ar-3", prefecture: "東京都", zipPattern: "100-0301〜100-0511", reason: "小笠原・伊豆諸島", carriers: ["ゆうパック"], surcharge: 1650, cod: false, enabled: true },
@@ -26,29 +30,6 @@ export const DEFAULT_AREA_RULES: AreaRule[] = [
   { id: "ar-7", prefecture: "長崎県", zipPattern: "817-0000〜819-9999", reason: "離島群（壱岐・対馬・五島）", carriers: ["ゆうパック"], surcharge: 1320, cod: false, enabled: true },
 ];
 
-let rules: AreaRule[] = DEFAULT_AREA_RULES.map((r) => ({ ...r, carriers: [...r.carriers] }));
-
-export function getAreaRules(): AreaRule[] {
-  return rules.map((r) => ({ ...r, carriers: [...r.carriers] }));
-}
-
-export function setAreaRules(items: AreaRule[]): void {
-  rules = items.map((r) => ({ ...r, carriers: [...r.carriers] }));
-}
-
-export function upsertAreaRule(rule: AreaRule): void {
-  const idx = rules.findIndex((r) => r.id === rule.id);
-  if (idx >= 0) {
-    rules = rules.map((r) => (r.id === rule.id ? { ...rule, carriers: [...rule.carriers] } : r));
-  } else {
-    rules = [...rules, { ...rule, carriers: [...rule.carriers] }];
-  }
-}
-
-export function removeAreaRule(id: string): void {
-  rules = rules.filter((r) => r.id !== id);
-}
-
-export function resetAreaRules(): void {
-  rules = DEFAULT_AREA_RULES.map((r) => ({ ...r, carriers: [...r.carriers] }));
-}
+/** クライアントセッション内で共有される単一の ExcludedAreasStore インスタンス */
+export const excludedAreasStore: MasterStore<AreaRule> =
+  createMasterStore<AreaRule>(INITIAL_EXCLUDED_AREAS);

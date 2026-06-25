@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
@@ -7,13 +7,12 @@ import {
   Plus, Shield, Users, ShoppingCart, Truck, Tag, Box,
   ClipboardList, BarChart3, Settings, Mail, Printer, Edit, X, Check,
 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
-  getPermissionGroups,
-  saveGroupPermissions,
-  addPermissionGroup,
-  updateGroupInfo,
+  permissionGroupsStore,
+  INITIAL_PERMISSION_GROUPS,
   type PermissionGroup,
-} from "@/lib/settings/permissions-settings";
+} from "@/lib/stores/permission-groups-store";
 
 const permissionCategories = [
   {
@@ -63,10 +62,15 @@ const permissionCategories = [
 
 export default function PermissionsPage() {
   const toast = useToast();
-  const [groups, setGroups] = useState<PermissionGroup[]>(() => getPermissionGroups());
+  usePersistentStore({ store: permissionGroupsStore, domain: "permission-groups", seed: INITIAL_PERMISSION_GROUPS });
+  const groups = useSyncExternalStore(
+    permissionGroupsStore.subscribe,
+    permissionGroupsStore.getState,
+    permissionGroupsStore.getState,
+  ) as readonly PermissionGroup[];
   const [selectedGroup, setSelectedGroup] = useState("G003");
   const [restrictedItems, setRestrictedItems] = useState<Record<string, boolean>>(() => {
-    const g = getPermissionGroups().find((x) => x.id === "G003");
+    const g = INITIAL_PERMISSION_GROUPS.find((x) => x.id === "G003");
     return g?.restricted ?? {};
   });
 
@@ -94,17 +98,15 @@ export default function PermissionsPage() {
   };
 
   const handleSave = () => {
-    saveGroupPermissions(selectedGroup, restrictedItems);
-    setGroups(getPermissionGroups());
-    toast.show(`「${currentGroup?.name}」の権限を保存しました`, "success");
+    if (!currentGroup) return;
+    permissionGroupsStore.upsert({ ...currentGroup, restricted: { ...restrictedItems } });
+    toast.show(`「${currentGroup.name}」の権限を保存しました`, "success");
   };
 
   const handleReset = () => {
-    const g = groups.find((x) => x.id === selectedGroup);
-    const original = getPermissionGroups().find((x) => x.id === selectedGroup);
+    const original = groups.find((x) => x.id === selectedGroup);
     setRestrictedItems(original?.restricted ?? {});
     toast.show("変更を元に戻しました", "info");
-    void g;
   };
 
   const handleStartEditName = () => {
@@ -118,8 +120,8 @@ export default function PermissionsPage() {
       toast.show("グループ名は必須です", "error");
       return;
     }
-    updateGroupInfo(selectedGroup, { name: editName.trim(), desc: editDesc.trim() });
-    setGroups(getPermissionGroups());
+    if (!currentGroup) return;
+    permissionGroupsStore.upsert({ ...currentGroup, name: editName.trim(), desc: editDesc.trim() });
     setEditingName(false);
     toast.show("グループ情報を更新しました", "success");
   };
@@ -130,8 +132,7 @@ export default function PermissionsPage() {
       return;
     }
     const id = `G${String(Date.now()).slice(-4)}`;
-    addPermissionGroup({ id, name: newName.trim(), desc: newDesc.trim() || "新規権限グループ", users: 0, isAdmin: false });
-    setGroups(getPermissionGroups());
+    permissionGroupsStore.upsert({ id, name: newName.trim(), desc: newDesc.trim() || "新規権限グループ", users: 0, isAdmin: false, restricted: {} });
     setNewName("");
     setNewDesc("");
     setAddingGroup(false);

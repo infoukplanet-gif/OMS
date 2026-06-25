@@ -1,10 +1,12 @@
 /**
- * 権限グループ設定のモジュール内シングルトン。
+ * 権限グループ 共有マスタストア
  *
- * - `settings/permissions` ページが書き換える
- * - 担当者フォームで権限グループ一覧を参照する
- * - v1 はブラウザ module スコープでの保持（リロードで初期化）。永続化は v2 で server action + DB
+ * 担当者ごとにアクセス可能なメニューを制御する権限グループの CRUD を画面横断で共有する。
+ * 永続化（domain: "permission-groups"）の正規オーナーページは
+ * src/app/settings/permissions/page.tsx
  */
+
+import { createMasterStore, type MasterStore } from "./create-master-store";
 
 export interface PermissionGroup {
   id: string;
@@ -14,9 +16,10 @@ export interface PermissionGroup {
   isAdmin: boolean;
   /** key: "カテゴリ名-アイテム名", value: true = 制限（使用不可） */
   restricted: Record<string, boolean>;
+  [extra: string]: unknown;
 }
 
-export const DEFAULT_PERMISSION_GROUPS: PermissionGroup[] = [
+export const INITIAL_PERMISSION_GROUPS: PermissionGroup[] = [
   { id: "G001", name: "管理者", desc: "全機能にアクセス可能", users: 2, isAdmin: true, restricted: {} },
   { id: "G002", name: "経営者", desc: "全機能の閲覧 + 分析", users: 1, isAdmin: false, restricted: {} },
   { id: "G003", name: "倉庫スタッフ", desc: "出荷・在庫操作", users: 5, isAdmin: false, restricted: {
@@ -41,32 +44,6 @@ export const DEFAULT_PERMISSION_GROUPS: PermissionGroup[] = [
   } },
 ];
 
-let groups: PermissionGroup[] = DEFAULT_PERMISSION_GROUPS.map((g) => ({
-  ...g,
-  restricted: { ...g.restricted },
-}));
-
-/** グループ一覧のコピーを返す */
-export function getPermissionGroups(): PermissionGroup[] {
-  return groups.map((g) => ({ ...g, restricted: { ...g.restricted } }));
-}
-
-/** 特定グループの restricted マップを上書き */
-export function saveGroupPermissions(id: string, restricted: Record<string, boolean>): void {
-  groups = groups.map((g) => (g.id === id ? { ...g, restricted: { ...restricted } } : g));
-}
-
-/** 新規グループを追加 */
-export function addPermissionGroup(group: Omit<PermissionGroup, "restricted">): void {
-  groups = [...groups, { ...group, restricted: {} }];
-}
-
-/** グループの基本情報を更新（name/desc） */
-export function updateGroupInfo(id: string, patch: Pick<PermissionGroup, "name" | "desc">): void {
-  groups = groups.map((g) => (g.id === id ? { ...g, ...patch } : g));
-}
-
-/** デフォルトに戻す */
-export function resetPermissionGroups(): void {
-  groups = DEFAULT_PERMISSION_GROUPS.map((g) => ({ ...g, restricted: { ...g.restricted } }));
-}
+/** クライアントセッション内で共有される単一の PermissionGroupsStore インスタンス */
+export const permissionGroupsStore: MasterStore<PermissionGroup> =
+  createMasterStore<PermissionGroup>(INITIAL_PERMISSION_GROUPS);

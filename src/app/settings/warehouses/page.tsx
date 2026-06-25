@@ -1,17 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
-  getWarehouses,
-  setDefaultWarehouse,
-  upsertWarehouse,
-  removeWarehouse,
+  warehousesStore,
+  INITIAL_WAREHOUSES,
   type WarehouseRecord,
-} from "@/lib/settings/warehouse-settings";
+} from "@/lib/stores/warehouses-store";
 import { Box, Edit, MapPin, Phone, Plus, Search, Star, Trash2, Truck, User, X } from "lucide-react";
 
 const typeBadge: Record<string, string> = {
@@ -21,6 +20,7 @@ const typeBadge: Record<string, string> = {
 };
 
 const EMPTY_WAREHOUSE: WarehouseRecord = {
+  id: "",
   code: "",
   name: "",
   type: "自社倉庫",
@@ -179,7 +179,19 @@ function WarehouseModal({
 
 export default function WarehousesPage() {
   const toast = useToast();
-  const [items, setItems] = useState<WarehouseRecord[]>(() => getWarehouses());
+
+  // 永続化オーナー
+  usePersistentStore({
+    store: warehousesStore,
+    domain: "warehouses",
+    seed: INITIAL_WAREHOUSES,
+  });
+
+  const items = useSyncExternalStore(
+    warehousesStore.subscribe,
+    warehousesStore.getState,
+    warehousesStore.getState,
+  );
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "enabled" | "disabled">("all");
@@ -199,16 +211,20 @@ export default function WarehousesPage() {
   }, [items, keyword, typeFilter, statusFilter]);
 
   const handleSetDefault = (code: string) => {
-    setDefaultWarehouse(code);
-    setItems(getWarehouses());
+    // 既定拠点は 1 件のみ。isDefault が変化するレコードだけ upsert する。
+    for (const w of items) {
+      const nextDefault = w.code === code;
+      if (w.isDefault !== nextDefault) {
+        warehousesStore.upsert({ ...w, isDefault: nextDefault });
+      }
+    }
     const w = items.find((x) => x.code === code);
     toast.show(`${w?.name ?? code} を既定拠点に設定`, "success");
   };
 
   const handleDelete = (code: string, name: string) => {
     if (!window.confirm(`「${name}」を削除しますか？この操作は元に戻せません。`)) return;
-    removeWarehouse(code);
-    setItems(getWarehouses());
+    warehousesStore.remove(code);
     toast.show("拠点を削除しました", "info");
   };
 
@@ -217,10 +233,10 @@ export default function WarehousesPage() {
       toast.show("拠点コードと名称は必須です", "error");
       return;
     }
-    upsertWarehouse(w);
-    setItems(getWarehouses());
-    setModalWarehouse(false);
     const isNew = !items.find((x) => x.code === w.code);
+    // createMasterStore は id をキーに upsert/remove するため id = code を保証する。
+    warehousesStore.upsert({ ...w, id: w.code });
+    setModalWarehouse(false);
     toast.show(isNew ? `「${w.name}」を追加しました` : `「${w.name}」を更新しました`, "success");
   };
 

@@ -1,43 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
-  setOrderDefaults,
-  setOrderFees,
-  setOrderConversions,
-  setOrderDateRules,
-  setExcludedAreas as persistExcludedAreas,
-} from "@/lib/settings/order-rules-settings";
+  orderRulesStore,
+  INITIAL_ORDER_RULES,
+  type OrderDefaultRow as DefaultRow,
+  type OrderFeeRow as FeeRow,
+  type OrderConversionRow as ConversionRow,
+  type OrderDateRuleRow as DateRuleRow,
+} from "@/lib/stores/order-rules-store";
 import { cn } from "@/lib/utils";
 
 const tabs = ["規定値設定", "支払方法別手数料", "支払発送変換", "日付自動登録", "除外地域"] as const;
 type TabKey = (typeof tabs)[number];
-
-interface DefaultRow {
-  key: string;
-  label: string;
-  value: string;
-}
-
-interface FeeRow {
-  method: string;
-  fee: string;
-  note: string;
-}
-
-interface ConversionRow {
-  type: "支払方法" | "発送方法";
-  from: string;
-  to: string;
-  shop: string;
-}
-
-interface DateRuleRow {
-  name: string;
-  rule: string;
-}
 
 const PREFECTURES = [
   "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
@@ -49,45 +27,41 @@ const PREFECTURES = [
   "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県",
 ] as const;
 
-const INITIAL_DEFAULTS: DefaultRow[] = [
-  { key: "payment", label: "デフォルト支払方法", value: "クレジットカード" },
-  { key: "shipping", label: "デフォルト配送方法", value: "ヤマト運輸" },
-  { key: "warehouse", label: "デフォルト倉庫", value: "東京本社倉庫" },
-  { key: "tax", label: "税率", value: "10%" },
-  { key: "fee", label: "送料（標準）", value: "¥800" },
-  { key: "freeShip", label: "送料無料条件", value: "¥10,000以上" },
-];
-
-const INITIAL_FEES: FeeRow[] = [
-  { method: "クレジットカード", fee: "0%", note: "" },
-  { method: "銀行振込", fee: "0%", note: "振込手数料は顧客負担" },
-  { method: "代金引換", fee: "¥330", note: "一律" },
-  { method: "請求書払い", fee: "0%", note: "卸先のみ" },
-];
-
-const INITIAL_CONVERSIONS: ConversionRow[] = [
-  { type: "支払方法", from: "クレジットカード", to: "クレジット", shop: "楽天市場" },
-  { type: "支払方法", from: "銀行振込（前払）", to: "銀行振込", shop: "Yahoo!" },
-  { type: "発送方法", from: "ヤマト宅急便", to: "ヤマト運輸", shop: "全店舗" },
-  { type: "発送方法", from: "佐川飛脚便", to: "佐川急便", shop: "全店舗" },
-];
-
-const INITIAL_DATE_RULES: DateRuleRow[] = [
-  { name: "出荷予定日", rule: "受注日 + 1営業日" },
-  { name: "お届け予定日", rule: "出荷予定日 + 2営業日" },
-  { name: "支払期限日", rule: "受注日 + 7日" },
-  { name: "請求日", rule: "月末締" },
-];
-
 export default function OrderRulesPage() {
   const toast = useToast();
   const [tab, setTab] = useState<TabKey>(tabs[0]);
 
-  const [defaults, setDefaults] = useState<DefaultRow[]>(INITIAL_DEFAULTS);
-  const [fees, setFees] = useState<FeeRow[]>(INITIAL_FEES);
-  const [conversions, setConversions] = useState<ConversionRow[]>(INITIAL_CONVERSIONS);
-  const [dateRules, setDateRules] = useState<DateRuleRow[]>(INITIAL_DATE_RULES);
-  const [excludedAreas, setExcludedAreas] = useState<Set<string>>(new Set());
+  // 永続化オーナー
+  usePersistentStore({
+    store: orderRulesStore,
+    domain: "order-rules-settings",
+    seed: INITIAL_ORDER_RULES,
+  });
+
+  const items = useSyncExternalStore(
+    orderRulesStore.subscribe,
+    orderRulesStore.getState,
+    orderRulesStore.getState,
+  );
+  const config = items[0] ?? INITIAL_ORDER_RULES[0];
+
+  const [defaults, setDefaults] = useState<DefaultRow[]>(config.defaults);
+  const [fees, setFees] = useState<FeeRow[]>(config.fees);
+  const [conversions, setConversions] = useState<ConversionRow[]>(config.conversions);
+  const [dateRules, setDateRules] = useState<DateRuleRow[]>(config.dateRules);
+  // 除外地域はストアと同じ string[] で保持（pass-through で同期し set-state-in-effect を回避）。
+  // 選択判定用の Set は派生値として useMemo で作る。
+  const [excludedAreas, setExcludedAreas] = useState<string[]>(config.excludedAreas);
+  const excludedSet = useMemo(() => new Set(excludedAreas), [excludedAreas]);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setDefaults(config.defaults);
+    setFees(config.fees);
+    setConversions(config.conversions);
+    setDateRules(config.dateRules);
+    setExcludedAreas(config.excludedAreas);
+  }, [config]);
 
   // 編集中の手数料行: method → 編集中の {fee, note}
   const [editingFee, setEditingFee] = useState<string | null>(null);
@@ -104,12 +78,11 @@ export default function OrderRulesPage() {
     setDateRules((prev) => prev.map((d) => (d.name === name ? { ...d, rule } : d)));
 
   const toggleArea = (prefecture: string) => {
-    setExcludedAreas((prev) => {
-      const next = new Set(prev);
-      if (next.has(prefecture)) next.delete(prefecture);
-      else next.add(prefecture);
-      return next;
-    });
+    setExcludedAreas((prev) =>
+      prev.includes(prefecture)
+        ? prev.filter((p) => p !== prefecture)
+        : [...prev, prefecture],
+    );
   };
 
   const addConversion = () => {
@@ -130,35 +103,35 @@ export default function OrderRulesPage() {
   };
 
   const handleSaveDefaults = () => {
-    setOrderDefaults(defaults);
+    orderRulesStore.upsert({ ...config, defaults });
     toast.show("規定値設定を保存しました", "success");
   };
   const handleSaveFees = () => {
     setEditingFee(null);
-    setOrderFees(fees);
+    orderRulesStore.upsert({ ...config, fees });
     toast.show("手数料設定を保存しました", "success");
   };
   const handleSaveConversions = () => {
-    setOrderConversions(conversions);
+    orderRulesStore.upsert({ ...config, conversions });
     toast.show("変換ルールを保存しました", "success");
   };
   const handleSaveDateRules = () => {
     setEditingRule(null);
-    setOrderDateRules(dateRules);
+    orderRulesStore.upsert({ ...config, dateRules });
     toast.show("日付自動登録ルールを保存しました", "success");
   };
   const handleSaveAreas = () => {
-    persistExcludedAreas(Array.from(excludedAreas));
+    orderRulesStore.upsert({ ...config, excludedAreas });
     toast.show(
-      `除外地域を保存しました（${excludedAreas.size}件）`,
-      excludedAreas.size > 0 ? "info" : "success",
+      `除外地域を保存しました（${excludedAreas.length}件）`,
+      excludedAreas.length > 0 ? "info" : "success",
     );
   };
 
   const excludedSummary = useMemo(() => {
-    if (excludedAreas.size === 0) return "除外なし";
-    if (excludedAreas.size <= 3) return Array.from(excludedAreas).join("・");
-    return `${Array.from(excludedAreas).slice(0, 3).join("・")} ほか ${excludedAreas.size - 3} 県`;
+    if (excludedAreas.length === 0) return "除外なし";
+    if (excludedAreas.length <= 3) return excludedAreas.join("・");
+    return `${excludedAreas.slice(0, 3).join("・")} ほか ${excludedAreas.length - 3} 県`;
   }, [excludedAreas]);
 
   return (
@@ -430,14 +403,14 @@ export default function OrderRulesPage() {
         <GlassCard>
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-base font-semibold text-gray-800">除外地域の設定</h2>
-            <span className="text-xs text-gray-500">{excludedAreas.size} / {PREFECTURES.length} 件選択中</span>
+            <span className="text-xs text-gray-500">{excludedAreas.length} / {PREFECTURES.length} 件選択中</span>
           </div>
           <p className="text-sm text-gray-500 mb-4">
             配送対象外とする地域を設定します。受注時に警告が表示されます。
           </p>
           <div className="grid grid-cols-4 gap-2">
             {PREFECTURES.map((p) => {
-              const checked = excludedAreas.has(p);
+              const checked = excludedSet.has(p);
               return (
                 <label
                   key={p}
@@ -459,7 +432,7 @@ export default function OrderRulesPage() {
           </div>
           <div className="mt-4 flex gap-2">
             <button
-              onClick={() => setExcludedAreas(new Set())}
+              onClick={() => setExcludedAreas([])}
               className="px-4 py-2 rounded-xl text-sm font-medium bg-white/60 border border-white/50 text-gray-700 hover:bg-white/80"
             >
               すべて解除

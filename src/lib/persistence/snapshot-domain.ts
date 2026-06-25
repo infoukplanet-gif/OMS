@@ -53,7 +53,13 @@ export type SnapshotDomain =
   | "payment-fees"
   | "shipment-availability"
   | "field-conversion-settings"
-  | "payment-shipping-conversion-settings";
+  | "payment-shipping-conversion-settings"
+  | "api-global-settings"
+  | "excluded-areas"
+  | "order-rules-settings"
+  | "permission-groups"
+  | "warehouses"
+  | "misc-settings";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;

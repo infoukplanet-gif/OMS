@@ -1,12 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Copy, Eye, EyeOff, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { setApiGlobalSettings } from "@/lib/settings/api-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  apiGlobalSettingsStore,
+  INITIAL_API_GLOBAL_SETTINGS,
+} from "@/lib/stores/api-global-settings-store";
 
 type ApiKey = {
   id: string;
@@ -79,11 +83,31 @@ export default function SettingsApiPage() {
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [keyForm, setKeyForm] = useState<KeyForm>(EMPTY_KEY_FORM);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
-  const [rateLimit, setRateLimit] = useState(60);
-  const [allowCors, setAllowCors] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState("https://hooks.example.com/oms/events");
-  const [webhookEnabled, setWebhookEnabled] = useState(true);
-  const [maxPayload, setMaxPayload] = useState(10);
+  usePersistentStore({
+    store: apiGlobalSettingsStore,
+    domain: "api-global-settings",
+    seed: INITIAL_API_GLOBAL_SETTINGS,
+  });
+  const globalItems = useSyncExternalStore(
+    apiGlobalSettingsStore.subscribe,
+    apiGlobalSettingsStore.getState,
+    apiGlobalSettingsStore.getState,
+  );
+  const globalConfig = globalItems[0] ?? INITIAL_API_GLOBAL_SETTINGS[0];
+
+  const [rateLimit, setRateLimit] = useState(globalConfig.rateLimit);
+  const [allowCors, setAllowCors] = useState(globalConfig.allowCors);
+  const [webhookUrl, setWebhookUrl] = useState(globalConfig.webhookUrl);
+  const [webhookEnabled, setWebhookEnabled] = useState(globalConfig.webhookEnabled);
+  const [maxPayload, setMaxPayload] = useState(globalConfig.maxPayloadMb);
+
+  useEffect(() => {
+    setRateLimit(globalConfig.rateLimit);
+    setAllowCors(globalConfig.allowCors);
+    setWebhookUrl(globalConfig.webhookUrl);
+    setWebhookEnabled(globalConfig.webhookEnabled);
+    setMaxPayload(globalConfig.maxPayloadMb);
+  }, [globalConfig]);
 
   const toggleReveal = (id: string) => setReveal((p) => ({ ...p, [id]: !p[id] }));
   const updateKey = (id: string, patch: Partial<ApiKey>) =>
@@ -169,7 +193,14 @@ export default function SettingsApiPage() {
           <p className="text-sm text-gray-500 mt-1">基幹システム連携や外部モール・配送業者の接続をここから管理。</p>
         </div>
         <PrimaryButton onClick={() => {
-          setApiGlobalSettings({ rateLimit, allowCors, webhookUrl, webhookEnabled });
+          apiGlobalSettingsStore.upsert({
+            id: "config",
+            rateLimit,
+            allowCors,
+            webhookUrl,
+            webhookEnabled,
+            maxPayloadMb: maxPayload,
+          });
           toast.show("API設定を保存しました", "success");
         }}>保存</PrimaryButton>
       </div>

@@ -1,42 +1,47 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { MapPin, Plus, Search, Trash2 } from "lucide-react";
-import { setAreaRules, upsertAreaRule, removeAreaRule } from "@/lib/settings/excluded-areas-settings";
-
-type AreaRule = {
-  id: string;
-  prefecture: string;
-  zipPattern: string;
-  reason: string;
-  carriers: string[];
-  surcharge: number;
-  cod: boolean;
-  enabled: boolean;
-};
-
-const initialRules: AreaRule[] = [
-  { id: "ar-1", prefecture: "北海道", zipPattern: "040-0000〜099-9999", reason: "離島・遠隔地", carriers: ["ヤマト", "佐川"], surcharge: 880, cod: false, enabled: true },
-  { id: "ar-2", prefecture: "沖縄県", zipPattern: "900-0000〜907-9999", reason: "離島", carriers: ["ヤマト", "佐川", "ゆうパック"], surcharge: 1100, cod: false, enabled: true },
-  { id: "ar-3", prefecture: "東京都", zipPattern: "100-0301〜100-0511", reason: "小笠原・伊豆諸島", carriers: ["ゆうパック"], surcharge: 1650, cod: false, enabled: true },
-  { id: "ar-4", prefecture: "鹿児島県", zipPattern: "891-0000〜899-9999", reason: "奄美群島", carriers: ["ヤマト", "佐川"], surcharge: 880, cod: false, enabled: true },
-  { id: "ar-5", prefecture: "島根県", zipPattern: "684-0000〜684-9999", reason: "隠岐諸島", carriers: ["ゆうパック"], surcharge: 770, cod: false, enabled: true },
-  { id: "ar-6", prefecture: "新潟県", zipPattern: "952-0000〜952-9999", reason: "佐渡島", carriers: ["ヤマト"], surcharge: 550, cod: true, enabled: true },
-  { id: "ar-7", prefecture: "長崎県", zipPattern: "817-0000〜819-9999", reason: "離島群（壱岐・対馬・五島）", carriers: ["ゆうパック"], surcharge: 1320, cod: false, enabled: true },
-];
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  excludedAreasStore,
+  INITIAL_EXCLUDED_AREAS,
+  type AreaRule,
+} from "@/lib/stores/excluded-areas-store";
 
 const prefs = ["北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県", "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県", "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県", "岐阜県", "静岡県", "愛知県", "三重県", "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県", "鳥取県", "島根県", "岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県", "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県", "沖縄県"];
 const carriers = ["ヤマト", "佐川", "ゆうパック", "西濃", "福通"];
 
 export default function ExcludedAreasPage() {
   const toast = useToast();
-  const [rules, setRules] = useState(initialRules);
+
+  // 永続化オーナー
+  usePersistentStore({
+    store: excludedAreasStore,
+    domain: "excluded-areas",
+    seed: INITIAL_EXCLUDED_AREAS,
+  });
+
+  const storeRules = useSyncExternalStore(
+    excludedAreasStore.subscribe,
+    excludedAreasStore.getState,
+    excludedAreasStore.getState,
+  );
+
+  // ドラフト状態（インライン編集用）。ストアが復元されたら同期する。
+  // ストア配列はそのまま参照保持し、編集は常に immutable に新配列を作る
+  // （setState に都度新規配列を渡すと set-state-in-effect で警告されるため）。
+  const [rules, setRules] = useState<readonly AreaRule[]>(storeRules);
   const [keyword, setKeyword] = useState("");
   const [carrierFilter, setCarrierFilter] = useState("all");
+
+  useEffect(() => {
+    setRules(storeRules);
+  }, [storeRules]);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -90,7 +95,7 @@ export default function ExcludedAreasPage() {
       }
       const merged = [...rules, ...parsed];
       setRules(merged);
-      setAreaRules(merged);
+      excludedAreasStore.setItems(merged);
       toast.show(`${parsed.length}件の除外地域を取込みました`, "success");
     } catch {
       toast.show("CSVの読み込みに失敗しました", "error");
@@ -120,7 +125,7 @@ export default function ExcludedAreasPage() {
             }}
           />
           <SecondaryButton onClick={() => fileRef.current?.click()}>CSVインポート</SecondaryButton>
-          <PrimaryButton onClick={() => { setAreaRules(rules); toast.show("配送除外地域設定を保存しました", "success"); }}>保存</PrimaryButton>
+          <PrimaryButton onClick={() => { excludedAreasStore.setItems(rules); toast.show("配送除外地域設定を保存しました", "success"); }}>保存</PrimaryButton>
         </div>
       </div>
 
@@ -164,7 +169,7 @@ export default function ExcludedAreasPage() {
           <SecondaryButton onClick={() => { setKeyword(""); setCarrierFilter("all"); }}>クリア</SecondaryButton>
           <SecondaryButton onClick={() => {
             const newRule: AreaRule = { id: `ar-${Date.now()}`, prefecture: "北海道", zipPattern: "", reason: "離島・遠隔地", carriers: ["ヤマト"], surcharge: 0, cod: false, enabled: true };
-            upsertAreaRule(newRule);
+            excludedAreasStore.upsert(newRule);
             setRules((prev) => [...prev, newRule]);
           }}>
             <span className="inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />新規追加</span>
@@ -225,7 +230,7 @@ export default function ExcludedAreasPage() {
                   </label>
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { removeAreaRule(r.id); setRules((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { excludedAreasStore.remove(r.id); setRules((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>
