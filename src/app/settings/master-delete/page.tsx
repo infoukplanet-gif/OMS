@@ -4,6 +4,10 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
 import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
+import { productStore } from "@/lib/stores/product";
+import { setProductStore } from "@/lib/stores/set-product";
+import { supplierStore } from "@/lib/stores/supplier";
+import { wholesaleStore } from "@/lib/stores/wholesale";
 import { Upload, AlertTriangle, CheckCircle, Download, Trash2 } from "lucide-react";
 
 const restrictions = [
@@ -76,8 +80,46 @@ export default function MasterDeletePage() {
 
   const handleDelete = () => {
     if (!target || !agreed || codes.length === 0) return;
-    const targetLabel = target === "product" ? "商品マスタ" : target === "set" ? "セット商品マスタ" : target === "supplier" ? "仕入先マスタ" : "卸先マスタ";
-    toast.show(`${targetLabel}から ${codes.length} 件を削除しました`, "success");
+    // CSV のコードを共有マスタストアから実際に削除し、削除できた実件数を返す。
+    // product は code がキー、set/supplier/wholesale は id がキーで code フィールドを持つため
+    // code → id を引いてから remove する。一致しなかったコードは削除されない（正直な件数を報告）。
+    const codeSet = new Set(codes);
+    let targetLabel = "";
+    let removed = 0;
+
+    if (target === "product") {
+      targetLabel = "商品マスタ";
+      for (const code of codeSet) {
+        if (productStore.remove(code)) removed += 1;
+      }
+    } else if (target === "set") {
+      targetLabel = "セット商品マスタ";
+      const ids = setProductStore.getState().filter((r) => codeSet.has(r.code)).map((r) => r.id);
+      for (const id of ids) {
+        if (setProductStore.remove(id).removed) removed += 1;
+      }
+    } else if (target === "supplier") {
+      targetLabel = "仕入先マスタ";
+      const ids = supplierStore.getState().filter((r) => codeSet.has(r.code) || codeSet.has(r.id)).map((r) => r.id);
+      for (const id of ids) {
+        if (supplierStore.remove(id).removed) removed += 1;
+      }
+    } else {
+      targetLabel = "卸先マスタ";
+      const ids = wholesaleStore.getState().filter((r) => codeSet.has(r.code) || codeSet.has(r.id)).map((r) => r.id);
+      for (const id of ids) {
+        if (wholesaleStore.remove(id).removed) removed += 1;
+      }
+    }
+
+    if (removed === 0) {
+      toast.show(`${targetLabel}に一致するコードが見つかりませんでした（${codeSet.size} 件中 0 件）`, "info");
+    } else if (removed < codeSet.size) {
+      toast.show(`${targetLabel}から ${removed} 件を削除しました（未一致 ${codeSet.size - removed} 件）`, "success");
+    } else {
+      toast.show(`${targetLabel}から ${removed} 件を削除しました`, "success");
+    }
+
     setFileName(null);
     setCodes([]);
     setAgreed(false);
