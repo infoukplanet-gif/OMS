@@ -56,6 +56,8 @@ export type SnapshotDomain =
   | "category-conversion-settings"
   | "payment-shipping-conversion-settings"
   | "api-global-settings"
+  | "api-keys"
+  | "api-connections"
   | "excluded-areas"
   | "order-rules-settings"
   | "permission-groups"

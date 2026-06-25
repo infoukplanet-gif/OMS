@@ -11,41 +11,14 @@ import {
   apiGlobalSettingsStore,
   INITIAL_API_GLOBAL_SETTINGS,
 } from "@/lib/stores/api-global-settings-store";
-
-type ApiKey = {
-  id: string;
-  label: string;
-  scope: string;
-  keyMasked: string;
-  createdAt: string;
-  lastUsed: string;
-  enabled: boolean;
-  ipWhitelist: string;
-};
-
-type Connection = {
-  id: string;
-  name: string;
-  endpoint: string;
-  authType: "api-key" | "oauth" | "basic";
-  status: "ok" | "warning" | "error";
-  lastSync: string;
-};
-
-const initialKeys: ApiKey[] = [
-  { id: "key-prod", label: "本番（外部連携用）", scope: "受注/在庫/出荷 読取・書込", keyMasked: "sk_live_********************a91f", createdAt: "2025/12/01", lastUsed: "2026/04/30 10:12", enabled: true, ipWhitelist: "203.0.113.10/32" },
-  { id: "key-stg", label: "ステージング", scope: "受注 読取のみ", keyMasked: "sk_test_********************42b0", createdAt: "2026/01/15", lastUsed: "2026/04/29 18:00", enabled: true, ipWhitelist: "—" },
-  { id: "key-bi", label: "BI（読取専用）", scope: "売上 / 在庫 読取", keyMasked: "sk_read_********************77e3", createdAt: "2026/02/10", lastUsed: "2026/04/30 02:00", enabled: true, ipWhitelist: "10.0.0.0/8" },
-  { id: "key-old", label: "旧本番（無効化済）", scope: "受注 読取・書込", keyMasked: "sk_live_********************0011", createdAt: "2024/06/01", lastUsed: "2025/11/30 12:00", enabled: false, ipWhitelist: "—" },
-];
-
-const initialConnections: Connection[] = [
-  { id: "rakuten", name: "楽天市場 RMS API", endpoint: "https://api.rms.rakuten.co.jp", authType: "oauth", status: "ok", lastSync: "2026/04/30 10:00" },
-  { id: "yahoo", name: "Yahoo!ショッピング API", endpoint: "https://circus.shopping.yahooapis.jp", authType: "oauth", status: "ok", lastSync: "2026/04/30 09:50" },
-  { id: "amazon", name: "Amazon SP-API", endpoint: "https://sellingpartnerapi-fe.amazon.com", authType: "oauth", status: "warning", lastSync: "2026/04/30 04:00" },
-  { id: "yamato", name: "ヤマト B2 クラウド", endpoint: "https://bmypage.kuronekoyamato.co.jp", authType: "api-key", status: "ok", lastSync: "2026/04/30 09:30" },
-  { id: "sagawa", name: "佐川急便 e飛伝", endpoint: "https://e-hiden.sagawa-exp.co.jp", authType: "basic", status: "error", lastSync: "2026/04/29 18:00" },
-];
+import {
+  apiKeysStore,
+  apiConnectionsStore,
+  INITIAL_API_KEYS,
+  INITIAL_API_CONNECTIONS,
+  type ApiKey,
+  type ApiConnection as Connection,
+} from "@/lib/stores/api-keys-store";
 
 const SCOPE_OPTIONS = [
   "受注 読取のみ",
@@ -77,17 +50,21 @@ const sbLabel: Record<string, string> = { ok: "正常", warning: "警告", error
 
 export default function SettingsApiPage() {
   const toast = useToast();
-  const [keys, setKeys] = useState(initialKeys);
-  const [conns, setConns] = useState(initialConnections);
   const [reconnecting, setReconnecting] = useState<Record<string, boolean>>({});
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [keyForm, setKeyForm] = useState<KeyForm>(EMPTY_KEY_FORM);
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
+
+  // APIキー・外部接続・グローバル設定をそれぞれ共有ストアへ永続化（このページが各 domain の正規オーナー）。
+  usePersistentStore({ store: apiKeysStore, domain: "api-keys", seed: INITIAL_API_KEYS });
+  usePersistentStore({ store: apiConnectionsStore, domain: "api-connections", seed: INITIAL_API_CONNECTIONS });
   usePersistentStore({
     store: apiGlobalSettingsStore,
     domain: "api-global-settings",
     seed: INITIAL_API_GLOBAL_SETTINGS,
   });
+  const keys = useSyncExternalStore(apiKeysStore.subscribe, apiKeysStore.getState, apiKeysStore.getState);
+  const conns = useSyncExternalStore(apiConnectionsStore.subscribe, apiConnectionsStore.getState, apiConnectionsStore.getState);
   const globalItems = useSyncExternalStore(
     apiGlobalSettingsStore.subscribe,
     apiGlobalSettingsStore.getState,
@@ -110,8 +87,11 @@ export default function SettingsApiPage() {
   }, [globalConfig]);
 
   const toggleReveal = (id: string) => setReveal((p) => ({ ...p, [id]: !p[id] }));
-  const updateKey = (id: string, patch: Partial<ApiKey>) =>
-    setKeys((prev) => prev.map((k) => (k.id === id ? { ...k, ...patch } : k)));
+  const updateKey = (id: string, patch: Partial<ApiKey>) => {
+    const current = apiKeysStore.findById(id);
+    if (!current) return;
+    apiKeysStore.upsert({ ...current, ...patch });
+  };
 
   const nowStamp = (): string => {
     const d = new Date();
@@ -140,7 +120,7 @@ export default function SettingsApiPage() {
       enabled: true,
       ipWhitelist: keyForm.ipWhitelist.trim() || "—",
     };
-    setKeys((prev) => [newKey, ...prev]);
+    apiKeysStore.setItems([newKey, ...apiKeysStore.getState()]);
     setShowKeyModal(false);
     toast.show(`APIキー「${label}」を発行しました`, "success");
   };
@@ -164,9 +144,10 @@ export default function SettingsApiPage() {
   const reconnect = (c: Connection) => {
     setReconnecting((p) => ({ ...p, [c.id]: true }));
     setTimeout(() => {
-      setConns((prev) =>
-        prev.map((x) => (x.id === c.id ? { ...x, status: "ok", lastSync: nowStamp() } : x))
-      );
+      const current = apiConnectionsStore.findById(c.id);
+      if (current) {
+        apiConnectionsStore.upsert({ ...current, status: "ok", lastSync: nowStamp() });
+      }
       setReconnecting((p) => ({ ...p, [c.id]: false }));
       toast.show(`${c.name} と再接続しました`, "success");
     }, 1200);
@@ -279,7 +260,7 @@ export default function SettingsApiPage() {
                     <button onClick={() => rotateKey(k.id)} className="p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25" title="ローテーション">
                       <RefreshCw className="h-3.5 w-3.5" />
                     </button>
-                    <button onClick={() => { setKeys((p) => p.filter((x) => x.id !== k.id)); toast.show("キーを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
+                    <button onClick={() => { apiKeysStore.remove(k.id); toast.show("キーを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
