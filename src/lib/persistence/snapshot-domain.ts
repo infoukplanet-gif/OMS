@@ -50,6 +50,7 @@ export type SnapshotDomain =
   | "from-addresses"
   | "mail-signatures"
   | "order-fetch-settings"
+  | "bulk-complete-orders"
   | "payment-fees"
   | "shipment-availability"
   | "field-conversion-settings"

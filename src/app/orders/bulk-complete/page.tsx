@@ -1,29 +1,42 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Search } from "lucide-react";
+import { bulkCompleteOrderStore } from "@/lib/stores/bulk-complete-orders";
+import { INITIAL_BULK_COMPLETE_ORDERS } from "@/lib/seeds/bulk-complete-orders";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  transitionBulkCompleteOrder,
+  type BulkCompleteOrderStatus,
+} from "@/lib/state-machines/bulk-complete-order";
 
-type Status = "確認待ち" | "引当済" | "出荷待ち";
-type Row = { id: string; customer: string; status: Status; amount: number; orderedAt: string };
-
-const initial: Row[] = [
-  { id: "ORD-2026-01102", customer: "株式会社サンプル", status: "出荷待ち", amount: 38400, orderedAt: "2026-04-22" },
-  { id: "ORD-2026-01101", customer: "山田太郎", status: "出荷待ち", amount: 12800, orderedAt: "2026-04-22" },
-  { id: "ORD-2026-01098", customer: "田中一郎", status: "引当済", amount: 5600, orderedAt: "2026-04-22" },
-  { id: "ORD-2026-01095", customer: "鈴木商事", status: "出荷待ち", amount: 92400, orderedAt: "2026-04-21" },
-  { id: "ORD-2026-01092", customer: "伊藤大輔", status: "確認待ち", amount: 18700, orderedAt: "2026-04-21" },
-  { id: "ORD-2026-01090", customer: "株式会社ABC", status: "引当済", amount: 125800, orderedAt: "2026-04-21" },
-  { id: "ORD-2026-01088", customer: "小林修", status: "出荷待ち", amount: 3280, orderedAt: "2026-04-20" },
-];
-
-const STATUSES: (Status | "すべて")[] = ["すべて", "確認待ち", "引当済", "出荷待ち"];
+const STATUSES: (BulkCompleteOrderStatus | "すべて")[] = ["すべて", "確認待ち", "引当済", "出荷待ち"];
 
 export default function BulkCompletePage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(initial);
+
+  // domain "bulk-complete-orders" の正規オーナー。ここで snapshot/restore を1回だけ駆動。
+  usePersistentStore({
+    store: bulkCompleteOrderStore,
+    domain: "bulk-complete-orders",
+    seed: INITIAL_BULK_COMPLETE_ORDERS,
+  });
+
+  const stored = useSyncExternalStore(
+    (cb) => bulkCompleteOrderStore.subscribe(cb),
+    () => bulkCompleteOrderStore.getState(),
+    () => INITIAL_BULK_COMPLETE_ORDERS,
+  );
+
+  // 完了済はこの一覧から除外（store には残る）。完了後リロードしても再表示されない。
+  const rows = useMemo(
+    () => stored.filter((r) => r.status !== "完了済"),
+    [stored],
+  );
+
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<Status | "すべて">("すべて");
+  const [statusFilter, setStatusFilter] = useState<BulkCompleteOrderStatus | "すべて">("すべて");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [progress, setProgress] = useState<{ total: number; done: number } | null>(null);
@@ -40,7 +53,7 @@ export default function BulkCompletePage() {
   const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
   const selectedTotal = useMemo(
     () => rows.filter((r) => selected.has(r.id)).reduce((s, r) => s + r.amount, 0),
-    [rows, selected]
+    [rows, selected],
   );
 
   function toggle(id: string) {
@@ -71,7 +84,13 @@ export default function BulkCompletePage() {
       if (i >= ids.length) {
         clearInterval(interval);
         setTimeout(() => {
-          setRows((prev) => prev.filter((r) => !ids.includes(r.id)));
+          // state-machine 経由でストアへ永続化（直接 status を書かない）。
+          for (const id of ids) {
+            const record = bulkCompleteOrderStore.findById(id);
+            if (record) {
+              bulkCompleteOrderStore.upsert(transitionBulkCompleteOrder(record, "complete"));
+            }
+          }
           setSelected(new Set());
           setProgress(null);
           toast.show(`${ids.length} 件を完了済に変更しました`);
