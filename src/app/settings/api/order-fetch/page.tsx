@@ -10,6 +10,11 @@ import {
   INITIAL_ORDER_FETCH_SETTINGS,
   DEFAULT_ORDER_FETCH_SETTINGS,
 } from "@/lib/stores/order-fetch-settings-store";
+import {
+  orderFetchChannelStore,
+  type OrderFetchChannelRecord,
+} from "@/lib/stores/order-fetch-channels";
+import { INITIAL_ORDER_FETCH_CHANNELS } from "@/lib/seeds/order-fetch-channels";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Loader2, Pause, Play, RefreshCw, Save, Search, Settings, X } from "lucide-react";
 
@@ -19,28 +24,7 @@ const nowStamp = (): string => {
   return `2026/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-type Channel = {
-  id: string;
-  name: string;
-  endpoint: string;
-  schedule: string;
-  lastRun: string;
-  lastCount: number;
-  total24h: number;
-  errorCount: number;
-  status: "ok" | "warning" | "error" | "disabled";
-  shop: string;
-  authExpires: string;
-};
-
-const initial: Channel[] = [
-  { id: "rakuten", name: "楽天市場 受注取得API", endpoint: "/api/rakuten/orders", schedule: "15分間隔", lastRun: "2026/04/30 10:30", lastCount: 12, total24h: 245, errorCount: 0, status: "ok", shop: "楽天店", authExpires: "2026/12/31" },
-  { id: "yahoo", name: "Yahoo!ショッピング 受注取得API", endpoint: "/api/yahoo/orders", schedule: "15分間隔", lastRun: "2026/04/30 10:30", lastCount: 5, total24h: 88, errorCount: 0, status: "ok", shop: "Yahoo!店", authExpires: "2026/10/15" },
-  { id: "amazon", name: "Amazon 受注取得API", endpoint: "/api/amazon/orders", schedule: "30分間隔", lastRun: "2026/04/30 10:15", lastCount: 8, total24h: 124, errorCount: 1, status: "warning", shop: "Amazon店", authExpires: "2026/06/30" },
-  { id: "shopify", name: "Shopify 自社EC 受注取得", endpoint: "/api/shopify/orders", schedule: "Webhookリアルタイム", lastRun: "2026/04/30 10:42", lastCount: 1, total24h: 980, errorCount: 0, status: "ok", shop: "本店", authExpires: "—" },
-  { id: "aupay", name: "au PAY マーケット 受注取得API", endpoint: "/api/aupay/orders", schedule: "30分間隔", lastRun: "—", lastCount: 0, total24h: 0, errorCount: 0, status: "disabled", shop: "au PAY マーケット店", authExpires: "—" },
-  { id: "qoo10", name: "Qoo10 受注取得API", endpoint: "/api/qoo10/orders", schedule: "60分間隔", lastRun: "2026/04/29 23:00", lastCount: 0, total24h: 12, errorCount: 4, status: "error", shop: "Qoo10店", authExpires: "2026/05/15" },
-];
+type Channel = OrderFetchChannelRecord;
 
 const sb: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-700",
@@ -52,7 +36,15 @@ const sbLabel: Record<string, string> = { ok: "正常", warning: "警告", error
 
 export default function OrderFetchApiPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // チャネル一覧（domain: "order-fetch-channels"）の永続化オーナー。
+  usePersistentStore({ store: orderFetchChannelStore, domain: "order-fetch-channels", seed: INITIAL_ORDER_FETCH_CHANNELS });
+  const items = useSyncExternalStore(
+    (cb) => orderFetchChannelStore.subscribe(cb),
+    () => orderFetchChannelStore.getState(),
+    () => INITIAL_ORDER_FETCH_CHANNELS,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Channel["status"]>("all");
 
@@ -83,8 +75,11 @@ export default function OrderFetchApiPage() {
     });
   }, [items, keyword, statusFilter]);
 
-  const toggle = (id: string) =>
-    setItems((prev) => prev.map((c) => (c.id === id ? { ...c, status: c.status === "disabled" ? "ok" : "disabled" } : c)));
+  const toggle = (id: string) => {
+    const c = orderFetchChannelStore.findById(id);
+    if (!c) return;
+    orderFetchChannelStore.upsert({ ...c, status: c.status === "disabled" ? "ok" : "disabled" });
+  };
 
   const [running, setRunning] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -95,8 +90,8 @@ export default function OrderFetchApiPage() {
     setRunning(true);
     setTimeout(() => {
       const stamp = nowStamp();
-      setItems((prev) =>
-        prev.map((c) => (c.status === "disabled" ? c : { ...c, lastRun: stamp })),
+      orderFetchChannelStore.setItems(
+        orderFetchChannelStore.getState().map((c) => (c.status === "disabled" ? c : { ...c, lastRun: stamp })),
       );
       setRunning(false);
       toast.show("全チャネルの受注取得を実行しました", "success");
@@ -105,9 +100,9 @@ export default function OrderFetchApiPage() {
 
   const runChannel = (id: string) => {
     const stamp = nowStamp();
-    setItems((prev) => prev.map((c) => (c.id === id ? { ...c, lastRun: stamp } : c)));
-    const target = items.find((c) => c.id === id);
-    toast.show(`${target?.name ?? "チャネル"} を手動実行しました`, "success");
+    const c = orderFetchChannelStore.findById(id);
+    if (c) orderFetchChannelStore.upsert({ ...c, lastRun: stamp });
+    toast.show(`${c?.name ?? "チャネル"} を手動実行しました`, "success");
   };
 
   // 共通設定は入力時に即 store へ反映され usePersistentStore が自動 snapshot するため、
