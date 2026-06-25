@@ -52,6 +52,7 @@ export type SnapshotDomain =
   | "order-fetch-settings"
   | "order-fetch-channels"
   | "bulk-complete-orders"
+  | "allocation-auto-jobs"
   | "payment-fees"
   | "shipment-availability"
   | "field-conversion-settings"

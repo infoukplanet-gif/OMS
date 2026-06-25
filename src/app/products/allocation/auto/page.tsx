@@ -20,6 +20,9 @@ import {
 } from "@/lib/inventory/auto-reallocate-settings";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
+import { allocationAutoJobStore } from "@/lib/stores/allocation-auto-jobs";
+import { INITIAL_ALLOCATION_AUTO_JOBS } from "@/lib/seeds/allocation-auto-jobs";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 type RunLogEntry = { id: number; at: string; job: string; success: number; partial: number; failed: number };
@@ -30,25 +33,6 @@ function nowStamp(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-type Job = {
-  id: string;
-  name: string;
-  schedule: string;
-  target: string;
-  enabled: boolean;
-  lastRun: string;
-  result: "成功" | "失敗" | "—";
-  count: number;
-};
-
-const INITIAL_JOBS: Job[] = [
-  { id: "J-01", name: "朝次自動引当", schedule: "毎日 09:00", target: "新規受付・入金済み", enabled: true, lastRun: "2026-04-25 09:00", result: "成功", count: 142 },
-  { id: "J-02", name: "昼次自動引当", schedule: "毎日 13:00", target: "新規受付・入金済み", enabled: true, lastRun: "2026-04-25 13:00", result: "成功", count: 58 },
-  { id: "J-03", name: "夕次自動引当", schedule: "毎日 17:00", target: "新規受付・入金済み", enabled: true, lastRun: "2026-04-24 17:00", result: "成功", count: 73 },
-  { id: "J-04", name: "緊急引当（予約商品）", schedule: "発売日 00:00", target: "予約商品全件", enabled: false, lastRun: "—", result: "—", count: 0 },
-  { id: "J-05", name: "卸先優先引当", schedule: "毎日 08:30", target: "卸先受注のみ", enabled: true, lastRun: "2026-04-25 08:30", result: "成功", count: 28 },
-];
-
 const RECENT_LOG: RunLogEntry[] = [
   { id: 1, at: "2026-04-25 13:00", job: "昼次自動引当", success: 58, partial: 0, failed: 0 },
   { id: 2, at: "2026-04-25 09:00", job: "朝次自動引当", success: 140, partial: 2, failed: 0 },
@@ -58,7 +42,15 @@ const RECENT_LOG: RunLogEntry[] = [
 
 export default function AllocationAutoPage() {
   const toast = useToast();
-  const [jobs, setJobs] = useState<Job[]>(INITIAL_JOBS);
+
+  // スケジュールジョブ — 共有ストア経由で永続化（domain: "allocation-auto-jobs"）
+  usePersistentStore({ store: allocationAutoJobStore, domain: "allocation-auto-jobs", seed: INITIAL_ALLOCATION_AUTO_JOBS });
+  const jobs = useSyncExternalStore(
+    (cb) => allocationAutoJobStore.subscribe(cb),
+    () => allocationAutoJobStore.getState(),
+    () => INITIAL_ALLOCATION_AUTO_JOBS,
+  );
+
   // 引当ルール（実 config と双方向。保存で setAllocationRules 反映）
   const initialRules = getAllocationRules();
   const [orderBy, setOrderBy] = useState<OrderByRule>(initialRules.orderBy);
@@ -113,8 +105,10 @@ export default function AllocationAutoPage() {
     };
   }, [orders]);
 
-  const toggleJob = (id: string) =>
-    setJobs(jobs.map((j) => (j.id === id ? { ...j, enabled: !j.enabled } : j)));
+  const toggleJob = (id: string) => {
+    const j = allocationAutoJobStore.findById(id);
+    if (j) allocationAutoJobStore.upsert({ ...j, enabled: !j.enabled });
+  };
 
   /**
    * 引当待ち受注を一括引当する。成功は印刷待ちへ進み、在庫不足は欠品マーク。
