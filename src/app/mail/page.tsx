@@ -12,6 +12,11 @@ import { MAIL_SEEDS } from "@/lib/seeds/mail";
 import { syncMailQueueIntoStore } from "@/lib/mail/log-bridge";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
+  mailTemplatesStore,
+  INITIAL_MAIL_TEMPLATES,
+  type MailTemplateRecord,
+} from "@/lib/stores/mail-templates-store";
+import {
   AlertCircle,
   CheckCircle2,
   Clock,
@@ -32,28 +37,8 @@ import {
 
 type TabValue = "pending" | "history" | "templates";
 
-type TemplateItem = {
-  name: string;
-  type: string;
-  trigger: string;
-  updated: string;
-  uses: number;
-  subject: string;
-  body: string;
-};
-
-// ---------- 初期データ（テンプレートのみページローカル） ----------
-
-const INITIAL_TEMPLATES: TemplateItem[] = [
-  { name: "サンクスメール（自動）", type: "自動送信", trigger: "受注確認", updated: "2026/04/01", uses: 1245, subject: "【ご注文ありがとうございます】ORD-XXXX", body: "{{customer_name}} 様\n\nご注文いただきありがとうございます。\nご注文番号：{{order_id}}\n\n発送準備が整い次第ご連絡いたします。" },
-  { name: "出荷通知メール（自動）", type: "自動送信", trigger: "出荷完了", updated: "2026/03/28", uses: 980, subject: "【出荷のお知らせ】{{order_id}}", body: "{{customer_name}} 様\n\nご注文の商品を発送いたしました。\n配送業者：{{shipping_carrier}}\nお問い合わせ番号：{{tracking_number}}\n到着予定：{{delivery_date}}" },
-  { name: "入金確認メール（自動）", type: "自動送信", trigger: "入金待ち3日", updated: "2026/03/25", uses: 312, subject: "【お支払いのお願い】{{order_id}}", body: "{{customer_name}} 様\n\n{{order_id}} のご入金がまだ確認できておりません。\nお支払期限：{{payment_deadline}}\n\nご対応をお願いいたします。" },
-  { name: "発送遅延のお詫び", type: "手動", trigger: "—", updated: "2026/03/20", uses: 45, subject: "【お詫び】発送遅延のご連絡（{{order_id}}）", body: "{{customer_name}} 様\n\nご注文 {{order_id}} につきまして発送が遅延しております。\n大変申し訳ございません。\n発送見込み日：{{ship_eta}}" },
-  { name: "再発送のお知らせ", type: "手動", trigger: "—", updated: "2026/03/15", uses: 32, subject: "【再発送】商品再発送のお知らせ（{{order_id}}）", body: "{{customer_name}} 様\n\n{{order_id}} の商品を再発送いたしました。\n配送業者：{{shipping_carrier}}\n到着予定：{{delivery_date}}" },
-  { name: "フォローアップメール", type: "自動送信", trigger: "発送後3日", updated: "2026/03/10", uses: 580, subject: "商品はお手元に届きましたか？（{{order_id}}）", body: "{{customer_name}} 様\n\n商品はお手元に届きましたでしょうか。\n万が一、未着・破損などございましたらご連絡ください。" },
-  { name: "在庫切れご連絡", type: "手動", trigger: "—", updated: "2026/03/05", uses: 18, subject: "【ご連絡】在庫切れのお知らせ（{{order_id}}）", body: "{{customer_name}} 様\n\nご注文いただきました商品が在庫切れとなりました。\nご対応の選択肢をご案内いたします。" },
-  { name: "返品受付のお知らせ", type: "手動", trigger: "—", updated: "2026/02/28", uses: 24, subject: "【受付】返品受付完了のお知らせ（{{order_id}}）", body: "{{customer_name}} 様\n\n返品の受付を承りました。\n返送先：{{return_address}}\n\nご対応よろしくお願いいたします。" },
-];
+// テンプレートのレコード型は共有ストア（mailTemplatesStore）の型を流用する。
+type TemplateItem = MailTemplateRecord;
 
 // ---------- 定数 ----------
 
@@ -278,8 +263,18 @@ export default function MailPage() {
   // 永続化（domain "mails" の正規オーナーページはここのみ）
   usePersistentStore({ store: mailStore, domain: "mails", seed: MAIL_SEEDS });
 
+  // テンプレート一覧の永続化（domain "mail-templates" の正規オーナーページはここのみ）
+  usePersistentStore({ store: mailTemplatesStore, domain: "mail-templates", seed: INITIAL_MAIL_TEMPLATES });
+
   // 共有ストア購読（mail/pending・mail/history と同一データ）
   const mails = useSyncExternalStore(mailStore.subscribe, mailStore.getState, mailStore.getState);
+
+  // テンプレート共有ストア購読
+  const templateItems = useSyncExternalStore(
+    mailTemplatesStore.subscribe,
+    mailTemplatesStore.getState,
+    mailTemplatesStore.getState,
+  );
 
   // セッション内の自動キュー（cascade enqueue 分）を冪等同期。
   // restore/seed の setItems 後にも再実行されるよう mails を依存に持つ（register が id 重複を弾くので収束する）。
@@ -292,9 +287,6 @@ export default function MailPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-
-  // テンプレートデータ（ページ内可変・ストア対象外）
-  const [templateItems, setTemplateItems] = useState<TemplateItem[]>(INITIAL_TEMPLATES);
 
   // チェックボックス選択
   const [selectedPending, setSelectedPending] = useState<Set<string>>(new Set());
@@ -441,12 +433,12 @@ export default function MailPage() {
     toast.show("送信履歴をCSVで書き出しました", "success");
   }, [filteredHistory, toast]);
 
-  // テンプレート保存
+  // テンプレート保存（共有ストアへ id キーで永続化）
   const handleTemplateSave = useCallback((updated: TemplateItem) => {
-    setTemplateItems((prev) => prev.map((t) => t.name === editTemplate?.name ? updated : t));
+    mailTemplatesStore.upsert(updated);
     setEditTemplate(null);
     toast.show(`${updated.name} を保存しました`, "success");
-  }, [editTemplate, toast]);
+  }, [toast]);
 
   return (
     <div className="space-y-5">
@@ -737,7 +729,7 @@ export default function MailPage() {
       {tab === "templates" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {templateItems.map((t) => (
-            <GlassCard key={t.name} className="hover:shadow-[0_12px_40px_rgba(0,0,0,0.08)] transition-shadow">
+            <GlassCard key={t.id} className="hover:shadow-[0_12px_40px_rgba(0,0,0,0.08)] transition-shadow">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-start gap-2">
                   <div className="p-2 rounded-xl bg-blue-500/10">
