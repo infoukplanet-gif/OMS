@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
-import { orderStore } from "@/lib/stores/orders";
-import { ChevronDown, Printer, MoreHorizontal, Package, MapPin, CreditCard, StickyNote, Check, Copy, X, Trash2, Download, Mail } from "lucide-react";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
+import {
+  transitionOrder,
+  orderStatusBadge,
+  type OrderStatus,
+  type OrderAction,
+} from "@/lib/state-machines/order";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { mailQueue } from "@/lib/mail/queue";
+import { ChevronDown, Printer, MoreHorizontal, Package, MapPin, CreditCard, StickyNote, Copy, X, Trash2, Download, Mail } from "lucide-react";
 
 const orderItems = [
   { name: "ワイヤレスイヤホン Pro", sku: "WEP-001", price: "¥12,800", qty: 2, subtotal: "¥25,600" },
@@ -13,31 +21,36 @@ const orderItems = [
   { name: "保護フィルム セット", sku: "PFS-005", price: "¥1,580", qty: 1, subtotal: "¥1,580" },
 ];
 
-type StatusKey = "新規受付" | "確認待ち" | "引当待ち" | "入金待ち" | "印刷待ち" | "出荷待ち" | "出荷済み" | "キャンセル";
+type TimelineEntry = { status: OrderStatus; date: string; by: string };
 
-const STATUSES: StatusKey[] = [
-  "新規受付", "確認待ち", "引当待ち", "入金待ち", "印刷待ち", "出荷待ち", "出荷済み", "キャンセル",
+// 状態を変えるアクションのみ（markInventoryShortage / retryAllocation はバッジ操作なので除外）
+const STATUS_ACTIONS: OrderAction[] = [
+  "validate",
+  "holdForReleaseDate",
+  "releaseFromHold",
+  "requestPayment",
+  "confirmPayment",
+  "allocateInventory",
+  "markPrinted",
+  "registerShipment",
+  "revertToPaymentWait",
+  "cancel",
 ];
 
-const statusBadge: Record<StatusKey, string> = {
-  新規受付: "bg-blue-500/15 text-blue-700",
-  確認待ち: "bg-amber-500/15 text-amber-700",
-  引当待ち: "bg-purple-500/15 text-purple-700",
-  入金待ち: "bg-rose-500/15 text-rose-700",
-  印刷待ち: "bg-cyan-500/15 text-cyan-700",
-  出荷待ち: "bg-orange-500/15 text-orange-700",
-  出荷済み: "bg-emerald-500/15 text-emerald-700",
-  キャンセル: "bg-gray-500/15 text-gray-600",
+const ACTION_LABELS: Record<OrderAction, string> = {
+  validate: "確認待ちにする",
+  holdForReleaseDate: "発売日時待ちにする",
+  releaseFromHold: "確認待ちに戻す",
+  requestPayment: "入金待ちにする",
+  confirmPayment: "入金確認 → 引当待ち",
+  allocateInventory: "引当完了 → 印刷待ち",
+  markInventoryShortage: "在庫不足にする",
+  retryAllocation: "引当を再試行",
+  markPrinted: "印刷完了 → 印刷済み",
+  registerShipment: "出荷登録 → 出荷済み",
+  revertToPaymentWait: "入金待ちに戻す",
+  cancel: "受注をキャンセル",
 };
-
-type TimelineEntry = { status: StatusKey; date: string; by: string };
-
-const initialTimeline: TimelineEntry[] = [
-  { status: "新規受付", date: "2024/04/10 09:12", by: "システム" },
-  { status: "確認待ち", date: "2024/04/10 09:30", by: "田中" },
-  { status: "引当待ち", date: "2024/04/10 09:31", by: "自動" },
-  { status: "出荷待ち", date: "2024/04/10 10:00", by: "システム" },
-];
 
 function formatNow() {
   const d = new Date();
@@ -45,29 +58,62 @@ function formatNow() {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-// /orders/details はデモ用の固定URLページ。orderStore の先頭 ID をメモ保存の対象に使う。
+// /orders/details はデモ用の固定URLページ。orderStore の先頭 ID を操作対象に使う。
 const DEMO_ORDER_ID = "ORD-2026-08851";
 
 export default function OrderDetailPage() {
   const toast = useToast();
-  const [currentStatus, setCurrentStatus] = useState<StatusKey>("出荷待ち");
-  const [timeline, setTimeline] = useState<TimelineEntry[]>(initialTimeline);
   const [statusOpen, setStatusOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
-  // orderStore から既存メモを初期値として取得（存在すれば）
+  // ステータス・履歴は共有 orderStore から購読し、画面横断で一致させる。
+  // （ローカル useState では他ページや再訪で消える＝偽装保存になるため）
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS as readonly OrderRecord[],
+  );
+  const order = orders.find((o) => o.id === DEMO_ORDER_ID);
+  const currentStatus: OrderStatus = (order?.status as OrderStatus) ?? "新規受付";
+
+  const timeline: TimelineEntry[] = Array.isArray(order?.statusHistory)
+    ? (order!.statusHistory as TimelineEntry[])
+    : order
+      ? [
+          {
+            status: order.status,
+            date: typeof order.date === "string" ? order.date : "—",
+            by: "システム",
+          },
+        ]
+      : [];
+
+  // SM のガードを単一の真実として、現状態から実行可能な遷移だけを出す。
+  const availableActions = order
+    ? STATUS_ACTIONS.filter(
+        (a) => transitionOrder({ status: currentStatus }, a).status !== currentStatus,
+      )
+    : [];
+
+  // 既存メモ・追跡番号は orderStore に永続化済み（存在すれば初期表示）
   const [memo, setMemo] = useState<string>(() => {
     const o = orderStore.getState().find((x) => x.id === DEMO_ORDER_ID);
     return typeof o?.memo === "string" ? o.memo : "";
   });
-
-  // 追跡番号も orderStore に永続化（既存値があれば初期表示）
   const [trackingNumber, setTrackingNumber] = useState<string>(() => {
     const o = orderStore.getState().find((x) => x.id === DEMO_ORDER_ID);
     return typeof o?.trackingNumber === "string" ? o.trackingNumber : "";
   });
+
+  // このページに直接アクセスされた場合（orders/page 未訪問）に空ストアを防御的にシードする。
+  // 永続オーナー（usePersistentStore）は orders/page 側。ここは in-memory シードのみ。
+  useEffect(() => {
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(INITIAL_ORDERS);
+    }
+  }, []);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -89,15 +135,33 @@ export default function OrderDetailPage() {
     toast.show(trimmed ? `追跡番号「${trimmed}」を保存しました` : "追跡番号をクリアしました", "success");
   }
 
-  function handleStatusChange(next: StatusKey) {
-    if (next === currentStatus) {
-      setStatusOpen(false);
+  // ステータス遷移は SM 経由（applyTransition）でのみ更新し、共有ストアに永続化する。
+  // applyTransition が返す cross-domain effects（出荷生成・在庫引当・返金等）は、
+  // 「ページから他ドメインの state を直接触らない」規約に従い、ここでは意図的に dispatch しない。
+  // 連鎖オーケストレーションは orders/page（owner）の責務。
+  function changeStatus(action: OrderAction) {
+    setStatusOpen(false);
+    setMoreOpen(false);
+    const result = orderStore.applyTransition(DEMO_ORDER_ID, action);
+    if (!result.applied || !result.after) {
+      toast.show("この操作は現在のステータスでは実行できません", "info");
       return;
     }
-    setCurrentStatus(next);
-    setTimeline((prev) => [...prev, { status: next, date: formatNow(), by: "田中" }]);
-    setStatusOpen(false);
-    toast.show(`ステータスを「${next}」に変更しました`, "success");
+    const prevHistory = Array.isArray(result.before?.statusHistory)
+      ? (result.before!.statusHistory as TimelineEntry[])
+      : [
+          {
+            status: (result.before?.status as OrderStatus) ?? "新規受付",
+            date: typeof result.before?.date === "string" ? result.before.date : "—",
+            by: "システム",
+          },
+        ];
+    const nextHistory: TimelineEntry[] = [
+      ...prevHistory,
+      { status: result.after.status, date: formatNow(), by: "担当者" },
+    ];
+    orderStore.patch(DEMO_ORDER_ID, { statusHistory: nextHistory });
+    toast.show(`ステータスを「${result.after.status}」に変更しました`, "success");
   }
 
   function handlePrint() {
@@ -105,9 +169,97 @@ export default function OrderDetailPage() {
     setTimeout(() => window.print(), 200);
   }
 
-  function handleMore(action: string) {
+  // 伝票を複製：共有ストアに新規受注として実際に追加する（own domain）。
+  function duplicateOrder() {
     setMoreOpen(false);
-    toast.show(`${action} を実行しました`, "success");
+    const items = orderStore.getState();
+    const source = items.find((o) => o.id === DEMO_ORDER_ID);
+    if (!source) {
+      toast.show("複製元の受注が見つかりません", "error");
+      return;
+    }
+    let copyId = `${DEMO_ORDER_ID}-COPY`;
+    let n = 2;
+    while (items.some((o) => o.id === copyId)) {
+      copyId = `${DEMO_ORDER_ID}-COPY${n}`;
+      n += 1;
+    }
+    const duplicate: OrderRecord = {
+      ...source,
+      id: copyId,
+      status: "新規受付",
+      inventoryShortage: undefined,
+      releaseAt: undefined,
+      statusHistory: undefined,
+    };
+    orderStore.setItems([duplicate, ...items]);
+    toast.show(`伝票を複製しました（${copyId}）`, "success");
+  }
+
+  // 納品書ダウンロード：実際にテキストファイルを生成してダウンロードする（ブラウザのみ）。
+  function downloadDeliveryNote() {
+    setMoreOpen(false);
+    const lines = [
+      "納品書",
+      `受注番号: ${DEMO_ORDER_ID}`,
+      `ステータス: ${currentStatus}`,
+      "",
+      ["商品名", "SKU", "単価", "数量", "小計"].join("\t"),
+      ...orderItems.map((i) => [i.name, i.sku, i.price, String(i.qty), i.subtotal].join("\t")),
+      "",
+      ["合計", "", "", "", "¥35,002"].join("\t"),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `納品書_${DEMO_ORDER_ID}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.show("納品書をダウンロードしました", "success");
+  }
+
+  // 確認メール再送：mail ドメインの公開IF（mailQueue）に実際に enqueue する。
+  function resendConfirmationMail() {
+    setMoreOpen(false);
+    const result = mailQueue.enqueueAll([
+      { orderId: DEMO_ORDER_ID, triggerType: "thanks", dedupeKey: `${DEMO_ORDER_ID}:thanks` },
+    ]);
+    if (result.enqueued > 0) {
+      toast.show("確認メールを送信キューに追加しました", "success");
+    } else if (result.duplicateSkipped > 0) {
+      toast.show("確認メールは既に送信キューに存在します", "info");
+    } else {
+      toast.show("確認メールの自動送信が無効のため送信されませんでした", "info");
+    }
+  }
+
+  // 受注を削除：共有ストアから実際に除去する（own domain）。
+  function deleteOrder() {
+    setMoreOpen(false);
+    const items = orderStore.getState();
+    if (!items.some((o) => o.id === DEMO_ORDER_ID)) {
+      toast.show("受注が見つかりません", "error");
+      return;
+    }
+    orderStore.setItems(items.filter((o) => o.id !== DEMO_ORDER_ID));
+    toast.show("受注を削除しました", "success");
+  }
+
+  if (!order) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <p className="text-xs text-gray-500 mb-1">ダッシュボード &gt; 受注一覧 &gt; 受注詳細</p>
+          <h1 className="text-2xl font-bold text-gray-800">#{DEMO_ORDER_ID}</h1>
+        </div>
+        <GlassCard>
+          <p className="text-sm text-gray-600">この受注は存在しません（削除済み、または未取得です）。</p>
+        </GlassCard>
+      </div>
+    );
   }
 
   return (
@@ -117,8 +269,8 @@ export default function OrderDetailPage() {
         <p className="text-xs text-gray-500 mb-1">ダッシュボード &gt; 受注一覧 &gt; 受注詳細</p>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-800">#ORD-2024-00847</h1>
-            <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium transition-colors", statusBadge[currentStatus])}>
+            <h1 className="text-2xl font-bold text-gray-800">#{DEMO_ORDER_ID}</h1>
+            <span className={cn("px-2.5 py-1 rounded-full text-xs font-medium transition-colors", orderStatusBadge[currentStatus])}>
               {currentStatus}
             </span>
           </div>
@@ -132,21 +284,21 @@ export default function OrderDetailPage() {
                 ステータス変更 <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", statusOpen && "rotate-180")} />
               </button>
               {statusOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12)] overflow-hidden z-20">
-                  {STATUSES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => handleStatusChange(s)}
-                      className={cn(
-                        "w-full flex items-center justify-between px-3 py-2 text-sm text-left hover:bg-white/60 transition-colors",
-                        s === currentStatus && "bg-blue-500/10"
-                      )}
-                    >
-                      <span className="text-gray-800">{s}</span>
-                      {s === currentStatus && <Check className="h-3.5 w-3.5 text-blue-600" />}
-                    </button>
-                  ))}
+                <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12)] overflow-hidden z-20">
+                  {availableActions.length === 0 ? (
+                    <p className="px-3 py-2.5 text-sm text-gray-500">変更可能な遷移はありません</p>
+                  ) : (
+                    availableActions.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => changeStatus(a)}
+                        className="w-full flex items-center px-3 py-2 text-sm text-left text-gray-800 hover:bg-white/60 transition-colors"
+                      >
+                        {ACTION_LABELS[a]}
+                      </button>
+                    ))
+                  )}
                 </div>
               )}
             </div>
@@ -171,12 +323,12 @@ export default function OrderDetailPage() {
               </button>
               {moreOpen && (
                 <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white/80 backdrop-blur-2xl border border-white/60 shadow-[0_8px_32px_rgba(0,0,0,0.12)] overflow-hidden z-20">
-                  <MenuItem icon={<Copy className="h-4 w-4" />} label="伝票を複製" onClick={() => handleMore("伝票を複製")} />
-                  <MenuItem icon={<Download className="h-4 w-4" />} label="納品書ダウンロード" onClick={() => handleMore("納品書ダウンロード")} />
-                  <MenuItem icon={<Mail className="h-4 w-4" />} label="確認メール再送" onClick={() => handleMore("確認メール再送")} />
-                  <MenuItem icon={<X className="h-4 w-4" />} label="受注をキャンセル" onClick={() => { handleStatusChange("キャンセル"); }} />
+                  <MenuItem icon={<Copy className="h-4 w-4" />} label="伝票を複製" onClick={duplicateOrder} />
+                  <MenuItem icon={<Download className="h-4 w-4" />} label="納品書ダウンロード" onClick={downloadDeliveryNote} />
+                  <MenuItem icon={<Mail className="h-4 w-4" />} label="確認メール再送" onClick={resendConfirmationMail} />
+                  <MenuItem icon={<X className="h-4 w-4" />} label="受注をキャンセル" onClick={() => changeStatus("cancel")} />
                   <div className="border-t border-white/40" />
-                  <MenuItem icon={<Trash2 className="h-4 w-4" />} label="受注を削除" danger onClick={() => handleMore("受注を削除")} />
+                  <MenuItem icon={<Trash2 className="h-4 w-4" />} label="受注を削除" danger onClick={deleteOrder} />
                 </div>
               )}
             </div>
