@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
@@ -18,7 +18,21 @@ import {
   paymentStatusBadge,
   type PaymentState,
 } from "@/lib/state-machines/payment";
+import { applyRecordPaymentCascade } from "@/lib/cascades/record-payment";
+import { paymentStore, type PaymentRecord } from "@/lib/stores/payment";
+import { orderStore } from "@/lib/stores/orders";
+import { inventoryStore } from "@/lib/stores/inventory";
+import { shipmentStore } from "@/lib/stores/shipment";
+import { mailQueue } from "@/lib/mail/queue";
+import { getAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
+import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 
+// 共有 paymentStore のレコードに表示用フィールドが乗ることを許容する型。
+type RegisterPayment = PaymentRecord & { customer?: string; method?: string };
+
+// 入金登録の操作履歴（このセッションでの登録アクティビティ。状態の真実は paymentStore 側）。
 type LogEntry = {
   id: string;
   orderId: string;
@@ -33,19 +47,11 @@ type LogEntry = {
   overpaid: boolean;
 };
 
-const SEED_PAYMENTS: ReadonlyArray<[string, PaymentState & { customer: string }]> = [
-  ["ORD-2026-00849", { status: "未入金", orderTotal: 154000, paidAmount: 0, overpaid: false, customer: "田中一郎" }],
-  ["ORD-2026-00838", { status: "一部入金", orderTotal: 28500, paidAmount: 25000, overpaid: false, customer: "井上智" }],
-  ["ORD-2026-00835", { status: "未入金", orderTotal: 45000, paidAmount: 0, overpaid: false, customer: "木下真由" }],
-  ["ORD-2026-00830", { status: "未入金", orderTotal: 18200, paidAmount: 0, overpaid: false, customer: "山田太郎" }],
-  ["ORD-2026-00824", { status: "未入金", orderTotal: 38400, paidAmount: 0, overpaid: false, customer: "佐藤花子" }],
-];
-
 const SEED_LOG: LogEntry[] = [
   {
     id: "PR-2026-0182",
-    orderId: "ORD-2026-00820",
-    customer: "中村あかり",
+    orderId: "ORD-2026-08820",
+    customer: "中村 あかり",
     amount: 12800,
     paidAt: "2026-04-24 16:18",
     method: "クレカ",
@@ -56,22 +62,9 @@ const SEED_LOG: LogEntry[] = [
     overpaid: false,
   },
   {
-    id: "PR-2026-0180",
-    orderId: "ORD-2026-00800",
-    customer: "高橋健",
-    amount: 8400,
-    paidAt: "2026-04-23 09:00",
-    method: "代引",
-    bank: "ヤマト集金",
-    by: "システム",
-    beforeStatus: "未入金",
-    afterStatus: "入金済み",
-    overpaid: false,
-  },
-  {
     id: "PR-2026-0181",
-    orderId: "ORD-2026-00811",
-    customer: "井上智",
+    orderId: "ORD-2026-08811",
+    customer: "井上 智",
     amount: 25000,
     paidAt: "2026-04-24 14:08",
     method: "銀行振込",
@@ -89,11 +82,31 @@ const pad2 = (n: number) => String(n).padStart(2, "0");
 const formatDateTime = (d: Date) =>
   `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 
+const toState = (p: PaymentRecord): PaymentState => ({
+  status: p.status,
+  orderTotal: p.orderTotal,
+  paidAmount: p.paidAmount,
+  overpaid: p.overpaid,
+});
+
 export default function PaymentRegisterPage() {
   const toast = useToast();
-  const [payments, setPayments] = useState<Map<string, PaymentState & { customer: string }>>(
-    () => new Map(SEED_PAYMENTS.map(([k, v]) => [k, { ...v }])),
-  );
+
+  // 共有ストアを seed（入金確認で受注確定→出荷生成→在庫引当まで連鎖させるため
+  // payment / order / inventory を揃える）。shipment は cascade 内で生成される。
+  // 永続化の所有は payments/page（usePersistentStore）に一任し、ここでは持たない。
+  useEffect(() => {
+    if (paymentStore.getState().length === 0) paymentStore.setItems(INITIAL_PAYMENTS);
+    if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
+    if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+  }, []);
+
+  const payments = useSyncExternalStore(
+    (cb) => paymentStore.subscribe(cb),
+    () => paymentStore.getState(),
+    () => INITIAL_PAYMENTS,
+  ) as ReadonlyArray<RegisterPayment>;
+
   const [log, setLog] = useState<LogEntry[]>(SEED_LOG);
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState<"すべて" | (typeof PAYMENT_METHODS)[number]>("すべて");
@@ -117,23 +130,25 @@ export default function PaymentRegisterPage() {
     return {
       total,
       todayCount: log.filter((r) => r.paidAt.startsWith(formatDateTime(new Date()).slice(0, 10))).length,
-      overpaidCount: log.filter((r) => r.overpaid).length,
+      overpaidCount: payments.filter((p) => p.overpaid).length,
       logCount: log.length,
     };
-  }, [log]);
+  }, [log, payments]);
 
-  const candidatePayment = formOrderId ? payments.get(formOrderId.trim()) : undefined;
+  const candidatePayment = formOrderId
+    ? payments.find((p) => p.orderId === formOrderId.trim())
+    : undefined;
   const previewAmount = Number.parseInt(formAmount, 10);
   const previewValid = candidatePayment !== undefined && Number.isFinite(previewAmount) && previewAmount > 0;
-  const previewAfter = previewValid && candidatePayment ? recordPayment(candidatePayment, previewAmount) : null;
+  const previewAfter = previewValid && candidatePayment ? recordPayment(toState(candidatePayment), previewAmount) : null;
 
   const submit = () => {
     if (formOrderId.trim() === "") {
       toast.show("受注番号を入力してください", "error");
       return;
     }
-    const current = payments.get(formOrderId.trim());
-    if (current === undefined) {
+    const before = payments.find((p) => p.orderId === formOrderId.trim());
+    if (before === undefined) {
       toast.show("該当する受注が見つかりません", "error");
       return;
     }
@@ -141,33 +156,50 @@ export default function PaymentRegisterPage() {
       toast.show("入金額は1円以上の正の整数を入力してください", "error");
       return;
     }
-    const next = recordPayment(current, previewAmount);
-    if (next === current) {
-      toast.show("入金登録に失敗しました", "error");
+
+    // 共有 paymentStore へ実反映。完済到達時は受注確定→出荷指示→在庫引当→メールまで連鎖。
+    const res = applyRecordPaymentCascade(before.id, previewAmount, {
+      paymentStore,
+      orderStore,
+      shipmentStore,
+      inventoryStore,
+      mailQueue,
+      autoMailEnabled: getAutoMailEnabled(),
+    });
+    if (!res.applied) {
+      toast.show("入金登録に失敗しました（金額不正または既に完済済み）", "error");
       return;
     }
+
+    const after = paymentStore.getState().find((p) => p.id === before.id) ?? before;
+    const customer = before.customer ?? "—";
     const paidAt = formPaidAt ? formatDateTime(formPaidAt) : formatDateTime(new Date());
     const entry: LogEntry = {
       id: `PR-${new Date().getFullYear()}-${String(log.length + 200).padStart(4, "0")}`,
-      orderId: formOrderId.trim(),
-      customer: current.customer,
+      orderId: before.orderId,
+      customer,
       amount: previewAmount,
       paidAt,
       method: formMethod,
       bank: formMethod === "銀行振込" ? "三井住友銀行 / 普通 / 1234567" : formMethod,
       by: "佐藤 健",
-      beforeStatus: current.status,
-      afterStatus: next.status,
-      overpaid: next.overpaid,
+      beforeStatus: before.status,
+      afterStatus: after.status,
+      overpaid: after.overpaid,
     };
-
-    setPayments((prev) => {
-      const m = new Map(prev);
-      m.set(formOrderId.trim(), { ...next, customer: current.customer });
-      return m;
-    });
     setLog((prev) => [entry, ...prev]);
-    toast.show(`${current.customer} さま：${current.status} → ${next.status}（${fmt(previewAmount)}）`, "success");
+
+    const detail = [
+      `${customer} さま：${before.status} → ${after.status}（${fmt(previewAmount)}）`,
+      res.cascadeApplied > 0 ? "受注確定" : "",
+      res.shipmentsCreated > 0 ? `出荷指示${res.shipmentsCreated}件作成` : "",
+      res.allocated > 0 ? `引当${res.allocated}SKU` : "",
+      res.shortageMarked > 0 ? "在庫不足" : "",
+      res.enqueued > 0 ? `メール${res.enqueued}件` : "",
+    ]
+      .filter(Boolean)
+      .join("・");
+    toast.show(detail, res.shortageMarked > 0 ? "info" : "success");
 
     setFormOrderId("");
     setFormAmount("");
@@ -181,7 +213,7 @@ export default function PaymentRegisterPage() {
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-gray-800">入金登録</h1>
             <HelpHint>
-              個別の入金記録を登録します。入力した金額は `recordPayment` 経由で受注の入金状態を更新します。{"\n"}
+              個別の入金記録を登録します。入力した金額は共有 paymentStore に反映され、完済時は受注確定〜出荷指示〜在庫引当まで自動連鎖します。{"\n"}
               CSV取込で一括登録したい場合は「一括入金処理」を使用してください。
             </HelpHint>
           </div>
@@ -196,7 +228,7 @@ export default function PaymentRegisterPage() {
         <GlassCard className="p-4"><p className="text-sm text-gray-500">本日の登録</p><p className="mt-2 text-3xl font-bold text-gray-800 tabular-nums">{stats.todayCount}</p></GlassCard>
         <GlassCard className="p-4"><p className="text-sm text-gray-500">登録合計額</p><p className="mt-2 text-3xl font-bold text-emerald-700 tabular-nums">{fmt(stats.total)}</p></GlassCard>
         <GlassCard className="p-4"><p className="text-sm text-gray-500">過剰入金</p><p className="mt-2 text-3xl font-bold text-purple-700 tabular-nums">{stats.overpaidCount}</p></GlassCard>
-        <GlassCard className="p-4"><p className="text-sm text-gray-500">対象受注</p><p className="mt-2 text-3xl font-bold text-gray-800 tabular-nums">{payments.size}</p></GlassCard>
+        <GlassCard className="p-4"><p className="text-sm text-gray-500">対象受注</p><p className="mt-2 text-3xl font-bold text-gray-800 tabular-nums">{payments.length}</p></GlassCard>
       </div>
 
       <GlassCard>
@@ -211,7 +243,7 @@ export default function PaymentRegisterPage() {
             <input
               value={formOrderId}
               onChange={(e) => setFormOrderId(e.target.value)}
-              placeholder="ORD-2026-00849"
+              placeholder="ORD-2026-08843"
               className="mt-1 w-full h-9 px-3 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             />
             {formOrderId && candidatePayment === undefined && (
@@ -219,7 +251,7 @@ export default function PaymentRegisterPage() {
             )}
             {candidatePayment !== undefined && (
               <p className="mt-1 text-xs text-gray-500">
-                {candidatePayment.customer} さま ／ 受注金額 {fmt(candidatePayment.orderTotal)} ／ 入金済 {fmt(candidatePayment.paidAmount)}
+                {candidatePayment.customer ?? "—"} さま ／ 受注金額 {fmt(candidatePayment.orderTotal)} ／ 入金済 {fmt(candidatePayment.paidAmount)}
               </p>
             )}
           </div>
@@ -373,11 +405,11 @@ export default function PaymentRegisterPage() {
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-700">
           {[
             "recordPayment(state, amount) で paidAmount を加算し status を再計算",
-            "「入金済み」到達時は onPaymentTransitioned が cascadeOrderAction(confirmPayment) を発行",
-            "売掛金台帳から該当行を消込",
+            "「入金済み」到達時は applyRecordPaymentCascade が受注確定（confirmPayment）を連鎖発火",
+            "受注確定に伴い出荷指示を自動作成・在庫を引当（不足時は在庫不足マーク）",
             "顧客への入金完了メールを送信（メールONの場合）",
-            "差額発生時は「金額不整合」へ自動移動・overpaid フラグを立てる",
-            "監査ログに登録",
+            "差額発生時は overpaid フラグを立てる",
+            "操作内容を入金登録ログに記録",
           ].map((s) => (
             <li key={s} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/50">
               <Banknote className="h-3.5 w-3.5 text-emerald-600 shrink-0" />{s}
