@@ -59,7 +59,10 @@ export type SnapshotDomain =
   | "order-rules-settings"
   | "permission-groups"
   | "warehouses"
-  | "misc-settings";
+  | "misc-settings"
+  | "auto-mail-settings"
+  | "automation-jobs"
+  | "product-auto-create-settings";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;

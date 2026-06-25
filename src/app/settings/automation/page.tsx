@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { cn } from "@/lib/utils";
 import { AlertCircle } from "lucide-react";
@@ -10,16 +10,12 @@ import {
   setAutoMailEnabled,
   resetAutoMailEnabled,
 } from "@/lib/mail/auto-settings";
-
-type AutomationKey =
-  | "allocate"
-  | "mail-compose"
-  | "mail-send"
-  | "inventory-sync"
-  | "product-autocreate"
-  | "np-connect"
-  | "order-fetch"
-  | "customer-autocreate";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  automationJobsStore,
+  INITIAL_AUTOMATION_JOBS,
+  type AutomationKey,
+} from "@/lib/stores/automation-jobs-store";
 
 interface Automation {
   key: AutomationKey;
@@ -109,13 +105,38 @@ function syncMailComposeToAutoSettings(enabled: boolean): void {
 
 export default function AutomationPage() {
   const toast = useToast();
-  const [items, setItems] = useState<Automation[]>(INITIAL);
+
+  // 永続化（domain: "automation-jobs"）の正規オーナーページ。
+  usePersistentStore({
+    store: automationJobsStore,
+    domain: "automation-jobs",
+    seed: INITIAL_AUTOMATION_JOBS,
+  });
+  const records = useSyncExternalStore(
+    automationJobsStore.subscribe,
+    automationJobsStore.getState,
+    automationJobsStore.getState,
+  );
+  const config = records[0] ?? INITIAL_AUTOMATION_JOBS[0];
+
+  // ストアのネイティブ形状（enabled マップ）をそのまま draft state に持ち、
+  // 表示用 items は useMemo で導出する（set-state-in-effect 回避）。
+  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>(config.enabled);
+
+  // 復元（hydrate）された config を draft へ反映する。
+  useEffect(() => {
+    setEnabledMap(config.enabled);
+  }, [config]);
+
+  const items = useMemo<Automation[]>(
+    () => INITIAL.map((a) => ({ ...a, enabled: enabledMap[a.key] ?? a.enabled })),
+    [enabledMap],
+  );
 
   const setEnabled = (key: AutomationKey, enabled: boolean) => {
-    setItems((prev) =>
-      prev.map((it) => (it.key === key ? { ...it, enabled } : it)),
-    );
+    setEnabledMap((prev) => ({ ...prev, [key]: enabled }));
     if (key === "mail-compose") {
+      // mail/auto の v1 トリガーへの runtime 橋渡し（永続オーナーは mail/auto 側）。
       syncMailComposeToAutoSettings(enabled);
       toast.show(
         enabled
@@ -132,8 +153,8 @@ export default function AutomationPage() {
   };
 
   const persistAll = () => {
-    // v1 はモジュール状態のみ。永続化は v2 で server action + DB に置き換え。
-    toast.show("自動実行処理設定を保存しました（モジュール内 state）", "success");
+    automationJobsStore.upsert({ id: "config", enabled: enabledMap });
+    toast.show("自動実行処理設定を保存しました", "success");
   };
 
   const activeCount = items.filter((i) => i.enabled).length;

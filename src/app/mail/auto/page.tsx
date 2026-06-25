@@ -1,43 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { setAutoMailEnabled, resetAutoMailEnabled } from "@/lib/mail/auto-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
-  getAutoMailEnabled,
-  setAutoMailEnabled,
-  resetAutoMailEnabled,
-} from "@/lib/mail/auto-settings";
-import type { MailTriggerType } from "@/lib/mail/queue";
+  autoMailSettingsStore,
+  AUTO_MAIL_TRIGGER_DEFS,
+  DEFAULT_AUTO_MAIL_SETTINGS,
+  INITIAL_AUTO_MAIL_SETTINGS,
+  deriveAutoMailEnabledPatch,
+  type AutoMailTriggerDef,
+  type AutoMailTriggerState,
+} from "@/lib/stores/auto-mail-settings-store";
 
-type Trigger = {
-  id: string;
-  name: string;
-  desc: string;
-  enabled: boolean;
-  template: string;
-  delay: string;
-  retryMax: number;
-  cc?: string;
-  bcc?: string;
-  /** v1 mail queue にマップされるトリガー種別（未設定なら queue とは無関係。v2 で実装予定） */
-  queueTrigger?: MailTriggerType;
-};
-
-const initial: Trigger[] = [
-  { id: "thanks", queueTrigger: "thanks", name: "受注確認（サンクスメール）", desc: "受注ステータスが「受付完了」になった直後に自動送信", enabled: true, template: "サンクスメール（自動）", delay: "受注確認後 即時", retryMax: 3, bcc: "log@example.com" },
-  { id: "ship", queueTrigger: "ship-notify", name: "出荷完了通知", desc: "出荷ステータスが「出荷済」になった直後に自動送信", enabled: true, template: "出荷通知メール（自動）", delay: "出荷登録後 即時", retryMax: 3 },
-  { id: "payment-confirmed", queueTrigger: "payment-confirmed", name: "入金確認メール", desc: "入金が確認できた直後に「ご入金ありがとうございます」を送信", enabled: true, template: "入金確認メール（自動）", delay: "入金記録後 即時", retryMax: 3 },
-  { id: "payment3", name: "入金催促（3日経過）", desc: "代引き／銀振の入金待ちが3日経過した受注へ自動送信", enabled: true, template: "入金確認メール（自動）", delay: "入金待ち3日後 09:00", retryMax: 2 },
-  { id: "payment7", name: "入金催促（7日経過・最終通告）", desc: "入金待ちが7日経過した受注へ送信。送信後は要オペレーター確認", enabled: false, template: "入金催促（最終通告）", delay: "入金待ち7日後 09:00", retryMax: 2, cc: "ops@example.com" },
-  { id: "follow", queueTrigger: "follow-up", name: "フォローアップ（配達完了）", desc: "出荷ステータスが「配達完了」になった直後に商品到着確認・レビュー誘導を送信", enabled: true, template: "フォローアップメール", delay: "配達完了後 即時", retryMax: 1 },
-  { id: "rebill", queueTrigger: "rebill-mismatch", name: "再請求（差額不足）", desc: "金額不整合確認で不足案件に「再請求メール」を実行した際に送信", enabled: true, template: "入金催促（最終通告）", delay: "再請求操作後 即時", retryMax: 2 },
-  { id: "stockout", name: "在庫切れ連絡", desc: "受注に対し在庫不足が発生した場合に送信", enabled: false, template: "在庫切れご連絡", delay: "在庫不足検知後 即時", retryMax: 2 },
-  { id: "reship", name: "再発送のお知らせ", desc: "返送・配送ミス対応で再発送した際に送信", enabled: true, template: "再発送のお知らせ", delay: "再発送登録後 即時", retryMax: 2 },
-  { id: "review", name: "レビュー依頼（発送後7日）", desc: "発送から7日後にレビュー依頼メールを送信", enabled: false, template: "レビュー依頼", delay: "発送後7日後 19:00", retryMax: 1 },
-];
+/** 表示用のトリガー（静的メタ + 可変状態）。 */
+type Trigger = AutoMailTriggerDef & AutoMailTriggerState;
 
 const templateOptions = [
   "サンクスメール（自動）",
@@ -50,41 +31,58 @@ const templateOptions = [
   "レビュー依頼",
 ];
 
-/** queueTrigger を持つ初期アイテムの enabled を auto-settings に同期。マウント時に1回呼ぶ。 */
-function syncQueueEnabledFromItems(items: Trigger[]) {
-  const patch: Partial<Record<MailTriggerType, boolean>> = {};
-  for (const item of items) {
-    if (item.queueTrigger) patch[item.queueTrigger] = item.enabled;
-  }
-  setAutoMailEnabled(patch);
-}
-
 export default function MailAutoPage() {
   const toast = useToast();
-  // 初期表示時にローカル state を auto-settings の現在値で復元しておく
-  // （他ページからの遷移で settings が書き換わっていてもズレないように）
-  const [items, setItems] = useState(() => {
-    const enabled = getAutoMailEnabled();
-    return initial.map((it) =>
-      it.queueTrigger ? { ...it, enabled: enabled[it.queueTrigger] } : it,
-    );
-  });
-  const [sendStart, setSendStart] = useState("09:00");
-  const [sendEnd, setSendEnd] = useState("20:00");
-  const [afterHours, setAfterHours] = useState("翌営業日の開始時刻に送信");
 
-  const updateItem = (id: string, patch: Partial<Trigger>) =>
-    setItems((prev) =>
-      prev.map((it) => {
-        if (it.id !== id) return it;
-        const next = { ...it, ...patch };
-        // queueTrigger を持つトリガーの enabled 変化は即 auto-settings に書く
-        if (next.queueTrigger && patch.enabled !== undefined) {
-          setAutoMailEnabled({ [next.queueTrigger]: patch.enabled });
-        }
-        return next;
-      }),
-    );
+  // 永続化（domain: "auto-mail-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: autoMailSettingsStore,
+    domain: "auto-mail-settings",
+    seed: INITIAL_AUTO_MAIL_SETTINGS,
+  });
+  const records = useSyncExternalStore(
+    autoMailSettingsStore.subscribe,
+    autoMailSettingsStore.getState,
+    autoMailSettingsStore.getState,
+  );
+  const config = records[0] ?? INITIAL_AUTO_MAIL_SETTINGS[0];
+
+  // ストアのネイティブ形状（triggers マップ + グローバル設定）をそのまま draft state に持ち、
+  // 表示用 Trigger[] は useMemo で導出する（set-state-in-effect 回避）。
+  const [triggersMap, setTriggersMap] = useState<Record<string, AutoMailTriggerState>>(config.triggers);
+  const [sendStart, setSendStart] = useState(config.sendStart);
+  const [sendEnd, setSendEnd] = useState(config.sendEnd);
+  const [afterHours, setAfterHours] = useState(config.afterHours);
+
+  // 復元（hydrate）された config を draft へ反映し、runtime シングルトンへ橋渡しする。
+  useEffect(() => {
+    setTriggersMap(config.triggers);
+    setSendStart(config.sendStart);
+    setSendEnd(config.sendEnd);
+    setAfterHours(config.afterHours);
+    setAutoMailEnabled(deriveAutoMailEnabledPatch(config.triggers));
+  }, [config]);
+
+  const items = useMemo<Trigger[]>(
+    () =>
+      AUTO_MAIL_TRIGGER_DEFS.map((def) => ({
+        ...def,
+        ...(triggersMap[def.id] ?? DEFAULT_AUTO_MAIL_SETTINGS.triggers[def.id]),
+      })),
+    [triggersMap],
+  );
+
+  const updateItem = (id: string, patch: Partial<AutoMailTriggerState>) => {
+    setTriggersMap((prev) => {
+      const current = prev[id] ?? DEFAULT_AUTO_MAIL_SETTINGS.triggers[id];
+      return { ...prev, [id]: { ...current, ...patch } };
+    });
+    // queueTrigger を持つトリガーの enabled 変化は即 auto-settings に書く
+    if (patch.enabled !== undefined) {
+      const def = AUTO_MAIL_TRIGGER_DEFS.find((d) => d.id === id);
+      if (def?.queueTrigger) setAutoMailEnabled({ [def.queueTrigger]: patch.enabled });
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -99,10 +97,11 @@ export default function MailAutoPage() {
         <div className="flex gap-2">
           <SecondaryButton
             onClick={() => {
-              setItems(initial);
-              setSendStart("09:00");
-              setSendEnd("20:00");
-              setAfterHours("翌営業日の開始時刻に送信");
+              setTriggersMap(DEFAULT_AUTO_MAIL_SETTINGS.triggers);
+              setSendStart(DEFAULT_AUTO_MAIL_SETTINGS.sendStart);
+              setSendEnd(DEFAULT_AUTO_MAIL_SETTINGS.sendEnd);
+              setAfterHours(DEFAULT_AUTO_MAIL_SETTINGS.afterHours);
+              autoMailSettingsStore.upsert({ id: "config", ...DEFAULT_AUTO_MAIL_SETTINGS });
               resetAutoMailEnabled();
               toast.show("初期値に戻しました（v1 トリガーは全 ON）", "info");
             }}
@@ -115,7 +114,14 @@ export default function MailAutoPage() {
                 toast.show("送信開始時刻は送信終了時刻より前に設定してください", "error");
                 return;
               }
-              syncQueueEnabledFromItems(items);
+              autoMailSettingsStore.upsert({
+                id: "config",
+                triggers: triggersMap,
+                sendStart,
+                sendEnd,
+                afterHours,
+              });
+              setAutoMailEnabled(deriveAutoMailEnabledPatch(triggersMap));
               toast.show("自動送信設定を保存しました（v1 トリガーは即時反映）", "success");
             }}
           >

@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { setProductAutoCreateSettings } from "@/lib/products/auto-create-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import {
-  getProductAutoCreateSettings,
-  setProductAutoCreateSettings,
-} from "@/lib/products/auto-create-settings";
+  productAutoCreateStore,
+  INITIAL_PRODUCT_AUTO_CREATE,
+} from "@/lib/stores/product-auto-create-store";
 import { Modal, SecondaryButton } from "@/components/ui/interactive";
 import { Save, Settings2, ImageIcon, Bell, History, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 
@@ -30,6 +32,11 @@ const INITIAL_RULES: Rule[] = [
   { id: "R-05", name: "卸先EDI→商品マスタ自動作成", source: "卸先EDI", enabled: false, lastRun: "—", count: 0, duplicates: 0 },
 ];
 
+/** ルール有効マップから、シングルトンへ渡す enabledSources（仕入元リスト）を導出する。 */
+function deriveEnabledSources(ruleEnabled: Record<string, boolean>): string[] {
+  return INITIAL_RULES.filter((r) => ruleEnabled[r.id] ?? r.enabled).map((r) => r.source);
+}
+
 const HISTORY = [
   { id: 1, at: "2026-04-25 09:00", source: "楽天市場", created: 12, skipped: 3, status: "正常" },
   { id: 2, at: "2026-04-25 09:00", source: "Yahoo!ショッピング", created: 5, skipped: 1, status: "正常" },
@@ -40,18 +47,46 @@ const HISTORY = [
 
 export default function ProductAutoCreatePage() {
   const toast = useToast();
-  // 共有設定（auto-create-settings シングルトン）を初期値として読み込む。
-  // enabledSources に含まれる source のルールだけ有効化状態を復元する。
-  const initial = getProductAutoCreateSettings();
-  const [rules, setRules] = useState<Rule[]>(() =>
-    INITIAL_RULES.map((r) => ({ ...r, enabled: initial.enabledSources.includes(r.source) })),
+
+  // 永続化（domain: "product-auto-create-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: productAutoCreateStore,
+    domain: "product-auto-create-settings",
+    seed: INITIAL_PRODUCT_AUTO_CREATE,
+  });
+  const records = useSyncExternalStore(
+    productAutoCreateStore.subscribe,
+    productAutoCreateStore.getState,
+    productAutoCreateStore.getState,
   );
-  const [autoDetect, setAutoDetect] = useState(initial.autoDetect);
-  const [downloadImage, setDownloadImage] = useState(true);
-  const [notifyAdmin, setNotifyAdmin] = useState(false);
-  const [skipConflict, setSkipConflict] = useState(initial.skipConflict);
-  const [autoCategorize, setAutoCategorize] = useState(initial.autoCategorize);
-  const [defaultMargin, setDefaultMargin] = useState(initial.defaultMargin);
+  const config = records[0] ?? INITIAL_PRODUCT_AUTO_CREATE[0];
+
+  // ストアのネイティブ形状（config レコード）を単一の draft state として持つ。
+  // 復元（hydrate）で config の identity が変わったら、レンダー中に draft を同期する
+  // （React 公式の「props 変化時に state を調整」パターン。effect 内 setState を避ける）。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const { autoDetect, downloadImage, notifyAdmin, skipConflict, autoCategorize, defaultMargin } = draft;
+
+  // runtime シングルトンへの橋渡しのみを行う effect（React state は更新しない）。
+  useEffect(() => {
+    setProductAutoCreateSettings({
+      autoDetect: config.autoDetect,
+      skipConflict: config.skipConflict,
+      autoCategorize: config.autoCategorize,
+      defaultMargin: config.defaultMargin,
+      enabledSources: deriveEnabledSources(config.ruleEnabled),
+    });
+  }, [config]);
+
+  const rules = useMemo<Rule[]>(
+    () => INITIAL_RULES.map((r) => ({ ...r, enabled: draft.ruleEnabled[r.id] ?? r.enabled })),
+    [draft.ruleEnabled],
+  );
 
   // ルール別詳細設定モーダル
   const [ruleDetailOpen, setRuleDetailOpen] = useState(false);
@@ -62,11 +97,25 @@ export default function ProductAutoCreatePage() {
     setRuleDetailOpen(true);
   };
 
-  const toggleRule = (id: string) => setRules(rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+  const toggleRule = (id: string) =>
+    setDraft((prev) => {
+      const fallback = INITIAL_RULES.find((r) => r.id === id)?.enabled ?? false;
+      return { ...prev, ruleEnabled: { ...prev.ruleEnabled, [id]: !(prev.ruleEnabled[id] ?? fallback) } };
+    });
 
-  /** 画面の状態を共有設定へ保存する。orders/import の取込実行がこの設定を読む。 */
+  /** 画面の状態を共有ストア＋共有設定へ保存する。orders/import の取込実行がこの設定を読む。 */
   function saveSettings() {
     const enabledSources = rules.filter((r) => r.enabled).map((r) => r.source);
+    productAutoCreateStore.upsert({
+      id: "config",
+      autoDetect,
+      downloadImage,
+      notifyAdmin,
+      skipConflict,
+      autoCategorize,
+      defaultMargin,
+      ruleEnabled: draft.ruleEnabled,
+    });
     setProductAutoCreateSettings({
       autoDetect,
       skipConflict,
@@ -108,11 +157,11 @@ export default function ProductAutoCreatePage() {
           <HelpHint>すべての自動作成ルールに共通する基本設定です。</HelpHint>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Toggle label="未登録商品を自動検出する" checked={autoDetect} onChange={setAutoDetect} hint="OFFの場合、未登録商品は受注エラー扱いとなります。" />
-          <Toggle label="商品画像を自動ダウンロード" checked={downloadImage} onChange={setDownloadImage} hint="モール公開画像をローカル保存します。" />
-          <Toggle label="作成時に管理者へ通知メール送信" checked={notifyAdmin} onChange={setNotifyAdmin} />
-          <Toggle label="既存コードと衝突する場合はスキップ" checked={skipConflict} onChange={setSkipConflict} hint="OFFの場合、既存マスタを上書きします。" />
-          <Toggle label="モールカテゴリから自社カテゴリへ自動マッピング" checked={autoCategorize} onChange={setAutoCategorize} hint="カテゴリマッピングマスタを使用します。" />
+          <Toggle label="未登録商品を自動検出する" checked={autoDetect} onChange={(v) => setDraft((p) => ({ ...p, autoDetect: v }))} hint="OFFの場合、未登録商品は受注エラー扱いとなります。" />
+          <Toggle label="商品画像を自動ダウンロード" checked={downloadImage} onChange={(v) => setDraft((p) => ({ ...p, downloadImage: v }))} hint="モール公開画像をローカル保存します。" />
+          <Toggle label="作成時に管理者へ通知メール送信" checked={notifyAdmin} onChange={(v) => setDraft((p) => ({ ...p, notifyAdmin: v }))} />
+          <Toggle label="既存コードと衝突する場合はスキップ" checked={skipConflict} onChange={(v) => setDraft((p) => ({ ...p, skipConflict: v }))} hint="OFFの場合、既存マスタを上書きします。" />
+          <Toggle label="モールカテゴリから自社カテゴリへ自動マッピング" checked={autoCategorize} onChange={(v) => setDraft((p) => ({ ...p, autoCategorize: v }))} hint="カテゴリマッピングマスタを使用します。" />
           <div className="space-y-1.5">
             <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
               デフォルト原価率
@@ -122,7 +171,7 @@ export default function ProductAutoCreatePage() {
               <input
                 type="number"
                 value={defaultMargin}
-                onChange={(e) => setDefaultMargin(Number(e.target.value))}
+                onChange={(e) => setDraft((p) => ({ ...p, defaultMargin: Number(e.target.value) }))}
                 className="w-full h-9 px-3 pr-10 rounded-xl text-sm bg-white/50 border border-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               />
               <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">%</span>
