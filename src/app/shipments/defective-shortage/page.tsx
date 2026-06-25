@@ -17,39 +17,22 @@ import {
 import { defectiveStore } from "@/lib/stores/defective";
 import { INITIAL_DEFECTIVE } from "@/lib/seeds/defective";
 import type { DefectiveRecord } from "@/lib/state-machines/defective";
+import { defectiveLotStore } from "@/lib/stores/defective-lot";
+import { INITIAL_DEFECTIVE_LOTS } from "@/lib/seeds/defective-lot";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  transitionLotDefect,
+  type LotDefectRecord,
+  type LotDefectAction,
+  type LotRootCause,
+  type LotResponsibility,
+  type LotDefectStatus,
+} from "@/lib/state-machines/defective-lot";
 
-type RootCause = "メーカー由来" | "輸送中破損" | "倉庫保管不良" | "原因調査中";
-type Responsibility = "メーカー" | "配送業者" | "自社" | "未確定";
-type LotStatus = "未対応" | "メーカー連絡済" | "代替手配中" | "全件対応完了" | "終結";
-
-interface LotDefectRow {
-  id: string;
-  lot: string;
-  sku: string;
-  product: string;
-  /** 不良品振替の振替元になる倉庫（INITIAL_INVENTORY の実在キーに揃える） */
-  warehouse: string;
-  /** 検出した不良数（台帳登録時の振替数量になる） */
-  detected: number;
-  /** 影響を受けた受注件数 */
-  affected: number;
-  rootCause: RootCause;
-  reportedAt: string;
-  status: LotStatus;
-  responsibility: Responsibility;
-  /** 不良品振替台帳（defectiveStore）に登録済みの場合のレコードID */
-  ledgerId?: string;
-}
-
-// SKU / 倉庫は INITIAL_INVENTORY に実在する組に揃えてあり、
-// 台帳登録 → 不良品振替ページの振替実行で実際に良品 onHand が減算される。
-const INITIAL_LOT_ROWS: LotDefectRow[] = [
-  { id: "DS-001", lot: "LOT-2026-04-12-A", sku: "WEP-001-BK", product: "ワイヤレスイヤホン Pro ブラック", warehouse: "東京本社倉庫", detected: 8, affected: 12, rootCause: "メーカー由来", reportedAt: "2026-04-25 09:00", status: "メーカー連絡済", responsibility: "メーカー", ledgerId: "DF-004" },
-  { id: "DS-002", lot: "LOT-2026-04-08-B", sku: "MBT-004", product: "モバイルバッテリー 20000mAh", warehouse: "東京本社倉庫", detected: 3, affected: 5, rootCause: "輸送中破損", reportedAt: "2026-04-23 14:32", status: "代替手配中", responsibility: "配送業者" },
-  { id: "DS-003", lot: "LOT-2026-04-05-A", sku: "TS-WH-M", product: "Tシャツ ホワイト M", warehouse: "九州物流センター", detected: 12, affected: 28, rootCause: "倉庫保管不良", reportedAt: "2026-04-22 10:00", status: "未対応", responsibility: "自社" },
-  { id: "DS-004", lot: "LOT-2026-03-30-C", sku: "PFS-005", product: "保護フィルム セット", warehouse: "東京本社倉庫", detected: 4, affected: 4, rootCause: "原因調査中", reportedAt: "2026-04-20 16:18", status: "未対応", responsibility: "未確定" },
-  { id: "DS-005", lot: "LOT-2026-03-25-A", sku: "UCB-002", product: "USB-Cケーブル 2m", warehouse: "大阪倉庫", detected: 2, affected: 8, rootCause: "メーカー由来", reportedAt: "2026-04-15 11:42", status: "全件対応完了", responsibility: "メーカー" },
-];
+type RootCause = LotRootCause;
+type Responsibility = LotResponsibility;
+type LotStatus = LotDefectStatus;
+type LotDefectRow = LotDefectRecord;
 
 const ROOT_CAUSES: RootCause[] = ["メーカー由来", "輸送中破損", "倉庫保管不良", "原因調査中"];
 const RESPONSIBILITIES: Responsibility[] = ["メーカー", "配送業者", "自社", "未確定"];
@@ -135,7 +118,20 @@ export default function ShipmentsDefectiveShortagePage() {
     () => INITIAL_DEFECTIVE,
   );
 
-  const [rows, setRows] = useState<LotDefectRow[]>(INITIAL_LOT_ROWS);
+  // ロット不良行（domain "shipment-defective-lots"）の正規オーナー。
+  // ここで snapshot/restore を1回だけ駆動し、リロード後も対応状況を復元する。
+  usePersistentStore({
+    store: defectiveLotStore,
+    domain: "shipment-defective-lots",
+    seed: INITIAL_DEFECTIVE_LOTS,
+  });
+
+  const rows = useSyncExternalStore(
+    (cb) => defectiveLotStore.subscribe(cb),
+    () => defectiveLotStore.getState(),
+    () => INITIAL_DEFECTIVE_LOTS,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("未終結のみ");
   const [respFilter, setRespFilter] = useState("すべて");
@@ -144,13 +140,17 @@ export default function ShipmentsDefectiveShortagePage() {
 
   const filtered = useMemo(() => {
     const k = keyword.toLowerCase();
-    return rows.filter((r) => {
-      if (k && !r.lot.toLowerCase().includes(k) && !r.sku.toLowerCase().includes(k) && !r.product.toLowerCase().includes(k)) return false;
-      if (statusFilter === "未終結のみ" && r.status === "終結") return false;
-      if (statusFilter !== "未終結のみ" && statusFilter !== "すべて" && r.status !== statusFilter) return false;
-      if (respFilter !== "すべて" && r.responsibility !== respFilter) return false;
-      return true;
-    });
+    return rows
+      .filter((r) => {
+        if (k && !r.lot.toLowerCase().includes(k) && !r.sku.toLowerCase().includes(k) && !r.product.toLowerCase().includes(k)) return false;
+        if (statusFilter === "未終結のみ" && r.status === "終結") return false;
+        if (statusFilter !== "未終結のみ" && statusFilter !== "すべて" && r.status !== statusFilter) return false;
+        if (respFilter !== "すべて" && r.responsibility !== respFilter) return false;
+        return true;
+      })
+      // ストアは upsert で末尾追加なので、新着が上に来るよう報告日時の降順で表示する
+      // （"YYYY-MM-DD HH:mm" は辞書順=時系列順）。
+      .sort((a, b) => b.reportedAt.localeCompare(a.reportedAt));
   }, [rows, keyword, statusFilter, respFilter]);
 
   const stats = useMemo(() => ({
@@ -160,8 +160,17 @@ export default function ShipmentsDefectiveShortagePage() {
     linked: rows.filter((r) => r.ledgerId && ledger.some((d) => d.id === r.ledgerId)).length,
   }), [rows, ledger]);
 
-  const updateStatus = (id: string, status: LotStatus, message: string) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, status } : r)));
+  // 状態遷移は必ず state-machine transitionLotDefect を経由する（status の直書き禁止）。
+  // 不正遷移は no-op（同一参照）になるので、その場合はエラーtoastで弾く。
+  const updateStatus = (id: string, action: LotDefectAction, message: string) => {
+    const current = defectiveLotStore.findById(id);
+    if (!current) return;
+    const next = transitionLotDefect(current, action);
+    if (next === current) {
+      toast.show("この操作はできません", "error");
+      return;
+    }
+    defectiveLotStore.upsert(next);
     toast.show(message, "success");
   };
 
@@ -177,7 +186,7 @@ export default function ShipmentsDefectiveShortagePage() {
       toast.show(`台帳登録に失敗しました（${id} はID重複）`, "error");
       return;
     }
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, ledgerId: id } : r)));
+    defectiveLotStore.upsert({ ...row, ledgerId: id });
     toast.show(`${row.id} の不良 ${row.detected}点 を振替台帳 ${id} に登録しました（承認待ち）`, "success");
   };
 
@@ -201,7 +210,7 @@ export default function ShipmentsDefectiveShortagePage() {
     };
     const ledgerId = nextId("DF", ledger.map((d) => d.id));
     const res = defectiveStore.register(toLedgerRecord(newRow, ledgerId));
-    setRows((prev) => [{ ...newRow, ledgerId: res.applied ? ledgerId : undefined }, ...prev]);
+    defectiveLotStore.upsert({ ...newRow, ledgerId: res.applied ? ledgerId : undefined });
     toast.show(
       res.applied
         ? `${newRow.id} を登録し、振替台帳 ${ledgerId} を起票しました（承認待ち）`
@@ -334,14 +343,14 @@ export default function ShipmentsDefectiveShortagePage() {
                       {r.status === "未対応" && (
                         <>
                           <button
-                            onClick={() => updateStatus(r.id, "メーカー連絡済", `${r.id} をメーカー連絡済にしました`)}
+                            onClick={() => updateStatus(r.id, "contactMaker", `${r.id} をメーカー連絡済にしました`)}
                             title="メーカー連絡済にする"
                             className="inline-flex p-1.5 rounded-lg bg-blue-500/15 text-blue-700 hover:bg-blue-500/25"
                           >
                             <Mail className="h-3.5 w-3.5" />
                           </button>
                           <button
-                            onClick={() => updateStatus(r.id, "代替手配中", `${r.id} の代替品手配を開始しました`)}
+                            onClick={() => updateStatus(r.id, "arrangeAlt", `${r.id} の代替品手配を開始しました`)}
                             title="代替手配を開始する"
                             className="inline-flex p-1.5 rounded-lg bg-amber-500/15 text-amber-700 hover:bg-amber-500/25"
                           >
@@ -351,7 +360,7 @@ export default function ShipmentsDefectiveShortagePage() {
                       )}
                       {(r.status === "メーカー連絡済" || r.status === "代替手配中") && (
                         <button
-                          onClick={() => updateStatus(r.id, "全件対応完了", `${r.id} を全件対応完了にしました`)}
+                          onClick={() => updateStatus(r.id, "complete", `${r.id} を全件対応完了にしました`)}
                           title="全件対応完了にする"
                           className="inline-flex p-1.5 rounded-lg bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25"
                         >
@@ -360,7 +369,7 @@ export default function ShipmentsDefectiveShortagePage() {
                       )}
                       {r.status === "全件対応完了" && (
                         <button
-                          onClick={() => updateStatus(r.id, "終結", `${r.id} を終結しました`)}
+                          onClick={() => updateStatus(r.id, "close", `${r.id} を終結しました`)}
                           className="px-2.5 py-1 rounded-lg text-xs font-medium bg-gray-500/15 text-gray-600 hover:bg-gray-500/25"
                         >
                           終結

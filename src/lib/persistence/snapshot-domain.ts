@@ -77,6 +77,7 @@ export type SnapshotDomain =
   | "payment-np-connect-settings"
   | "product-warehouse-link-settings"
   | "shipment-defective-transfer-settings"
+  | "shipment-defective-lots"
   | "shipment-tracking-support-settings"
   | "warehouse-logizard-settings"
   | "warehouse-yahoo-logi-settings"
