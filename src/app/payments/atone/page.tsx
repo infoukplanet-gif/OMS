@@ -1,36 +1,23 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Search, RefreshCw, Send, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { atonePaymentStore } from "@/lib/stores/payment-atone";
+import { INITIAL_ATONE_ROWS } from "@/lib/seeds/payment-atone";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  transitionDeferredPayment,
+  type DeferredPaymentStatus,
+  type DeferredPaymentRecord,
+} from "@/lib/state-machines/deferred-payment";
 
-type AtoneStatus = "与信OK" | "与信NG" | "与信中" | "請求中" | "支払済" | "回収不能" | "切替済" | "貸倒処理済";
+type Row = DeferredPaymentRecord;
 
-type Row = {
-  id: string;
-  order: string;
-  customer: string;
-  amount: number;
-  atoneStatus: AtoneStatus;
-  registeredAt: string;
-  daysAged: number;
-  /** 請求中の取引に再請求の催促を送信済みか */
-  reminded?: boolean;
-};
-
-// atone（外部決済プロバイダ）側の取引データ。API接続前提のためモック。
-const INITIAL_ROWS: Row[] = [
-  { id: "AT-001", order: "ORD-2026-00840", customer: "高橋健", amount: 22800, atoneStatus: "与信中", registeredAt: "2026-04-24", daysAged: 1 },
-  { id: "AT-002", order: "ORD-2026-00832", customer: "井上智", amount: 28500, atoneStatus: "請求中", registeredAt: "2026-04-22", daysAged: 3 },
-  { id: "AT-003", order: "ORD-2026-00821", customer: "佐藤花子", amount: 38400, atoneStatus: "支払済", registeredAt: "2026-04-18", daysAged: 0 },
-  { id: "AT-004", order: "ORD-2026-00812", customer: "中村あかり", amount: 12800, atoneStatus: "与信NG", registeredAt: "2026-04-20", daysAged: 5 },
-  { id: "AT-005", order: "ORD-2026-00802", customer: "渡辺京子", amount: 67800, atoneStatus: "回収不能", registeredAt: "2026-03-15", daysAged: 41 },
-];
-
-const STATUS_BADGE: Record<AtoneStatus, string> = {
+const STATUS_BADGE: Record<DeferredPaymentStatus, string> = {
   "与信OK": "bg-emerald-500/15 text-emerald-700",
   "与信NG": "bg-red-500/15 text-red-700",
   "与信中": "bg-blue-500/15 text-blue-700",
@@ -45,7 +32,20 @@ const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function AtonePage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(INITIAL_ROWS);
+
+  // domain "payment-atone-rows" の正規オーナー。ここで snapshot/restore を1回だけ駆動。
+  usePersistentStore({
+    store: atonePaymentStore,
+    domain: "payment-atone-rows",
+    seed: INITIAL_ATONE_ROWS,
+  });
+
+  const rows = useSyncExternalStore(
+    (cb) => atonePaymentStore.subscribe(cb),
+    () => atonePaymentStore.getState(),
+    () => INITIAL_ATONE_ROWS,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("対応必要のみ");
 
@@ -53,49 +53,61 @@ export default function AtonePage() {
     const k = keyword.toLowerCase();
     return rows.filter((r) => {
       if (k && !r.order.toLowerCase().includes(k) && !r.customer.toLowerCase().includes(k)) return false;
-      if (statusFilter === "対応必要のみ" && (r.atoneStatus === "支払済" || r.atoneStatus === "与信OK" || r.atoneStatus === "切替済" || r.atoneStatus === "貸倒処理済")) return false;
-      if (statusFilter !== "対応必要のみ" && statusFilter !== "すべて" && r.atoneStatus !== statusFilter) return false;
+      if (statusFilter === "対応必要のみ" && (r.status === "支払済" || r.status === "与信OK" || r.status === "切替済" || r.status === "貸倒処理済")) return false;
+      if (statusFilter !== "対応必要のみ" && statusFilter !== "すべて" && r.status !== statusFilter) return false;
       return true;
     });
   }, [rows, keyword, statusFilter]);
 
   const stats = {
-    invoicing: rows.filter((r) => r.atoneStatus === "請求中").length,
-    ng: rows.filter((r) => r.atoneStatus === "与信NG").length,
-    bad: rows.filter((r) => r.atoneStatus === "回収不能").length,
-    paid: rows.filter((r) => r.atoneStatus === "支払済").length,
+    invoicing: rows.filter((r) => r.status === "請求中").length,
+    ng: rows.filter((r) => r.status === "与信NG").length,
+    bad: rows.filter((r) => r.status === "回収不能").length,
+    paid: rows.filter((r) => r.status === "支払済").length,
   };
 
-  /** atone API 同期（モック）: 与信中の取引を与信OKへ確定させる */
+  /** atone API 同期（モック）: 与信中の取引を与信OKへ確定させる（state-machine 経由） */
   const syncWithAtone = () => {
-    const targets = rows.filter((r) => r.atoneStatus === "与信中");
+    const targets = atonePaymentStore.getState().filter((r) => r.status === "与信中");
     if (targets.length === 0) {
       toast.show("atoneと同期しました（更新対象なし・最新の状態です）", "info");
       return;
     }
-    setRows((prev) => prev.map((r) => (r.atoneStatus === "与信中" ? { ...r, atoneStatus: "与信OK" } : r)));
+    for (const r of targets) {
+      atonePaymentStore.upsert(transitionDeferredPayment(r, "approve"));
+    }
     toast.show(`atoneと同期し、与信中 ${targets.length}件 が与信OKになりました`, "success");
   };
 
-  /** 与信NG取引を切替済にする（受注側の支払方法変更が別途必要） */
+  /** 与信NG取引を切替済にする（受注側の支払方法変更が別途必要・state-machine 経由） */
   const switchPayment = (row: Row) => {
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, atoneStatus: "切替済" } : r)));
+    const next = transitionDeferredPayment(row, "switchPayment");
+    if (next === row) {
+      toast.show("この操作はできません", "error");
+      return;
+    }
+    atonePaymentStore.upsert(next);
     toast.show(`${row.order} をatoneから切替済にしました。受注編集で支払方法を変更してください`, "success");
   };
 
-  /** 請求中の取引に再請求の催促を送信する（送信済みは冪等にスキップ） */
+  /** 請求中の取引に再請求の催促を送信する（送信済みは冪等にスキップ・reminded フラグ更新） */
   const remind = (row: Row) => {
     if (row.reminded) {
       toast.show(`${row.order} は催促送信済みです`, "info");
       return;
     }
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, reminded: true } : r)));
+    atonePaymentStore.upsert({ ...row, reminded: true });
     toast.show(`${row.order} に再請求の催促メールを送信しました`, "success");
   };
 
-  /** 回収不能の取引を貸倒処理する（atone保証適用・社内損益に反映） */
+  /** 回収不能の取引を貸倒処理する（atone保証適用・社内損益に反映・state-machine 経由） */
   const writeOff = (row: Row) => {
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, atoneStatus: "貸倒処理済" } : r)));
+    const next = transitionDeferredPayment(row, "writeOff");
+    if (next === row) {
+      toast.show("この操作はできません", "error");
+      return;
+    }
+    atonePaymentStore.upsert(next);
     toast.show(`${row.order}（${fmt(row.amount)}）を貸倒処理しました。atone保証の適用対象です`, "success");
   };
 
@@ -165,23 +177,23 @@ export default function AtonePage() {
               </tr>
             )}
             {filtered.map((r) => (
-              <tr key={r.id} className={cn("border-t border-white/30 hover:bg-white/40", (r.atoneStatus === "与信NG" || r.atoneStatus === "回収不能") && "bg-red-500/5")}>
+              <tr key={r.id} className={cn("border-t border-white/30 hover:bg-white/40", (r.status === "与信NG" || r.status === "回収不能") && "bg-red-500/5")}>
                 <td className="px-3 py-2.5 font-medium text-blue-600">{r.order}</td>
                 <td className="px-3 py-2.5 text-gray-800">{r.customer}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-gray-800">{fmt(r.amount)}</td>
                 <td className="px-3 py-2.5 text-center">
-                  <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap", STATUS_BADGE[r.atoneStatus])}>
-                    {r.atoneStatus}
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap", STATUS_BADGE[r.status])}>
+                    {r.status}
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-gray-600">{r.registeredAt}</td>
                 <td className={cn("px-3 py-2.5 text-center text-xs tabular-nums", r.daysAged >= 30 && "text-red-700 font-bold")}>{r.daysAged}日</td>
                 <td className="px-3 py-2.5 text-center">
-                  {r.atoneStatus === "与信NG" ? (
+                  {r.status === "与信NG" ? (
                     <button onClick={() => switchPayment(r)} className="px-3 py-1 rounded-lg text-xs font-medium bg-red-500/15 text-red-700 hover:bg-red-500/25 inline-flex items-center gap-1">
                       <AlertTriangle className="h-3 w-3" />切替
                     </button>
-                  ) : r.atoneStatus === "請求中" ? (
+                  ) : r.status === "請求中" ? (
                     <button
                       onClick={() => remind(r)}
                       className={cn(

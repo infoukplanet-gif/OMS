@@ -75,6 +75,8 @@ export type SnapshotDomain =
   | "mail-templates"
   | "order-notes-conversion-settings"
   | "payment-np-connect-settings"
+  | "payment-np-rows"
+  | "payment-atone-rows"
   | "product-warehouse-link-settings"
   | "shipment-defective-transfer-settings"
   | "shipment-defective-lots"
