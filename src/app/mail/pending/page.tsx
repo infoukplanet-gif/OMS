@@ -9,6 +9,11 @@ import { Pause, Play, Search, Send, Trash2 } from "lucide-react";
 import type { MailTriggerType } from "@/lib/mail/queue";
 import { mailStore } from "@/lib/stores/mail";
 import { syncMailQueueIntoStore } from "@/lib/mail/log-bridge";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  mailRetrySettingsStore,
+  INITIAL_MAIL_RETRY_SETTINGS,
+} from "@/lib/stores/mail-retry-settings-store";
 
 const pb: Record<string, string> = {
   高: "bg-red-500/15 text-red-700",
@@ -55,6 +60,18 @@ export default function MailPendingPage() {
   // 共有ストア購読（mail/page.tsx が永続化オーナー。ここは購読＋遷移のみ）
   const mails = useSyncExternalStore(mailStore.subscribe, mailStore.getState, mailStore.getState);
 
+  // 自動リトライ設定の永続化オーナー（送信待ちキューとは別ドメイン）
+  usePersistentStore({
+    store: mailRetrySettingsStore,
+    domain: "mail-retry-settings",
+    seed: INITIAL_MAIL_RETRY_SETTINGS,
+  });
+  const retryConfig = useSyncExternalStore(
+    mailRetrySettingsStore.subscribe,
+    mailRetrySettingsStore.getState,
+    mailRetrySettingsStore.getState,
+  )[0] ?? INITIAL_MAIL_RETRY_SETTINGS[0];
+
   // セッション内 cascade enqueue 分を冪等同期（register が id 重複を弾く）
   useEffect(() => {
     syncMailQueueIntoStore();
@@ -64,9 +81,16 @@ export default function MailPendingPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
-  const [retryInterval, setRetryInterval] = useState(30);
-  const [retryMaxCount, setRetryMaxCount] = useState(3);
-  const [notifyEmail, setNotifyEmail] = useState("ops@example.com");
+  const [retryInterval, setRetryInterval] = useState(retryConfig.retryInterval);
+  const [retryMaxCount, setRetryMaxCount] = useState(retryConfig.retryMaxCount);
+  const [notifyEmail, setNotifyEmail] = useState(retryConfig.notifyEmail);
+
+  // ストアが復元されたらドラフトを同期
+  useEffect(() => {
+    setRetryInterval(retryConfig.retryInterval);
+    setRetryMaxCount(retryConfig.retryMaxCount);
+    setNotifyEmail(retryConfig.notifyEmail);
+  }, [retryConfig]);
 
   const pending = useMemo(
     () => mails.filter((m) => m.status === "送信待ち" || m.status === "保留"),
@@ -326,6 +350,12 @@ export default function MailPendingPage() {
                 toast.show("通知先メールアドレスの形式が不正です", "error");
                 return;
               }
+              mailRetrySettingsStore.upsert({
+                id: "config",
+                retryInterval,
+                retryMaxCount,
+                notifyEmail,
+              });
               toast.show(
                 `自動リトライ設定を更新しました（間隔${retryInterval}分・最大${retryMaxCount}回）`,
                 "success",

@@ -71,6 +71,7 @@ export type SnapshotDomain =
   | "mail-free-template-settings"
   | "mail-schedule-settings"
   | "mail-server-settings"
+  | "mail-retry-settings"
   | "order-notes-conversion-settings"
   | "payment-np-connect-settings"
   | "product-warehouse-link-settings"
