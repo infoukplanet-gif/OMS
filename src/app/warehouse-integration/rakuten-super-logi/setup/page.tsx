@@ -1,32 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ArrowRight, CheckCircle2, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  rslSetupStore,
+  INITIAL_RSL_SETUP,
+  RSL_SETUP_CONFIG_ID,
+  DEFAULT_RSL_SETUP_CONFIG,
+  type RslSetupConfigRecord,
+  type RslSkuMapRecord,
+} from "@/lib/stores/warehouse-rsl-setup-store";
 
-type SkuMap = {
-  id: string;
-  omsCode: string;
-  omsName: string;
-  rslSku: string;
-  rslName: string;
-  upc: string;
-  status: "登録済" | "申請中" | "未登録" | "保留";
-  registeredAt: string;
-};
-
-const initial: SkuMap[] = [
-  { id: "1", omsCode: "P-001", omsName: "コットンTシャツ ホワイト M", rslSku: "RSL-OMS-001-WH-M", rslName: "Cotton Tee White M", upc: "4901234567890", status: "登録済", registeredAt: "2026/01/15" },
-  { id: "2", omsCode: "P-001-L", omsName: "コットンTシャツ ホワイト L", rslSku: "RSL-OMS-001-WH-L", rslName: "Cotton Tee White L", upc: "4901234567891", status: "登録済", registeredAt: "2026/01/15" },
-  { id: "3", omsCode: "P-002", omsName: "デニムジャケット M", rslSku: "RSL-OMS-002-DM-M", rslName: "Denim Jacket M", upc: "4901234567892", status: "登録済", registeredAt: "2026/02/01" },
-  { id: "4", omsCode: "P-003", omsName: "ステンレスタンブラー 350ml", rslSku: "RSL-OMS-003-350", rslName: "SS Tumbler 350ml", upc: "4901234567893", status: "登録済", registeredAt: "2026/02/15" },
-  { id: "5", omsCode: "P-099", omsName: "新商品テスト", rslSku: "—", rslName: "—", upc: "—", status: "未登録", registeredAt: "—" },
-  { id: "6", omsCode: "P-008", omsName: "ストーンウェアマグ", rslSku: "RSL-OMS-008", rslName: "Stoneware Mug", upc: "4901234567898", status: "申請中", registeredAt: "2026/04/28" },
-  { id: "7", omsCode: "P-100", omsName: "リネンエプロン グリーン", rslSku: "—", rslName: "—", upc: "—", status: "保留", registeredAt: "—" },
-];
+type SkuMap = RslSkuMapRecord;
 
 const sb: Record<string, string> = {
   登録済: "bg-emerald-500/15 text-emerald-700",
@@ -37,21 +27,58 @@ const sb: Record<string, string> = {
 
 export default function RsrLogiSetupPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // 永続化（domain: "warehouse-rsl-setup-settings"）の正規オーナーページ。
+  // 基本登録情報（config レコード）と SKUマッピング一覧を同一ストアで管理する。
+  usePersistentStore({
+    store: rslSetupStore,
+    domain: "warehouse-rsl-setup-settings",
+    seed: INITIAL_RSL_SETUP,
+  });
+  const records = useSyncExternalStore(
+    rslSetupStore.subscribe,
+    rslSetupStore.getState,
+    rslSetupStore.getState,
+  );
+  const config: RslSetupConfigRecord =
+    (records.find((r) => r.id === RSL_SETUP_CONFIG_ID) as RslSetupConfigRecord | undefined) ?? {
+      id: RSL_SETUP_CONFIG_ID,
+      kind: "config",
+      ...DEFAULT_RSL_SETUP_CONFIG,
+    };
+  const items = useMemo<SkuMap[]>(
+    () => records.filter((r): r is RslSkuMapRecord => r.kind === "sku"),
+    [records],
+  );
+
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | SkuMap["status"]>("all");
-  const [companyId, setCompanyId] = useState("RAK-OMS-CORP-0042");
-  const [warehouseId, setWarehouseId] = useState("RSL-CHIBA-A");
-  const [contractType, setContractType] = useState("通常契約");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [applying, setApplying] = useState(false);
+
+  // 基本登録情報は config レコードを単一の draft state として持つ。
+  // 復元（hydrate）で config の identity が変わったら、レンダー中に draft を同期する。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const { companyId, warehouseId, contractType } = draft;
 
   function handleSave() {
     if (saving) return;
     setSaving(true);
     setSaved(false);
     setTimeout(() => {
+      rslSetupStore.upsert({
+        id: RSL_SETUP_CONFIG_ID,
+        kind: "config",
+        companyId: draft.companyId,
+        warehouseId: draft.warehouseId,
+        contractType: draft.contractType,
+      });
       setSaving(false);
       setSaved(true);
       toast.show("RSL初期登録を保存しました", "success");
@@ -61,8 +88,8 @@ export default function RsrLogiSetupPage() {
 
   function handleBulkApply() {
     if (applying) return;
-    const unregisteredCount = items.filter((i) => i.status === "未登録").length;
-    if (unregisteredCount === 0) {
+    const unregistered = items.filter((i) => i.status === "未登録");
+    if (unregistered.length === 0) {
       toast.show("未登録SKUはありません", "info");
       return;
     }
@@ -71,10 +98,10 @@ export default function RsrLogiSetupPage() {
       setApplying(false);
       const now = new Date();
       const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")}`;
-      setItems((prev) =>
-        prev.map((i) => (i.status === "未登録" ? { ...i, status: "申請中" as const, registeredAt: dateStr } : i))
-      );
-      toast.show(`${unregisteredCount}件の未登録SKUを一括申請しました`, "success");
+      for (const sku of unregistered) {
+        rslSetupStore.upsert({ ...sku, status: "申請中", registeredAt: dateStr });
+      }
+      toast.show(`${unregistered.length}件の未登録SKUを一括申請しました`, "success");
     }, 1500);
   }
 
@@ -113,17 +140,17 @@ export default function RsrLogiSetupPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
           <label className="space-y-1">
             <span className="text-xs text-gray-500">RSL企業ID</span>
-            <input value={companyId} onChange={(e) => setCompanyId(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
+            <input value={companyId} onChange={(e) => setDraft((p) => ({ ...p, companyId: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">契約倉庫ID</span>
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={warehouseId} onChange={(e) => setDraft((p) => ({ ...p, warehouseId: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["RSL-CHIBA-A", "RSL-CHIBA-B", "RSL-OSAKA-A", "RSL-FUKUOKA-A"].map((w) => <option key={w}>{w}</option>)}
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">契約種別</span>
-            <select value={contractType} onChange={(e) => setContractType(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={contractType} onChange={(e) => setDraft((p) => ({ ...p, contractType: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               <option>通常契約</option>
               <option>大量出荷契約</option>
               <option>セール特化契約</option>
@@ -212,7 +239,7 @@ export default function RsrLogiSetupPage() {
                 </td>
                 <td className="px-3 py-2.5 text-gray-500 text-xs">{m.registeredAt}</td>
                 <td className="px-3 py-2.5 text-center">
-                  <button onClick={() => { setItems((p) => p.filter((x) => x.id !== m.id)); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
+                  <button onClick={() => { rslSetupStore.remove(m.id); toast.show("マッピングを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </td>

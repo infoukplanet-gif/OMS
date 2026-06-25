@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -8,30 +8,14 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Eye, Plus, Search, Undo2, X } from "lucide-react";
 import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  rslReturnStore,
+  INITIAL_RSL_RETURN,
+  type RslReturnRecord,
+} from "@/lib/stores/warehouse-rsl-return-store";
 
-type Return = {
-  id: string;
-  orderNo: string;
-  customer: string;
-  product: string;
-  qty: number;
-  reason: string;
-  receivedAt: string;
-  inspectedAt: string;
-  result: "再販可" | "不良在庫" | "廃棄" | "—";
-  refund: number;
-  status: "受付" | "返送中" | "RSL受領" | "検品中" | "在庫戻し済" | "廃棄処理済";
-  trackingNo: string;
-};
-
-const data: Return[] = [
-  { id: "RSL-RET-20260430-008", orderNo: "ORD-2026-08350", customer: "田中 太郎", product: "コットンTシャツ ホワイト M", qty: 1, reason: "サイズ違い", receivedAt: "2026/04/30 09:00", inspectedAt: "2026/04/30 11:00", result: "再販可", refund: 1980, status: "在庫戻し済", trackingNo: "1234-5678-9012" },
-  { id: "RSL-RET-20260430-007", orderNo: "ORD-2026-08348", customer: "山田 花子", product: "デニムジャケット M", qty: 1, reason: "イメージ違い", receivedAt: "2026/04/30 09:30", inspectedAt: "—", result: "—", refund: 14_800, status: "検品中", trackingNo: "2345-6789-0123" },
-  { id: "RSL-RET-20260430-006", orderNo: "ORD-2026-08345", customer: "佐藤 一郎", product: "ステンレスタンブラー 350ml", qty: 2, reason: "破損", receivedAt: "2026/04/30 10:00", inspectedAt: "2026/04/30 11:30", result: "廃棄", refund: 4400, status: "廃棄処理済", trackingNo: "3456-7890-1234" },
-  { id: "RSL-RET-20260429-018", orderNo: "ORD-2026-08340", customer: "渡辺 美咲", product: "オーガニックコーヒー豆", qty: 3, reason: "誤発送", receivedAt: "—", inspectedAt: "—", result: "—", refund: 6000, status: "返送中", trackingNo: "4567-8901-2345" },
-  { id: "RSL-RET-20260429-017", orderNo: "ORD-2026-08338", customer: "木村 健", product: "ナチュラルコスメセット", qty: 1, reason: "肌に合わない", receivedAt: "2026/04/29 14:00", inspectedAt: "2026/04/29 15:00", result: "不良在庫", refund: 6000, status: "在庫戻し済", trackingNo: "5678-9012-3456" },
-  { id: "RSL-RET-20260430-009", orderNo: "ORD-2026-08355", customer: "伊藤 さくら", product: "ワイヤレスイヤホン", qty: 1, reason: "初期不良", receivedAt: "—", inspectedAt: "—", result: "—", refund: 15_000, status: "受付", trackingNo: "—" },
-];
+type Return = RslReturnRecord;
 
 const sb: Record<string, string> = {
   受付: "bg-blue-500/15 text-blue-700",
@@ -58,7 +42,19 @@ export default function RsrLogiReturnPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Return["status"]>("all");
   const [receivedFilter, setReceivedFilter] = useState<Date | undefined>(undefined);
-  const [items, setItems] = useState(data);
+
+  // 永続化（domain: "warehouse-rsl-return-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: rslReturnStore,
+    domain: "warehouse-rsl-return-settings",
+    seed: INITIAL_RSL_RETURN,
+  });
+  const items = useSyncExternalStore(
+    rslReturnStore.subscribe,
+    rslReturnStore.getState,
+    rslReturnStore.getState,
+  );
+
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewReturnForm>(EMPTY_RETURN_FORM);
   const [detailRow, setDetailRow] = useState<Return | null>(null);
@@ -101,7 +97,7 @@ export default function RsrLogiReturnPage() {
       status: "受付",
       trackingNo: "—",
     };
-    setItems((prev) => [newItem, ...prev]);
+    rslReturnStore.upsert(newItem);
     setForm(EMPTY_RETURN_FORM);
     setShowModal(false);
     toast.show("返品受付を登録しました", "success");

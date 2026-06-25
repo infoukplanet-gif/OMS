@@ -10,37 +10,24 @@
  * - 調査依頼: toast + lastUpdate 更新
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton, SecondaryButton, Modal } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  trackingSupportStore,
+  INITIAL_TRACKING_SUPPORT_ISSUES,
+  type TrackingSupportRecord,
+  type TrackingSupportStatus,
+  type TrackingSupportIssueType,
+} from "@/lib/stores/shipment-tracking-support-store";
 import { Search, RefreshCw, Phone, ExternalLink, MessageSquare, Plus } from "lucide-react";
 
-type IssueStatus = "新規" | "対応中" | "保留" | "解決済";
-type IssueType = "未到着遅延" | "誤配送疑い" | "破損連絡" | "番号無効" | "再配達依頼";
-
-type Issue = {
-  id: string;
-  order: string;
-  customer: string;
-  carrier: string;
-  trackingNo: string;
-  issue: IssueType;
-  daysOpen: number;
-  status: IssueStatus;
-  assignee: string;
-  lastUpdate: string;
-};
-
-const INITIAL_ISSUES: Issue[] = [
-  { id: "TS-001", order: "ORD-2026-00824", customer: "山田 太郎", carrier: "ヤマト運輸", trackingNo: "1234-5678-9012", issue: "未到着遅延", daysOpen: 5, status: "対応中", assignee: "佐藤 健", lastUpdate: "2026-04-25 09:24" },
-  { id: "TS-002", order: "ORD-2026-00811", customer: "佐藤 花子", carrier: "佐川急便", trackingNo: "9876-5432-1098", issue: "誤配送疑い", daysOpen: 3, status: "対応中", assignee: "鈴木 美咲", lastUpdate: "2026-04-25 11:42" },
-  { id: "TS-003", order: "ORD-2026-00798", customer: "田中 一郎", carrier: "日本郵便", trackingNo: "5555-4444-3333", issue: "破損連絡", daysOpen: 1, status: "新規", assignee: "—", lastUpdate: "2026-04-24 17:18" },
-  { id: "TS-004", order: "ORD-2026-00775", customer: "鈴木 美咲", carrier: "ヤマト運輸", trackingNo: "INVALID-NUMBER", issue: "番号無効", daysOpen: 7, status: "保留", assignee: "田中 花子", lastUpdate: "2026-04-22 14:08" },
-  { id: "TS-005", order: "ORD-2026-00762", customer: "高橋 健", carrier: "佐川急便", trackingNo: "1111-2222-3333", issue: "再配達依頼", daysOpen: 0, status: "解決済", assignee: "佐藤 健", lastUpdate: "2026-04-25 10:00" },
-  { id: "TS-006", order: "ORD-2026-00754", customer: "渡辺 京子", carrier: "ヤマト運輸", trackingNo: "8888-9999-0000", issue: "未到着遅延", daysOpen: 4, status: "対応中", assignee: "高橋 翔", lastUpdate: "2026-04-25 08:42" },
-];
+type IssueStatus = TrackingSupportStatus;
+type IssueType = TrackingSupportIssueType;
+type Issue = TrackingSupportRecord;
 
 const CARRIER_TRACKING_URL: Record<string, string> = {
   "ヤマト運輸": "https://toi.kuronekoyamato.co.jp/cgi-bin/tneko",
@@ -69,7 +56,19 @@ function nowString(): string {
 
 export default function ShipmentsTrackingSupportPage() {
   const toast = useToast();
-  const [issues, setIssues] = useState<Issue[]>(INITIAL_ISSUES);
+
+  // 永続化（domain: "shipment-tracking-support-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: trackingSupportStore,
+    domain: "shipment-tracking-support-settings",
+    seed: INITIAL_TRACKING_SUPPORT_ISSUES,
+  });
+  const issues = useSyncExternalStore(
+    trackingSupportStore.subscribe,
+    trackingSupportStore.getState,
+    trackingSupportStore.getState,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"すべて" | IssueStatus>("対応中");
   const [issueFilter, setIssueFilter] = useState("すべて");
@@ -96,23 +95,27 @@ export default function ShipmentsTrackingSupportPage() {
   }), [issues]);
 
   function updateIssueStatus(id: string, status: IssueStatus) {
-    setIssues((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, status, lastUpdate: nowString() } : i)),
-    );
+    const current = issues.find((i) => i.id === id);
+    if (!current) return;
+    trackingSupportStore.upsert({ ...current, status, lastUpdate: nowString() });
     toast.show(`${id} のステータスを「${status}」に更新しました`, "success");
   }
 
   function handleReplyMail(issue: Issue) {
-    setIssues((prev) =>
-      prev.map((i) => (i.id === issue.id ? { ...i, lastUpdate: nowString(), status: i.status === "新規" ? "対応中" : i.status } : i)),
-    );
+    trackingSupportStore.upsert({
+      ...issue,
+      lastUpdate: nowString(),
+      status: issue.status === "新規" ? "対応中" : issue.status,
+    });
     toast.show(`${issue.customer} さんへの返信メールを送信しました（${issue.order}）`, "success");
   }
 
   function handleInvestigationRequest(issue: Issue) {
-    setIssues((prev) =>
-      prev.map((i) => (i.id === issue.id ? { ...i, lastUpdate: nowString(), status: i.status === "新規" ? "対応中" : i.status } : i)),
-    );
+    trackingSupportStore.upsert({
+      ...issue,
+      lastUpdate: nowString(),
+      status: issue.status === "新規" ? "対応中" : issue.status,
+    });
     toast.show(`${issue.carrier} へ ${issue.id} の調査依頼を送信しました`, "success");
   }
 
@@ -133,7 +136,7 @@ export default function ShipmentsTrackingSupportPage() {
       assignee: form.assignee.trim() || "—",
       lastUpdate: nowString(),
     };
-    setIssues((prev) => [newIssue, ...prev]);
+    trackingSupportStore.upsert(newIssue);
     toast.show(`問合せ ${id} を登録しました`, "success");
     setNewModalOpen(false);
     setForm(BLANK_FORM);

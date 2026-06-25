@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Wrench, CheckCircle2, AlertCircle, RefreshCw, Users, GitMerge, SkipForward } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  customerAutoCreateStore,
+  INITIAL_CUSTOMER_AUTO_CREATE,
+  type DuplicateAction,
+} from "@/lib/stores/customer-auto-create-store";
 
 type Status = "running" | "stopped";
-type DuplicateAction = "merge" | "skip" | "create";
 
 type AutoProcess = {
   id: string;
@@ -96,15 +101,40 @@ const executionLogs: ExecutionLog[] = [
 
 export default function CustomerAutoCreatePage() {
   const toast = useToast();
-  const [processes, setProcesses] = useState<AutoProcess[]>(initialAutoProcesses);
-  const [sourceRules, setSourceRules] = useState<SourceRule[]>(initialSourceRules);
 
-  const [emailDup, setEmailDup] = useState(true);
-  const [phoneDup, setPhoneDup] = useState(true);
-  const [nameAddrDup, setNameAddrDup] = useState(false);
-  const [logEnabled, setLogEnabled] = useState(true);
-  const [duplicateAction, setDuplicateAction] = useState<DuplicateAction>("merge");
-  const [defaultRank, setDefaultRank] = useState("一般");
+  // 永続化（domain: "customer-auto-create-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: customerAutoCreateStore,
+    domain: "customer-auto-create-settings",
+    seed: INITIAL_CUSTOMER_AUTO_CREATE,
+  });
+  const records = useSyncExternalStore(
+    customerAutoCreateStore.subscribe,
+    customerAutoCreateStore.getState,
+    customerAutoCreateStore.getState,
+  );
+  const config = records[0] ?? INITIAL_CUSTOMER_AUTO_CREATE[0];
+
+  // ストアの config レコードを単一 draft として持ち、復元で identity が変わったら
+  // レンダー中に同期する（effect 内 setState を避ける）。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+
+  // 静的メタデータ（名前・説明・件数）と draft の編集状態（状態/有効）を合成して表示する。
+  const processes: AutoProcess[] = initialAutoProcesses.map((p) => ({
+    ...p,
+    status: draft.processStatus[p.id] ?? p.status,
+  }));
+  const sourceRules: SourceRule[] = initialSourceRules.map((r) => ({
+    ...r,
+    enabled: draft.sourceEnabled[r.source] ?? r.enabled,
+  }));
+  const { emailDup, phoneDup, nameAddrDup, logEnabled, duplicateAction, defaultRank } = draft;
+
   const [logs, setLogs] = useState<ExecutionLog[]>(executionLogs);
   const [reloading, setReloading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -142,16 +172,23 @@ export default function CustomerAutoCreatePage() {
   }
 
   function setProcessStatus(id: string, status: Status) {
-    setProcesses((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
+    setDraft((prev) => ({ ...prev, processStatus: { ...prev.processStatus, [id]: status } }));
   }
 
   function toggleSource(source: string) {
-    setSourceRules((prev) => prev.map((r) => (r.source === source ? { ...r, enabled: !r.enabled } : r)));
+    setDraft((prev) => {
+      const fallback = initialSourceRules.find((r) => r.source === source)?.enabled ?? false;
+      return {
+        ...prev,
+        sourceEnabled: { ...prev.sourceEnabled, [source]: !(prev.sourceEnabled[source] ?? fallback) },
+      };
+    });
   }
 
   function handleSave() {
     if (saving) return;
     setSaving(true);
+    customerAutoCreateStore.upsert({ ...draft, id: "config" });
     setTimeout(() => {
       const running = processes.filter((p) => p.status === "running").length;
       const d = new Date();
@@ -262,22 +299,22 @@ export default function CustomerAutoCreatePage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={emailDup} onChange={(e) => setEmailDup(e.target.checked)} className="accent-blue-500 w-4 h-4" />
+            <input type="checkbox" checked={emailDup} onChange={(e) => setDraft((p) => ({ ...p, emailDup: e.target.checked }))} className="accent-blue-500 w-4 h-4" />
             メールアドレスが同一なら既存顧客と判定
             <HelpHint side="right">最も一般的な判定キー。モール購入では同一メールが同じ人物と見なされます。</HelpHint>
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={phoneDup} onChange={(e) => setPhoneDup(e.target.checked)} className="accent-blue-500 w-4 h-4" />
+            <input type="checkbox" checked={phoneDup} onChange={(e) => setDraft((p) => ({ ...p, phoneDup: e.target.checked }))} className="accent-blue-500 w-4 h-4" />
             電話番号が同一なら既存顧客と判定
             <HelpHint side="right">電話のハイフン有無は内部で正規化して比較します。</HelpHint>
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={nameAddrDup} onChange={(e) => setNameAddrDup(e.target.checked)} className="accent-blue-500 w-4 h-4" />
+            <input type="checkbox" checked={nameAddrDup} onChange={(e) => setDraft((p) => ({ ...p, nameAddrDup: e.target.checked }))} className="accent-blue-500 w-4 h-4" />
             氏名＋住所（郵便番号一致）で判定
             <HelpHint side="right">同一住所での再注文を吸収できますが、家族など別人を誤マージする可能性もあります。</HelpHint>
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={logEnabled} onChange={(e) => setLogEnabled(e.target.checked)} className="accent-blue-500 w-4 h-4" />
+            <input type="checkbox" checked={logEnabled} onChange={(e) => setDraft((p) => ({ ...p, logEnabled: e.target.checked }))} className="accent-blue-500 w-4 h-4" />
             判定結果をログ出力する
             <HelpHint side="right">後から判定理由を追跡できるように、判定ログを保存します。</HelpHint>
           </label>
@@ -296,7 +333,7 @@ export default function CustomerAutoCreatePage() {
             </label>
             <select
               value={duplicateAction}
-              onChange={(e) => setDuplicateAction(e.target.value as DuplicateAction)}
+              onChange={(e) => setDraft((p) => ({ ...p, duplicateAction: e.target.value as DuplicateAction }))}
               className="w-full h-10 px-3 rounded-xl text-sm bg-white/60 border border-white/60 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
               <option value="merge">既存顧客にマージ（推奨）</option>
@@ -311,7 +348,7 @@ export default function CustomerAutoCreatePage() {
             </label>
             <select
               value={defaultRank}
-              onChange={(e) => setDefaultRank(e.target.value)}
+              onChange={(e) => setDraft((p) => ({ ...p, defaultRank: e.target.value }))}
               className="w-full h-10 px-3 rounded-xl text-sm bg-white/60 border border-white/60 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
               <option value="一般">一般</option>

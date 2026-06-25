@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -8,29 +8,14 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Eye, Plus, Search, Truck, X } from "lucide-react";
 import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  rslInboundStore,
+  INITIAL_RSL_INBOUND,
+  type RslInboundRecord,
+} from "@/lib/stores/warehouse-rsl-inbound-store";
 
-type Inbound = {
-  id: string;
-  poNo: string;
-  supplier: string;
-  items: number;
-  qty: number;
-  scheduled: string;
-  arrived: string;
-  carrier: string;
-  trackingNo: string;
-  status: "予定" | "輸送中" | "RSL受入中" | "検品中" | "完了" | "差異あり";
-  diff: number;
-};
-
-const data: Inbound[] = [
-  { id: "RSL-IN-20260430-005", poNo: "PO-2026-0042", supplier: "メーカーA", items: 8, qty: 1200, scheduled: "2026/04/30", arrived: "2026/04/30 09:30", carrier: "佐川急便", trackingNo: "1234-5678-9012", status: "検品中", diff: 0 },
-  { id: "RSL-IN-20260430-004", poNo: "PO-2026-0041", supplier: "メーカーB", items: 5, qty: 800, scheduled: "2026/04/30", arrived: "2026/04/30 08:00", carrier: "ヤマト運輸", trackingNo: "2345-6789-0123", status: "RSL受入中", diff: 0 },
-  { id: "RSL-IN-20260430-003", poNo: "PO-2026-0040", supplier: "問屋C", items: 12, qty: 600, scheduled: "2026/04/30", arrived: "—", carrier: "ヤマト運輸", trackingNo: "3456-7890-1234", status: "輸送中", diff: 0 },
-  { id: "RSL-IN-20260429-018", poNo: "PO-2026-0039", supplier: "メーカーA", items: 4, qty: 450, scheduled: "2026/04/29", arrived: "2026/04/29 14:00", carrier: "佐川急便", trackingNo: "4567-8901-2345", status: "完了", diff: 0 },
-  { id: "RSL-IN-20260429-017", poNo: "PO-2026-0038", supplier: "輸入商社D", items: 8, qty: 1800, scheduled: "2026/04/29", arrived: "2026/04/29 11:30", carrier: "西濃運輸", trackingNo: "5678-9012-3456", status: "差異あり", diff: -8 },
-  { id: "RSL-IN-20260501-001", poNo: "PO-2026-0043", supplier: "メーカーA", items: 6, qty: 980, scheduled: "2026/05/01", arrived: "—", carrier: "—", trackingNo: "—", status: "予定", diff: 0 },
-];
+type Inbound = RslInboundRecord;
 
 const sb: Record<string, string> = {
   予定: "bg-gray-500/15 text-gray-600",
@@ -55,7 +40,19 @@ export default function RsrLogiInboundPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Inbound["status"]>("all");
   const [scheduledFilter, setScheduledFilter] = useState<Date | undefined>(undefined);
-  const [items, setItems] = useState(data);
+
+  // 永続化（domain: "warehouse-rsl-inbound-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: rslInboundStore,
+    domain: "warehouse-rsl-inbound-settings",
+    seed: INITIAL_RSL_INBOUND,
+  });
+  const items = useSyncExternalStore(
+    rslInboundStore.subscribe,
+    rslInboundStore.getState,
+    rslInboundStore.getState,
+  );
+
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewInboundForm>(EMPTY_FORM);
   const [detailRow, setDetailRow] = useState<Inbound | null>(null);
@@ -100,7 +97,7 @@ export default function RsrLogiInboundPage() {
       status: "予定",
       diff: 0,
     };
-    setItems((prev) => [newItem, ...prev]);
+    rslInboundStore.upsert(newItem);
     setForm(EMPTY_FORM);
     setShowModal(false);
     toast.show("入荷予定を登録しました", "success");

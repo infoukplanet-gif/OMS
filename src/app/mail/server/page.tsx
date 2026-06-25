@@ -1,83 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Plus, Send, Server, Shield, Trash2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  mailServerStore,
+  INITIAL_MAIL_SERVERS,
+  type MailServerRecord,
+} from "@/lib/stores/mail-server-store";
 
-type Smtp = {
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  username: string;
-  encryption: "none" | "ssl" | "tls";
-  fromAddress: string;
-  fromName: string;
-  isPrimary: boolean;
-  status: "ok" | "warning" | "error";
-  lastChecked: string;
-  daily: number;
-  monthly: number;
-  password: string; // モックマスク値のみ保持（実秘密情報は扱わない）
-  timeoutSec: number;
-};
-
-const initialSmtp: Smtp[] = [
-  {
-    id: "smtp-primary",
-    name: "メイン送信サーバ（SendGrid）",
-    host: "smtp.sendgrid.net",
-    port: 587,
-    username: "apikey",
-    encryption: "tls",
-    fromAddress: "info@example.com",
-    fromName: "OMSショップ",
-    isPrimary: true,
-    status: "ok",
-    lastChecked: "2026/04/30 09:30",
-    daily: 8240,
-    monthly: 124530,
-    password: "********",
-    timeoutSec: 30,
-  },
-  {
-    id: "smtp-fallback",
-    name: "フォールバック（Amazon SES）",
-    host: "email-smtp.ap-northeast-1.amazonaws.com",
-    port: 587,
-    username: "AKIAxxxxxxxxxxxx",
-    encryption: "tls",
-    fromAddress: "info@example.com",
-    fromName: "OMSショップ",
-    isPrimary: false,
-    status: "ok",
-    lastChecked: "2026/04/30 08:00",
-    daily: 0,
-    monthly: 1230,
-    password: "********",
-    timeoutSec: 30,
-  },
-  {
-    id: "smtp-newsletter",
-    name: "メルマガ専用（Postmark）",
-    host: "smtp.postmarkapp.com",
-    port: 587,
-    username: "postmark-token",
-    encryption: "tls",
-    fromAddress: "newsletter@example.com",
-    fromName: "OMSショップ お得情報",
-    isPrimary: false,
-    status: "warning",
-    lastChecked: "2026/04/29 22:00",
-    daily: 0,
-    monthly: 5400,
-    password: "********",
-    timeoutSec: 30,
-  },
-];
+type Smtp = MailServerRecord;
 
 const sb: Record<string, string> = {
   ok: "bg-emerald-500/15 text-emerald-700",
@@ -93,8 +29,20 @@ const sbLabel: Record<string, string> = {
 
 export default function MailServerPage() {
   const toast = useToast();
-  const [servers, setServers] = useState(initialSmtp);
-  const [activeId, setActiveId] = useState(initialSmtp[0].id);
+
+  // 永続化（domain: "mail-server-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: mailServerStore,
+    domain: "mail-server-settings",
+    seed: INITIAL_MAIL_SERVERS,
+  });
+  const servers = useSyncExternalStore(
+    mailServerStore.subscribe,
+    mailServerStore.getState,
+    mailServerStore.getState,
+  );
+
+  const [activeId, setActiveId] = useState(INITIAL_MAIL_SERVERS[0].id);
   const [testTarget, setTestTarget] = useState("");
 
   const [testing, setTesting] = useState(false);
@@ -102,11 +50,16 @@ export default function MailServerPage() {
   const [lastTestSent, setLastTestSent] = useState<{ target: string; at: string } | null>(null);
 
   const active = servers.find((s) => s.id === activeId) || servers[0];
-  const update = (patch: Partial<Smtp>) =>
-    setServers((prev) => prev.map((s) => (s.id === active.id ? { ...s, ...patch } : s)));
+  const update = (patch: Partial<Smtp>) => {
+    if (!active) return;
+    mailServerStore.upsert({ ...active, ...patch });
+  };
 
-  const setPrimary = (id: string) =>
-    setServers((prev) => prev.map((s) => ({ ...s, isPrimary: s.id === id })));
+  const setPrimary = (id: string) => {
+    for (const s of servers) {
+      mailServerStore.upsert({ ...s, isPrimary: s.id === id });
+    }
+  };
 
   const nowStamp = (): string => {
     const d = new Date();
@@ -203,7 +156,7 @@ export default function MailServerPage() {
                   password: "",
                   timeoutSec: 30,
                 };
-                setServers((prev) => [...prev, newServer]);
+                mailServerStore.upsert(newServer);
                 setActiveId(newServer.id);
                 toast.show("新規 SMTP サーバを追加しました。接続情報を入力してください", "success");
               }}
@@ -252,7 +205,12 @@ export default function MailServerPage() {
                   </SecondaryButton>
                 )}
                 <button
-                  onClick={() => { setServers((prev) => prev.filter((s) => s.id !== active.id)); toast.show("サーバを削除しました", "info"); }}
+                  onClick={() => {
+                    mailServerStore.remove(active.id);
+                    const remaining = mailServerStore.getState();
+                    if (remaining.length > 0) setActiveId(remaining[0].id);
+                    toast.show("サーバを削除しました", "info");
+                  }}
                   disabled={active.isPrimary}
                   className="p-2 rounded-xl bg-red-500/15 text-red-700 hover:bg-red-500/25 disabled:opacity-30 disabled:cursor-not-allowed"
                 >

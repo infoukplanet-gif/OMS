@@ -1,100 +1,20 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  mailFreeTemplateStore,
+  INITIAL_MAIL_FREE_TEMPLATES,
+  type MailFreeTemplateRecord,
+} from "@/lib/stores/mail-free-template-store";
 import { Copy, Edit, Eye, Plus, Search, Trash2, X } from "lucide-react";
 
-type FreeTemplate = {
-  id: string;
-  name: string;
-  category: string;
-  subject: string;
-  body: string;
-  signature: string;
-  shared: boolean;
-  updated: string;
-  createdBy: string;
-  uses: number;
-};
-
-const initial: FreeTemplate[] = [
-  {
-    id: "free-apology",
-    name: "お詫び（発送遅延）",
-    category: "お詫び",
-    subject: "【お詫び】商品発送遅延について（{{order_id}}）",
-    body: "{{customer_name}} 様\n\nこの度はご注文の商品発送が遅延しておりますこと、深くお詫び申し上げます。\n発送見込み日：{{ship_eta}}",
-    signature: "default",
-    shared: true,
-    updated: "2026/04/20",
-    createdBy: "山田",
-    uses: 45,
-  },
-  {
-    id: "free-stockout",
-    name: "在庫切れご連絡",
-    category: "問い合わせ",
-    subject: "【ご連絡】在庫切れのお知らせ（{{order_id}}）",
-    body: "{{customer_name}} 様\n\nご注文いただきました商品が在庫切れとなりました。\n以下より対応をお選びください。",
-    signature: "default",
-    shared: true,
-    updated: "2026/04/15",
-    createdBy: "佐藤",
-    uses: 18,
-  },
-  {
-    id: "free-cancel",
-    name: "キャンセル受付",
-    category: "事務連絡",
-    subject: "【受付】キャンセル受付完了のお知らせ（{{order_id}}）",
-    body: "{{customer_name}} 様\n\nご注文のキャンセルを承りました。",
-    signature: "default",
-    shared: true,
-    updated: "2026/04/10",
-    createdBy: "田中",
-    uses: 24,
-  },
-  {
-    id: "free-return",
-    name: "返品受付",
-    category: "事務連絡",
-    subject: "【受付】返品受付のお知らせ（{{order_id}}）",
-    body: "{{customer_name}} 様\n\n返品の受付を承りました。\n返送先：{{return_address}}",
-    signature: "default",
-    shared: true,
-    updated: "2026/04/05",
-    createdBy: "鈴木",
-    uses: 32,
-  },
-  {
-    id: "free-vip",
-    name: "VIP顧客挨拶",
-    category: "営業",
-    subject: "{{customer_name}} 様、いつもありがとうございます",
-    body: "いつも {{shop_name}} をご利用いただきありがとうございます。",
-    signature: "vip",
-    shared: false,
-    updated: "2026/03/28",
-    createdBy: "山田",
-    uses: 12,
-  },
-  {
-    id: "free-survey",
-    name: "アンケート依頼",
-    category: "営業",
-    subject: "アンケートご協力のお願い（{{shop_name}}）",
-    body: "{{customer_name}} 様\n\n商品改善のためアンケートにご協力ください。",
-    signature: "default",
-    shared: true,
-    updated: "2026/03/20",
-    createdBy: "佐藤",
-    uses: 88,
-  },
-];
+type FreeTemplate = MailFreeTemplateRecord;
 
 const categories = ["お詫び", "問い合わせ", "事務連絡", "営業"];
 
@@ -103,7 +23,19 @@ const todayLabel = () =>
 
 export default function MailFreeTemplatePage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // 永続化（domain: "mail-free-template-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: mailFreeTemplateStore,
+    domain: "mail-free-template-settings",
+    seed: INITIAL_MAIL_FREE_TEMPLATES,
+  });
+  const items = useSyncExternalStore(
+    mailFreeTemplateStore.subscribe,
+    mailFreeTemplateStore.getState,
+    mailFreeTemplateStore.getState,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
   const [shared, setShared] = useState<"all" | "shared" | "personal">("all");
@@ -113,8 +45,11 @@ export default function MailFreeTemplatePage() {
   const idSeqRef = useRef(0);
   const newTemplateId = () => `free-new-${++idSeqRef.current}`;
 
-  const updateItem = (id: string, patch: Partial<FreeTemplate>) =>
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch, updated: todayLabel() } : i)));
+  const updateItem = (id: string, patch: Partial<FreeTemplate>) => {
+    const current = mailFreeTemplateStore.findById(id);
+    if (!current) return;
+    mailFreeTemplateStore.upsert({ ...current, ...patch, updated: todayLabel() });
+  };
 
   const exportCsv = () => {
     downloadCsv(
@@ -139,19 +74,19 @@ export default function MailFreeTemplatePage() {
       createdBy: "管理者",
       uses: 0,
     };
-    setItems((prev) => [...prev, item]);
+    mailFreeTemplateStore.upsert(item);
     setPanel({ id, mode: "edit" });
     toast.show("新規テンプレートを追加しました。内容を編集してください", "success");
   };
 
   const duplicateTemplate = (t: FreeTemplate) => {
     const id = newTemplateId();
-    setItems((prev) => [...prev, { ...t, id, name: `${t.name}（コピー）`, uses: 0, updated: todayLabel() }]);
+    mailFreeTemplateStore.upsert({ ...t, id, name: `${t.name}（コピー）`, uses: 0, updated: todayLabel() });
     toast.show(`${t.name} を複製しました`, "success");
   };
 
   const removeTemplate = (t: FreeTemplate) => {
-    setItems((prev) => prev.filter((p) => p.id !== t.id));
+    mailFreeTemplateStore.remove(t.id);
     setPanel((p) => (p?.id === t.id ? null : p));
     toast.show(`${t.name} を削除しました`, "info");
   };

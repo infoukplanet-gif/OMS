@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  warehouseLogizardStore,
+  INITIAL_WAREHOUSE_LOGIZARD,
+} from "@/lib/stores/warehouse-logizard-store";
 import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
 
 const INITIAL_EVENTS = [
@@ -20,16 +25,31 @@ type ConnStatus = "正常" | "確認中" | "エラー";
 
 export default function LogizardPage() {
   const toast = useToast();
-  const [host, setHost] = useState("https://api.logizard-zero.com");
-  const [companyCode, setCompanyCode] = useState("OMS-CORP-0001");
-  const [centerCode, setCenterCode] = useState("CENTER-TKY-001");
-  const [apiKey, setApiKey] = useState("lzd_xxxx_yyyyyyyyyyyyyyyy");
-  const [syncInterval, setSyncInterval] = useState("15分");
-  const [notifyEmail, setNotifyEmail] = useState("ops@example.com");
-  const [autoShip, setAutoShip] = useState(true);
-  const [autoStock, setAutoStock] = useState(true);
-  const [autoInbound, setAutoInbound] = useState(true);
-  const [autoReturn, setAutoReturn] = useState(false);
+
+  // 永続化（domain: "warehouse-logizard-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: warehouseLogizardStore,
+    domain: "warehouse-logizard-settings",
+    seed: INITIAL_WAREHOUSE_LOGIZARD,
+  });
+  const records = useSyncExternalStore(
+    warehouseLogizardStore.subscribe,
+    warehouseLogizardStore.getState,
+    warehouseLogizardStore.getState,
+  );
+  const config = records[0] ?? INITIAL_WAREHOUSE_LOGIZARD[0];
+
+  // ストアの config レコードを単一の draft state として持つ。
+  // 復元で config の identity が変わったらレンダー中に draft を同期する
+  // （effect 内 setState を避ける React 公式パターン）。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const { host, apiKey, companyCode, centerCode, syncInterval, notifyEmail, autoShip, autoStock, autoInbound, autoReturn } = draft;
+
   const [connStatus, setConnStatus] = useState<ConnStatus>("正常");
   const [lastChecked, setLastChecked] = useState("10:32");
   const [saving, setSaving] = useState(false);
@@ -52,6 +72,7 @@ export default function LogizardPage() {
     if (saving) return;
     setSaving(true);
     setSaved(false);
+    warehouseLogizardStore.upsert({ ...draft, id: "config" });
     setTimeout(() => {
       setSaving(false);
       setSaved(true);
@@ -135,29 +156,29 @@ export default function LogizardPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
           <label className="space-y-1">
             <span className="text-xs text-gray-500">APIホスト</span>
-            <input value={host} onChange={(e) => setHost(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
+            <input value={host} onChange={(e) => setDraft((p) => ({ ...p, host: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">APIキー</span>
-            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
+            <input value={apiKey} onChange={(e) => setDraft((p) => ({ ...p, apiKey: e.target.value }))} type="password" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">会社コード</span>
-            <input value={companyCode} onChange={(e) => setCompanyCode(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
+            <input value={companyCode} onChange={(e) => setDraft((p) => ({ ...p, companyCode: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">センターコード</span>
-            <input value={centerCode} onChange={(e) => setCenterCode(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
+            <input value={centerCode} onChange={(e) => setDraft((p) => ({ ...p, centerCode: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">同期間隔</span>
-            <select value={syncInterval} onChange={(e) => setSyncInterval(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={syncInterval} onChange={(e) => setDraft((p) => ({ ...p, syncInterval: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["5分", "15分", "30分", "60分", "Webhookのみ"].map((v) => <option key={v}>{v}</option>)}
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">通知メール（エラー時）</span>
-            <input type="email" value={notifyEmail} onChange={(e) => setNotifyEmail(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
+            <input type="email" value={notifyEmail} onChange={(e) => setDraft((p) => ({ ...p, notifyEmail: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60" />
           </label>
         </div>
       </GlassCard>
@@ -167,19 +188,19 @@ export default function LogizardPage() {
           連携機能 <HelpHint>各機能のON/OFFと方向。OFFにすると該当データの自動連携が停止します。</HelpHint>
         </h2>
         <div className="space-y-2">
-          {[
-            { key: "ship", label: "出荷指示送信（OMS → ロジザード）", desc: "受注確定後にピッキング指示を送信", val: autoShip, setter: setAutoShip },
-            { key: "stock", label: "在庫数取得（ロジザード → OMS）", desc: "リアルタイム在庫数をOMSに反映", val: autoStock, setter: setAutoStock },
-            { key: "inbound", label: "入荷登録（OMS → ロジザード）", desc: "発注書の入荷予定をロジザードに登録", val: autoInbound, setter: setAutoInbound },
-            { key: "return", label: "返品入荷取込（ロジザード → OMS）", desc: "返品商品の入荷実績を自動取込", val: autoReturn, setter: setAutoReturn },
-          ].map((f) => (
+          {([
+            { key: "autoShip", label: "出荷指示送信（OMS → ロジザード）", desc: "受注確定後にピッキング指示を送信", val: autoShip },
+            { key: "autoStock", label: "在庫数取得（ロジザード → OMS）", desc: "リアルタイム在庫数をOMSに反映", val: autoStock },
+            { key: "autoInbound", label: "入荷登録（OMS → ロジザード）", desc: "発注書の入荷予定をロジザードに登録", val: autoInbound },
+            { key: "autoReturn", label: "返品入荷取込（ロジザード → OMS）", desc: "返品商品の入荷実績を自動取込", val: autoReturn },
+          ] as const).map((f) => (
             <div key={f.key} className="flex items-center justify-between p-3 rounded-xl bg-white/40 hover:bg-white/60 transition-colors">
               <div>
                 <p className="text-sm font-medium text-gray-800">{f.label}</p>
                 <p className="text-xs text-gray-500">{f.desc}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={f.val} onChange={(e) => f.setter(e.target.checked)} className="sr-only peer" />
+                <input type="checkbox" checked={f.val} onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.checked }))} className="sr-only peer" />
                 <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
               </label>
             </div>

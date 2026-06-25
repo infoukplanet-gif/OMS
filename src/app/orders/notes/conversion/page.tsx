@@ -1,22 +1,32 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Plus, Pencil, Trash2, Search, ArrowRight } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderNotesConversionStore,
+  INITIAL_NOTES_CONVERSION,
+  type NotesConversionRecord,
+} from "@/lib/stores/order-notes-conversion-store";
 
-type Row = { id: number; from: string; to: string; contains: boolean; enabled: boolean };
-
-const initial: Row[] = [
-  { id: 1, from: "午前中", to: "配達希望: 午前中", contains: true, enabled: true },
-  { id: 2, from: "のし", to: "のし対応必要", contains: true, enabled: true },
-  { id: 3, from: "領収書", to: "領収書同封希望", contains: true, enabled: true },
-  { id: 4, from: "ギフト", to: "ギフト包装希望", contains: true, enabled: true },
-  { id: 5, from: "不在時", to: "不在時は置き配でも可", contains: true, enabled: false },
-];
+type Row = NotesConversionRecord;
 
 export default function NotesConversionPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(initial);
+
+  // 永続化（domain: "order-notes-conversion-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: orderNotesConversionStore,
+    domain: "order-notes-conversion-settings",
+    seed: INITIAL_NOTES_CONVERSION,
+  });
+  const rows = useSyncExternalStore(
+    orderNotesConversionStore.subscribe,
+    orderNotesConversionStore.getState,
+    orderNotesConversionStore.getState,
+  );
+
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -65,21 +75,21 @@ export default function NotesConversionPage() {
     const dup = rows.some((r) => r.from === f && r.id !== editing?.id);
     if (dup) return toast.show(`「${f}」は既に登録されています`, "error");
     if (editing) {
-      setRows((prev) => prev.map((r) => (r.id === editing.id ? { ...r, from: f, to: t, contains, enabled } : r)));
+      orderNotesConversionStore.upsert({ id: editing.id, from: f, to: t, contains, enabled });
       toast.show("更新しました");
     } else {
-      const id = Math.max(0, ...rows.map((r) => r.id)) + 1;
-      setRows((prev) => [...prev, { id, from: f, to: t, contains, enabled }]);
+      const id = String(Math.max(0, ...rows.map((r) => Number(r.id) || 0)) + 1);
+      orderNotesConversionStore.upsert({ id, from: f, to: t, contains, enabled });
       toast.show("追加しました");
     }
     setOpen(false);
   }
   function toggleEnabled(r: Row) {
-    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, enabled: !x.enabled } : x)));
+    orderNotesConversionStore.upsert({ ...r, enabled: !r.enabled });
   }
   function confirmDelete() {
     if (!confirmTarget) return;
-    setRows((prev) => prev.filter((r) => r.id !== confirmTarget.id));
+    orderNotesConversionStore.remove(confirmTarget.id);
     toast.show("削除しました");
     setConfirmTarget(null);
   }

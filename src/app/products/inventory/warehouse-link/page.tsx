@@ -1,22 +1,19 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Warehouse, Store, Link2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  warehouseLinkStore,
+  INITIAL_WAREHOUSE_LINK,
+  type WarehouseLinkRecord,
+} from "@/lib/stores/product-warehouse-link-store";
 
 type Shop = { key: string; label: string; mall: string };
 type WarehouseDef = { key: string; label: string; kind: "自社" | "外部倉庫" | "モール倉庫" };
-type Link = {
-  id: number;
-  shop: string;
-  warehouse: string;
-  priority: number;
-  ratio: number;
-  enabled: boolean;
-  lowStockThreshold: number;
-  autoReserve: boolean;
-};
+type Link = WarehouseLinkRecord;
 
 const SHOPS: Shop[] = [
   { key: "rakuten", label: "楽天市場店", mall: "楽天市場" },
@@ -33,42 +30,57 @@ const WAREHOUSES: WarehouseDef[] = [
   { key: "3pl_tokyo", label: "3PL東京", kind: "外部倉庫" },
 ];
 
-const initialLinks: Link[] = [
-  { id: 1, shop: "rakuten", warehouse: "main", priority: 1, ratio: 70, enabled: true, lowStockThreshold: 5, autoReserve: true },
-  { id: 2, shop: "rakuten", warehouse: "osaka", priority: 2, ratio: 30, enabled: true, lowStockThreshold: 3, autoReserve: true },
-  { id: 3, shop: "yahoo", warehouse: "main", priority: 1, ratio: 100, enabled: true, lowStockThreshold: 5, autoReserve: true },
-  { id: 4, shop: "amazon", warehouse: "fulfillment", priority: 1, ratio: 100, enabled: true, lowStockThreshold: 10, autoReserve: false },
-  { id: 5, shop: "shopify", warehouse: "main", priority: 1, ratio: 50, enabled: true, lowStockThreshold: 5, autoReserve: true },
-  { id: 6, shop: "shopify", warehouse: "3pl_tokyo", priority: 2, ratio: 50, enabled: false, lowStockThreshold: 5, autoReserve: false },
-];
-
 function shopLabel(key: string) { return SHOPS.find((s) => s.key === key)?.label ?? key; }
 function warehouseKind(key: string) { return WAREHOUSES.find((w) => w.key === key)?.kind ?? "自社"; }
 
 export default function WarehouseLinkPage() {
   const toast = useToast();
-  const [links, setLinks] = useState<Link[]>(initialLinks);
+
+  // 永続化（domain: "product-warehouse-link-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: warehouseLinkStore,
+    domain: "product-warehouse-link-settings",
+    seed: INITIAL_WAREHOUSE_LINK,
+  });
+  const links = useSyncExternalStore(
+    warehouseLinkStore.subscribe,
+    warehouseLinkStore.getState,
+    warehouseLinkStore.getState,
+  );
   const [filterShop, setFilterShop] = useState<string>("all");
 
   const filtered = filterShop === "all" ? links : links.filter((l) => l.shop === filterShop);
 
-  function updateLink<K extends keyof Link>(id: number, key: K, value: Link[K]) {
-    setLinks((prev) => prev.map((l) => (l.id === id ? { ...l, [key]: value } : l)));
+  function updateLink<K extends keyof Link>(id: string, key: K, value: Link[K]) {
+    const current = warehouseLinkStore.findById(id);
+    if (!current) return;
+    warehouseLinkStore.upsert({ ...current, [key]: value });
   }
 
-  function removeLink(id: number) {
+  function removeLink(id: string) {
     if (!confirm("この連携設定を削除しますか？")) return;
-    setLinks((prev) => prev.filter((l) => l.id !== id));
+    warehouseLinkStore.remove(id);
     toast.show("連携を削除しました");
   }
 
   function addLink() {
-    const id = Math.max(0, ...links.map((l) => l.id)) + 1;
-    setLinks((prev) => [...prev, {
-      id, shop: "rakuten", warehouse: "main", priority: prev.filter((p) => p.shop === "rakuten").length + 1,
-      ratio: 0, enabled: true, lowStockThreshold: 5, autoReserve: true,
-    }]);
+    const nextNo = Math.max(0, ...links.map((l) => Number(l.id) || 0)) + 1;
+    warehouseLinkStore.upsert({
+      id: String(nextNo),
+      shop: "rakuten",
+      warehouse: "main",
+      priority: links.filter((p) => p.shop === "rakuten").length + 1,
+      ratio: 0,
+      enabled: true,
+      lowStockThreshold: 5,
+      autoReserve: true,
+    });
     toast.show("連携を追加しました");
+  }
+
+  function discardChanges() {
+    warehouseLinkStore.setItems(INITIAL_WAREHOUSE_LINK);
+    toast.show("変更を破棄しました");
   }
 
   function handleSave() {
@@ -230,7 +242,7 @@ export default function WarehouseLinkPage() {
       </GlassCard>
 
       <div className="flex justify-end gap-2">
-        <SecondaryButton onClick={() => setLinks(initialLinks)}>変更を破棄</SecondaryButton>
+        <SecondaryButton onClick={discardChanges}>変更を破棄</SecondaryButton>
         <PrimaryButton onClick={handleSave}>設定を保存</PrimaryButton>
       </div>
     </div>

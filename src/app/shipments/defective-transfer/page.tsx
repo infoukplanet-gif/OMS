@@ -1,30 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  shipmentDefectiveTransferStore,
+  INITIAL_DEFECTIVE_TRANSFER,
+  type DefectiveTransferRecord,
+} from "@/lib/stores/shipment-defective-transfer-store";
 import { ArrowRightLeft, Plus, Search, History, X } from "lucide-react";
 
-type Row = {
-  id: string;
-  order: string;
-  product: string;
-  sku: string;
-  qty: number;
-  reason: string;
-  from: string;
-  to: string;
-  status: "承認待ち" | "振替待ち" | "振替完了";
-};
-
-const INITIAL: Row[] = [
-  { id: "DT-001", order: "ORD-2026-00842", product: "Tシャツ ホワイト M", sku: "TS-WH-M", qty: 2, reason: "検品不良", from: "東京本社倉庫", to: "返品倉庫", status: "振替待ち" },
-  { id: "DT-002", order: "ORD-2026-00838", product: "スニーカー ブラック 27cm", sku: "SN-BK-27", qty: 1, reason: "配送中破損", from: "東京本社倉庫", to: "返品倉庫", status: "振替完了" },
-  { id: "DT-003", order: "ORD-2026-00835", product: "ジャケット ネイビー L", sku: "JK-NV-L", qty: 1, reason: "色違い", from: "大阪倉庫", to: "返品倉庫", status: "承認待ち" },
-  { id: "DT-004", order: "ORD-2026-00829", product: "ワイヤレスイヤホン Pro", sku: "WEP-001", qty: 3, reason: "充電不良", from: "九州物流センター", to: "メーカー返却", status: "振替待ち" },
-];
+type Row = DefectiveTransferRecord;
 
 const REASONS = ["検品不良", "配送中破損", "色違い", "充電不良", "サイズ不良", "初期不良"];
 const FROM_WAREHOUSES = ["東京本社倉庫", "大阪倉庫", "九州物流センター"];
@@ -59,7 +48,18 @@ const HISTORY = [
 
 export default function ShipmentsDefectiveTransferPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(INITIAL);
+
+  // 永続化（domain: "shipment-defective-transfer-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: shipmentDefectiveTransferStore,
+    domain: "shipment-defective-transfer-settings",
+    seed: INITIAL_DEFECTIVE_TRANSFER,
+  });
+  const rows = useSyncExternalStore(
+    shipmentDefectiveTransferStore.subscribe,
+    shipmentDefectiveTransferStore.getState,
+    shipmentDefectiveTransferStore.getState,
+  );
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("すべて");
   const [showModal, setShowModal] = useState(false);
@@ -75,7 +75,9 @@ export default function ShipmentsDefectiveTransferPage() {
   }, [rows, keyword, statusFilter]);
 
   const execute = (id: string) => {
-    setRows(rows.map((r) => (r.id === id ? { ...r, status: "振替完了" } : r)));
+    const current = shipmentDefectiveTransferStore.findById(id);
+    if (!current) return;
+    shipmentDefectiveTransferStore.upsert({ ...current, status: "振替完了" });
     toast.show(`${id} の振替を実行しました`, "success");
   };
 
@@ -108,7 +110,7 @@ export default function ShipmentsDefectiveTransferPage() {
       to: form.to,
       status: "承認待ち",
     };
-    setRows([newRow, ...rows]);
+    shipmentDefectiveTransferStore.upsert(newRow);
     setShowModal(false);
     toast.show(`${newRow.id} を振替登録しました（承認待ち）`, "success");
   };

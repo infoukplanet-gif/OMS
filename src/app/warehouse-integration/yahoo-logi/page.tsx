@@ -1,10 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  warehouseYahooLogiStore,
+  INITIAL_WAREHOUSE_YAHOO_LOGI,
+} from "@/lib/stores/warehouse-yahoo-logi-store";
 import { CheckCircle2, Loader2, RefreshCw, XCircle } from "lucide-react";
 
 const INITIAL_EVENTS = [
@@ -19,14 +24,31 @@ type ConnStatus = "正常" | "確認中" | "エラー";
 
 export default function YahooLogiPage() {
   const toast = useToast();
-  const [storeId, setStoreId] = useState("oms-yshop");
-  const [token, setToken] = useState("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...");
-  const [partnerCode, setPartnerCode] = useState("YL-2026-00845");
-  const [syncStock, setSyncStock] = useState(true);
-  const [autoShip, setAutoShip] = useState(true);
-  const [autoReturn, setAutoReturn] = useState(true);
-  const [syncInterval, setSyncInterval] = useState("15分");
-  const [shipTiming, setShipTiming] = useState("受注確定後即時");
+
+  // 永続化（domain: "warehouse-yahoo-logi-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: warehouseYahooLogiStore,
+    domain: "warehouse-yahoo-logi-settings",
+    seed: INITIAL_WAREHOUSE_YAHOO_LOGI,
+  });
+  const records = useSyncExternalStore(
+    warehouseYahooLogiStore.subscribe,
+    warehouseYahooLogiStore.getState,
+    warehouseYahooLogiStore.getState,
+  );
+  const config = records[0] ?? INITIAL_WAREHOUSE_YAHOO_LOGI[0];
+
+  // ストアの config レコードを単一の draft state として持つ。
+  // 復元で config の identity が変わったらレンダー中に draft を同期する
+  // （effect 内 setState を避ける React 公式パターン）。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const { storeId, token, partnerCode, syncStock, autoShip, autoReturn, syncInterval, shipTiming } = draft;
+
   const [connStatus, setConnStatus] = useState<ConnStatus>("正常");
   const [lastChecked, setLastChecked] = useState("10:25");
   const [saving, setSaving] = useState(false);
@@ -49,6 +71,7 @@ export default function YahooLogiPage() {
     if (saving) return;
     setSaving(true);
     setSaved(false);
+    warehouseYahooLogiStore.upsert({ ...draft, id: "config" });
     setTimeout(() => {
       setSaving(false);
       setSaved(true);
@@ -132,25 +155,25 @@ export default function YahooLogiPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
           <label className="space-y-1">
             <span className="text-xs text-gray-500">Yahoo!ショップID</span>
-            <input value={storeId} onChange={(e) => setStoreId(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
+            <input value={storeId} onChange={(e) => setDraft((p) => ({ ...p, storeId: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">パートナーコード（Yahoo!ロジ加盟店番号）</span>
-            <input value={partnerCode} onChange={(e) => setPartnerCode(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
+            <input value={partnerCode} onChange={(e) => setDraft((p) => ({ ...p, partnerCode: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono" />
           </label>
           <label className="space-y-1 md:col-span-2">
             <span className="text-xs text-gray-500">アクセストークン</span>
-            <input value={token} onChange={(e) => setToken(e.target.value)} type="password" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
+            <input value={token} onChange={(e) => setDraft((p) => ({ ...p, token: e.target.value }))} type="password" className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60 font-mono text-xs" />
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">在庫同期間隔</span>
-            <select value={syncInterval} onChange={(e) => setSyncInterval(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={syncInterval} onChange={(e) => setDraft((p) => ({ ...p, syncInterval: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["5分", "15分", "30分", "60分"].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </label>
           <label className="space-y-1">
             <span className="text-xs text-gray-500">出荷指示送信タイミング</span>
-            <select value={shipTiming} onChange={(e) => setShipTiming(e.target.value)} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
+            <select value={shipTiming} onChange={(e) => setDraft((p) => ({ ...p, shipTiming: e.target.value }))} className="w-full px-3 py-2 rounded-xl bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60">
               {["受注確定後即時", "15分間隔バッチ", "30分間隔バッチ", "1日1回（13:00）"].map((v) => <option key={v} value={v}>{v}</option>)}
             </select>
           </label>
@@ -160,18 +183,18 @@ export default function YahooLogiPage() {
       <GlassCard>
         <h2 className="text-sm font-semibold text-gray-800 mb-3">連携機能</h2>
         <div className="space-y-2">
-          {[
-            { label: "出荷指示送信（自動委託）", desc: "Yahoo!受注を自動でロジに委託", val: autoShip, setter: setAutoShip },
-            { label: "在庫数同期", desc: "委託在庫の最新数をOMSに反映", val: syncStock, setter: setSyncStock },
-            { label: "返品入荷取込", desc: "返品入荷の実績取込", val: autoReturn, setter: setAutoReturn },
-          ].map((f, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-white/40 hover:bg-white/60 transition-colors">
+          {([
+            { key: "autoShip", label: "出荷指示送信（自動委託）", desc: "Yahoo!受注を自動でロジに委託", val: autoShip },
+            { key: "syncStock", label: "在庫数同期", desc: "委託在庫の最新数をOMSに反映", val: syncStock },
+            { key: "autoReturn", label: "返品入荷取込", desc: "返品入荷の実績取込", val: autoReturn },
+          ] as const).map((f) => (
+            <div key={f.key} className="flex items-center justify-between p-3 rounded-xl bg-white/40 hover:bg-white/60 transition-colors">
               <div>
                 <p className="text-sm font-medium text-gray-800">{f.label}</p>
                 <p className="text-xs text-gray-500">{f.desc}</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={f.val} onChange={(e) => f.setter(e.target.checked)} className="sr-only peer" />
+                <input type="checkbox" checked={f.val} onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.checked }))} className="sr-only peer" />
                 <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
               </label>
             </div>

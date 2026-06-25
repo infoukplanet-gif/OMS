@@ -62,7 +62,22 @@ export type SnapshotDomain =
   | "misc-settings"
   | "auto-mail-settings"
   | "automation-jobs"
-  | "product-auto-create-settings";
+  | "product-auto-create-settings"
+  | "customer-auto-create-settings"
+  | "mail-auto-template-settings"
+  | "mail-free-template-settings"
+  | "mail-schedule-settings"
+  | "mail-server-settings"
+  | "order-notes-conversion-settings"
+  | "payment-np-connect-settings"
+  | "product-warehouse-link-settings"
+  | "shipment-defective-transfer-settings"
+  | "shipment-tracking-support-settings"
+  | "warehouse-logizard-settings"
+  | "warehouse-yahoo-logi-settings"
+  | "warehouse-rsl-inbound-settings"
+  | "warehouse-rsl-return-settings"
+  | "warehouse-rsl-setup-settings";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;

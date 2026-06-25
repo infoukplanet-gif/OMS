@@ -1,42 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  mailScheduleStore,
+  INITIAL_MAIL_SCHEDULE,
+  DEFAULT_SCHEDULE_RULES,
+  type ScheduleRule,
+} from "@/lib/stores/mail-schedule-store";
 import { Calendar, CheckCircle2, Loader2, Plus, Save, Trash2 } from "lucide-react";
 
 const dows = ["月", "火", "水", "木", "金", "土", "日"];
-
-type ScheduleRule = {
-  id: string;
-  trigger: string;
-  windowStart: string;
-  windowEnd: string;
-  daysOfWeek: number[];
-  blackoutMessage: string;
-  outsideAction: "next-business-day" | "send-immediately" | "hold";
-  enabled: boolean;
-};
-
-const initialSchedule: ScheduleRule[] = [
-  { id: "rule-thanks", trigger: "受注確認", windowStart: "08:00", windowEnd: "21:00", daysOfWeek: [0, 1, 2, 3, 4, 5, 6], blackoutMessage: "通常通り送信", outsideAction: "send-immediately", enabled: true },
-  { id: "rule-ship", trigger: "出荷通知", windowStart: "09:00", windowEnd: "20:00", daysOfWeek: [0, 1, 2, 3, 4, 5], blackoutMessage: "翌営業日朝", outsideAction: "next-business-day", enabled: true },
-  { id: "rule-payment", trigger: "入金催促", windowStart: "10:00", windowEnd: "18:00", daysOfWeek: [0, 1, 2, 3, 4], blackoutMessage: "翌営業日朝", outsideAction: "next-business-day", enabled: true },
-  { id: "rule-follow", trigger: "フォローアップ", windowStart: "11:00", windowEnd: "19:00", daysOfWeek: [1, 2, 3, 4, 5], blackoutMessage: "保留", outsideAction: "hold", enabled: true },
-  { id: "rule-review", trigger: "レビュー依頼", windowStart: "18:00", windowEnd: "21:00", daysOfWeek: [4, 5, 6], blackoutMessage: "保留", outsideAction: "hold", enabled: false },
-];
-
-const initialHolidays = [
-  { date: "2026/05/03", name: "憲法記念日" },
-  { date: "2026/05/04", name: "みどりの日" },
-  { date: "2026/05/05", name: "こどもの日" },
-  { date: "2026/07/20", name: "海の日" },
-  { date: "2026/08/11", name: "山の日" },
-  { date: "2026/09/21", name: "敬老の日" },
-];
 
 /** DatePicker の Date を休業日の表記（YYYY/MM/DD）に揃える。 */
 const fmtYmd = (d: Date) =>
@@ -44,11 +23,40 @@ const fmtYmd = (d: Date) =>
 
 export default function MailSchedulePage() {
   const toast = useToast();
-  const [rules, setRules] = useState(initialSchedule);
-  const [defaultStart, setDefaultStart] = useState("09:00");
-  const [defaultEnd, setDefaultEnd] = useState("20:00");
-  const [holidayMode, setHolidayMode] = useState("skip");
-  const [holidays, setHolidays] = useState(initialHolidays);
+
+  // 永続化（domain: "mail-schedule-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: mailScheduleStore,
+    domain: "mail-schedule-settings",
+    seed: INITIAL_MAIL_SCHEDULE,
+  });
+  const records = useSyncExternalStore(
+    mailScheduleStore.subscribe,
+    mailScheduleStore.getState,
+    mailScheduleStore.getState,
+  );
+  const config = records[0] ?? INITIAL_MAIL_SCHEDULE[0];
+
+  // ストアの config レコードを下書きとして保持し、復元（hydrate）で config の
+  // identity が変わったらレンダー中に下書きを同期する（effect 内 setState を避ける）。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const rules = draft.rules;
+  const { defaultStart, defaultEnd, holidayMode, holidays } = draft;
+
+  const setRules = (next: ScheduleRule[] | ((prev: ScheduleRule[]) => ScheduleRule[])) =>
+    setDraft((p) => ({ ...p, rules: typeof next === "function" ? next(p.rules) : next }));
+  const setDefaultStart = (v: string) => setDraft((p) => ({ ...p, defaultStart: v }));
+  const setDefaultEnd = (v: string) => setDraft((p) => ({ ...p, defaultEnd: v }));
+  const setHolidayMode = (v: string) => setDraft((p) => ({ ...p, holidayMode: v }));
+  const setHolidays = (
+    next: typeof holidays | ((prev: typeof holidays) => typeof holidays),
+  ) => setDraft((p) => ({ ...p, holidays: typeof next === "function" ? next(p.holidays) : next }));
+
   const [holidayDate, setHolidayDate] = useState<Date | undefined>(undefined);
   const [holidayName, setHolidayName] = useState("");
 
@@ -59,6 +67,7 @@ export default function MailSchedulePage() {
     if (saving) return;
     setSaving(true);
     setSaved(false);
+    mailScheduleStore.upsert({ ...draft, id: "config" });
     setTimeout(() => {
       setSaving(false);
       setSaved(true);
@@ -132,7 +141,7 @@ export default function MailSchedulePage() {
           <p className="text-sm text-gray-500 mt-1">送信ウィンドウ・休業日・時間外キューの扱いを制御し、顧客体験を保ちます。</p>
         </div>
         <div className="flex gap-2">
-          <SecondaryButton onClick={() => setRules(initialSchedule)}>初期値に戻す</SecondaryButton>
+          <SecondaryButton onClick={() => setRules(DEFAULT_SCHEDULE_RULES)}>初期値に戻す</SecondaryButton>
           <PrimaryButton onClick={handleSave} disabled={saving}>
             <span className="inline-flex items-center gap-1.5">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}

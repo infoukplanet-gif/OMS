@@ -1,21 +1,50 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  paymentNpConnectStore,
+  INITIAL_PAYMENT_NP_CONNECT,
+} from "@/lib/stores/payment-np-connect-store";
 import { Save, Key, Shield, RefreshCw, CheckCircle2, Loader2 } from "lucide-react";
 
 export default function NpConnectPage() {
   const toast = useToast();
-  const [merchantId, setMerchantId] = useState("MID-12345");
-  const [apiKey, setApiKey] = useState("***********");
-  const [endpoint, setEndpoint] = useState("https://api.netprotections.com/v2");
-  const [environment, setEnvironment] = useState<"production" | "sandbox">("production");
-  const [autoCheckCredit, setAutoCheckCredit] = useState(true);
-  const [autoNotifyMethod, setAutoNotifyMethod] = useState(true);
-  const [autoSwitchOnNg, setAutoSwitchOnNg] = useState(false);
-  const [creditLimit, setCreditLimit] = useState(55000);
+
+  // 永続化（domain: "payment-np-connect-settings"）の正規オーナーページ。
+  usePersistentStore({
+    store: paymentNpConnectStore,
+    domain: "payment-np-connect-settings",
+    seed: INITIAL_PAYMENT_NP_CONNECT,
+  });
+  const records = useSyncExternalStore(
+    paymentNpConnectStore.subscribe,
+    paymentNpConnectStore.getState,
+    paymentNpConnectStore.getState,
+  );
+  const config = records[0] ?? INITIAL_PAYMENT_NP_CONNECT[0];
+
+  // ストアのネイティブ形状（config レコード）を単一の draft state として持つ。
+  // 復元（hydrate）で config の identity が変わったら、レンダー中に draft を同期する。
+  const [draft, setDraft] = useState(config);
+  const [syncedConfig, setSyncedConfig] = useState(config);
+  if (syncedConfig !== config) {
+    setSyncedConfig(config);
+    setDraft(config);
+  }
+  const { merchantId, apiKey, endpoint, environment, creditLimit, autoCheckCredit, autoNotifyMethod, autoSwitchOnNg } = draft;
+  const setMerchantId = (v: string) => setDraft((p) => ({ ...p, merchantId: v }));
+  const setApiKey = (v: string) => setDraft((p) => ({ ...p, apiKey: v }));
+  const setEndpoint = (v: string) => setDraft((p) => ({ ...p, endpoint: v }));
+  const setEnvironment = (v: "production" | "sandbox") => setDraft((p) => ({ ...p, environment: v }));
+  const setCreditLimit = (v: number) => setDraft((p) => ({ ...p, creditLimit: v }));
+  const setAutoCheckCredit = (v: boolean) => setDraft((p) => ({ ...p, autoCheckCredit: v }));
+  const setAutoNotifyMethod = (v: boolean) => setDraft((p) => ({ ...p, autoNotifyMethod: v }));
+  const setAutoSwitchOnNg = (v: boolean) => setDraft((p) => ({ ...p, autoSwitchOnNg: v }));
+
   const [testing, setTesting] = useState(false);
   const [lastTested, setLastTested] = useState("2026-04-25 09:24（成功）");
   const [saving, setSaving] = useState(false);
@@ -45,6 +74,17 @@ export default function NpConnectPage() {
     }
     setSaving(true);
     setSaved(false);
+    paymentNpConnectStore.upsert({
+      id: "config",
+      merchantId,
+      apiKey,
+      endpoint,
+      environment,
+      creditLimit,
+      autoCheckCredit,
+      autoNotifyMethod,
+      autoSwitchOnNg,
+    });
     setTimeout(() => {
       setSaving(false);
       setSaved(true);
