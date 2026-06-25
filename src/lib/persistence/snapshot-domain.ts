@@ -53,6 +53,7 @@ export type SnapshotDomain =
   | "payment-fees"
   | "shipment-availability"
   | "field-conversion-settings"
+  | "category-conversion-settings"
   | "payment-shipping-conversion-settings"
   | "api-global-settings"
   | "excluded-areas"

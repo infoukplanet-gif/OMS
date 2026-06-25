@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -9,38 +9,31 @@ import { productStore } from "@/lib/stores/product";
 import { INITIAL_PRODUCTS } from "@/lib/seeds/products";
 import { recalculateProductCategories, type ConversionRule } from "@/lib/calculations/category-conversion";
 import { downloadCsv } from "@/lib/export/csv";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  categoryConversionStore,
+  INITIAL_CATEGORY_RULES,
+  type CategoryRule as Rule,
+} from "@/lib/stores/category-conversion-store";
 import { ArrowRight, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-
-type Rule = {
-  id: string;
-  from: string;
-  fromSource: string;
-  to: string;
-  matchType: "完全一致" | "前方一致" | "正規表現";
-  priority: number;
-  hits: number;
-  enabled: boolean;
-};
-
-const initial: Rule[] = [
-  { id: "c-1", from: "レディース > トップス > Tシャツ", fromSource: "楽天", to: "アパレル/トップス/Tシャツ", matchType: "完全一致", priority: 1, hits: 1245, enabled: true },
-  { id: "c-2", from: "Women > Tops > Tee", fromSource: "Amazon", to: "アパレル/トップス/Tシャツ", matchType: "完全一致", priority: 1, hits: 580, enabled: true },
-  { id: "c-3", from: "ファッション > シャツ", fromSource: "Yahoo!", to: "アパレル/トップス/シャツ", matchType: "完全一致", priority: 1, hits: 420, enabled: true },
-  { id: "c-4", from: "家電 > 生活家電 > 掃除機", fromSource: "楽天", to: "家電/生活家電/掃除機", matchType: "完全一致", priority: 1, hits: 98, enabled: true },
-  { id: "c-5", from: "雑貨 > キッチン > 食器", fromSource: "自社EC", to: "ライフ/キッチン/食器", matchType: "完全一致", priority: 1, hits: 312, enabled: true },
-  { id: "c-6", from: "ファッション > レディース.*", fromSource: "Yahoo!", to: "アパレル/レディース", matchType: "正規表現", priority: 5, hits: 88, enabled: true },
-  { id: "c-7", from: "メンズ > ", fromSource: "楽天", to: "アパレル/メンズ", matchType: "前方一致", priority: 5, hits: 244, enabled: true },
-  { id: "c-8", from: "Beauty > Skincare", fromSource: "Amazon", to: "コスメ/スキンケア", matchType: "完全一致", priority: 1, hits: 156, enabled: true },
-  { id: "c-9", from: "ホーム&キッチン", fromSource: "Amazon", to: "ライフ/キッチン", matchType: "前方一致", priority: 5, hits: 78, enabled: true },
-  { id: "c-10", from: "未分類", fromSource: "FAX手入力", to: "その他", matchType: "完全一致", priority: 9, hits: 32, enabled: false },
-];
 
 const sources = ["楽天", "Yahoo!", "Amazon", "au PAY マーケット", "Qoo10", "自社EC", "FAX手入力"];
 const targets = ["アパレル/トップス/Tシャツ", "アパレル/トップス/シャツ", "アパレル/レディース", "アパレル/メンズ", "家電/生活家電/掃除機", "ライフ/キッチン", "ライフ/キッチン/食器", "コスメ/スキンケア", "その他"];
 
 export default function CategoryConversionPage() {
   const toast = useToast();
-  const [items, setItems] = useState(initial);
+
+  // カテゴリ変換ルールを共有ストアへ永続化（このページが domain の正規オーナー）。
+  usePersistentStore({
+    store: categoryConversionStore,
+    domain: "category-conversion-settings",
+    seed: INITIAL_CATEGORY_RULES,
+  });
+  const items = useSyncExternalStore(
+    categoryConversionStore.subscribe,
+    categoryConversionStore.getState,
+    categoryConversionStore.getState,
+  );
 
   // 商品マスタが空なら seed しておく（再計算ボタンが空回りしないよう）。
   useEffect(() => {
@@ -89,8 +82,11 @@ export default function CategoryConversionPage() {
       .sort((a, b) => a.priority - b.priority || b.hits - a.hits);
   }, [items, keyword, sourceFilter, matchFilter]);
 
-  const update = (id: string, patch: Partial<Rule>) =>
-    setItems((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const update = (id: string, patch: Partial<Rule>) => {
+    const current = categoryConversionStore.findById(id);
+    if (!current) return;
+    categoryConversionStore.upsert({ ...current, ...patch });
+  };
 
   const exportCsv = () => {
     downloadCsv(
@@ -112,7 +108,7 @@ export default function CategoryConversionPage() {
       hits: 0,
       enabled: true,
     };
-    setItems((prev) => [...prev, rule]);
+    categoryConversionStore.upsert(rule);
     toast.show("新規ルールを追加しました。変換元カテゴリを入力してください", "success");
   };
 
@@ -236,7 +232,7 @@ export default function CategoryConversionPage() {
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <div className="flex items-center justify-center gap-1">
-                    <button onClick={() => { setItems((p) => p.filter((x) => x.id !== r.id)); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
+                    <button onClick={() => { categoryConversionStore.remove(r.id); toast.show("ルールを削除しました", "info"); }} className="p-1.5 rounded-lg bg-red-500/15 text-red-700 hover:bg-red-500/25" title="削除">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
