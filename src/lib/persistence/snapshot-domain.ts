@@ -42,6 +42,7 @@ export type SnapshotDomain =
   | "code-mapping"
   | "product-categories"
   | "set-products"
+  | "suppliers"
   | "category-mapping"
   | "defaults-settings"
   | "date-auto-settings"

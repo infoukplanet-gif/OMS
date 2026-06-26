@@ -9,6 +9,7 @@ import { downloadCsv } from "@/lib/export/csv";
 import { cn } from "@/lib/utils";
 import { Plus, Upload, Pencil, Search, Building2, Truck, Banknote, AlertTriangle, Download } from "lucide-react";
 import { supplierStore, INITIAL_SUPPLIERS } from "@/lib/stores/supplier";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 
 type Supplier = {
   code: string;
@@ -30,6 +31,8 @@ const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function PurchasingSuppliersPage() {
   const toast = useToast();
+  // 仕入先マスタ（登録・編集・マスタ削除）を共有ストアに永続化する正規オーナーページ。
+  usePersistentStore({ store: supplierStore, domain: "suppliers", seed: INITIAL_SUPPLIERS });
   const suppliers = useSyncExternalStore(
     (cb) => supplierStore.subscribe(cb),
     () => supplierStore.getState() as readonly Supplier[],

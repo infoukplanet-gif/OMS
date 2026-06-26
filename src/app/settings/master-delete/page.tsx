@@ -8,6 +8,8 @@ import { productStore } from "@/lib/stores/product";
 import { setProductStore } from "@/lib/stores/set-product";
 import { supplierStore } from "@/lib/stores/supplier";
 import { wholesaleStore } from "@/lib/stores/wholesale";
+import { snapshotDomain } from "@/app/_actions/snapshots";
+import type { SnapshotDomain } from "@/lib/persistence/snapshot-domain";
 import { Upload, AlertTriangle, CheckCircle, Download, Trash2 } from "lucide-react";
 
 const restrictions = [
@@ -86,30 +88,48 @@ export default function MasterDeletePage() {
     const codeSet = new Set(codes);
     let targetLabel = "";
     let removed = 0;
+    // 削除を反映した後に永続化するドメインと、その最新スナップショット。
+    let domain: SnapshotDomain;
+    let snapshotRows: readonly unknown[];
 
     if (target === "product") {
       targetLabel = "商品マスタ";
       for (const code of codeSet) {
         if (productStore.remove(code)) removed += 1;
       }
+      domain = "products";
+      snapshotRows = productStore.getState();
     } else if (target === "set") {
       targetLabel = "セット商品マスタ";
       const ids = setProductStore.getState().filter((r) => codeSet.has(r.code)).map((r) => r.id);
       for (const id of ids) {
         if (setProductStore.remove(id).removed) removed += 1;
       }
+      domain = "set-products";
+      snapshotRows = setProductStore.getState();
     } else if (target === "supplier") {
       targetLabel = "仕入先マスタ";
       const ids = supplierStore.getState().filter((r) => codeSet.has(r.code) || codeSet.has(r.id)).map((r) => r.id);
       for (const id of ids) {
         if (supplierStore.remove(id).removed) removed += 1;
       }
+      domain = "suppliers";
+      snapshotRows = supplierStore.getState();
     } else {
       targetLabel = "卸先マスタ";
       const ids = wholesaleStore.getState().filter((r) => codeSet.has(r.code) || codeSet.has(r.id)).map((r) => r.id);
       for (const id of ids) {
         if (wholesaleStore.remove(id).removed) removed += 1;
       }
+      domain = "wholesale";
+      snapshotRows = wholesaleStore.getState();
+    }
+
+    // マスタ削除はストアのオーナーページ（商品/セット/仕入先/卸先一覧）が未mountでも
+    // 走るため、debounce snapshot に頼れない。削除できた時は当該ドメインを直接 snapshot し、
+    // リロード後も削除が確実に残るようにする（DB未接続時は no-db で in-memory のまま）。
+    if (removed > 0) {
+      void snapshotDomain(domain, snapshotRows);
     }
 
     if (removed === 0) {
