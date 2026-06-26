@@ -48,6 +48,7 @@ export type SnapshotDomain =
   | "payment-message-settings"
   | "settings-templates"
   | "company-settings"
+  | "shops"
   | "ai-settings"
   | "from-addresses"
   | "mail-signatures"

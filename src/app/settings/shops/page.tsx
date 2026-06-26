@@ -6,6 +6,7 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { shopStore, INITIAL_SHOPS, type ShopRecord } from "@/lib/stores/shop";
 import {
   AlertCircle,
@@ -29,6 +30,8 @@ const sb: Record<string, string> = {
 
 export default function ShopsPage() {
   const toast = useToast();
+
+  usePersistentStore({ store: shopStore, domain: "shops", seed: INITIAL_SHOPS });
 
   const items = useSyncExternalStore(
     (cb) => shopStore.subscribe(cb),
