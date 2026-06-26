@@ -40,6 +40,7 @@ export type SnapshotDomain =
   | "shipping-methods"
   | "code-mapping"
   | "product-categories"
+  | "set-products"
   | "category-mapping"
   | "defaults-settings"
   | "date-auto-settings"

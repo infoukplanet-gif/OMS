@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { cn } from "@/lib/utils";
 import { setProductStore, INITIAL_SET_PRODUCTS, type SetProductRecord } from "@/lib/stores/set-product";
 import { Boxes, Pencil, Plus, Search, Trash2 } from "lucide-react";
@@ -17,6 +18,8 @@ const statusBadge: Record<SetProductRecord["status"], string> = {
 
 export default function SetProductsPage() {
   const toast = useToast();
+
+  usePersistentStore({ store: setProductStore, domain: "set-products", seed: INITIAL_SET_PRODUCTS });
 
   const items = useSyncExternalStore(
     (cb) => setProductStore.subscribe(cb),
