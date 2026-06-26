@@ -1,36 +1,35 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  yahooEasyImportStore,
+  INITIAL_YAHOO_EASY_IMPORT,
+  type YahooEasyImportRecord,
+} from "@/lib/stores/yahoo-easy-import-store";
 import { cn } from "@/lib/utils";
 import { Search, RefreshCw, CheckCircle2, Wallet } from "lucide-react";
 
-type Row = {
-  id: string;
-  order: string;
-  customer: string;
-  amount: number;
-  method: "クレカ" | "PayPay" | "コンビニ" | "ペイジー";
-  paidAt: string;
-  yahooId: string;
-  ourStatus: "未取込" | "取込済";
-  selected: boolean;
-};
-
-const INITIAL: Row[] = [
-  { id: "YE-001", order: "ORD-2026-00822", customer: "佐藤花子", amount: 12800, method: "クレカ", paidAt: "2026-04-25 11:24", yahooId: "YE-20260425-001", ourStatus: "未取込", selected: false },
-  { id: "YE-002", order: "ORD-2026-00819", customer: "中村あかり", amount: 8400, method: "PayPay", paidAt: "2026-04-25 09:42", yahooId: "YE-20260425-002", ourStatus: "未取込", selected: false },
-  { id: "YE-003", order: "ORD-2026-00811", customer: "高橋健", amount: 22800, method: "クレカ", paidAt: "2026-04-24 16:18", yahooId: "YE-20260424-018", ourStatus: "取込済", selected: false },
-  { id: "YE-004", order: "ORD-2026-00805", customer: "渡辺京子", amount: 67800, method: "コンビニ", paidAt: "2026-04-23 14:00", yahooId: "YE-20260423-014", ourStatus: "未取込", selected: false },
-];
+type Row = YahooEasyImportRecord;
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function YahooEasyPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(INITIAL);
+  // payments/yahoo-easy はこのストア（domain: "yahoo-easy-payment-import"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: yahooEasyImportStore,
+    domain: "yahoo-easy-payment-import",
+    seed: INITIAL_YAHOO_EASY_IMPORT,
+  });
+  const rows = useSyncExternalStore(
+    (cb) => yahooEasyImportStore.subscribe(cb),
+    () => yahooEasyImportStore.getState(),
+    () => INITIAL_YAHOO_EASY_IMPORT as readonly Row[],
+  );
   const [keyword, setKeyword] = useState("");
   const [methodFilter, setMethodFilter] = useState("すべて");
   const [syncing, setSyncing] = useState(false);
@@ -56,7 +55,7 @@ export default function YahooEasyPage() {
         ourStatus: "未取込",
         selected: false,
       };
-      setRows((prev) => [newRow, ...prev]);
+      yahooEasyImportStore.setItems([newRow, ...rows]);
       setSyncing(false);
       toast.show("Yahoo!かんたん決済APIから新規入金1件を取得しました", "success");
     }, 1200);
@@ -71,14 +70,21 @@ export default function YahooEasyPage() {
     });
   }, [rows, keyword, methodFilter]);
 
-  const toggle = (id: string) => setRows(rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)));
+  const toggle = (id: string) =>
+    yahooEasyImportStore.setItems(
+      rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)),
+    );
   const importSelected = () => {
     const target = rows.filter((r) => r.selected && r.ourStatus === "未取込");
     if (target.length === 0) {
       toast.show("取込対象が選択されていません");
       return;
     }
-    setRows(rows.map((r) => (target.find((t) => t.id === r.id) ? { ...r, ourStatus: "取込済", selected: false } : r)));
+    yahooEasyImportStore.setItems(
+      rows.map((r) =>
+        target.find((t) => t.id === r.id) ? { ...r, ourStatus: "取込済" as const, selected: false } : r,
+      ),
+    );
     toast.show(`${target.length}件をOMSに取込みました`, "success");
   };
 

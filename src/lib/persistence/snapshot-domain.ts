@@ -84,6 +84,8 @@ export type SnapshotDomain =
   | "payment-np-connect-settings"
   | "payment-np-rows"
   | "payment-atone-rows"
+  | "yahoo-payment-import"
+  | "yahoo-easy-payment-import"
   | "rakuten-card-rows"
   | "download-history"
   | "inspections"

@@ -1,36 +1,35 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  yahooPaymentImportStore,
+  INITIAL_YAHOO_PAYMENT_IMPORT,
+  type YahooPaymentImportRecord,
+} from "@/lib/stores/yahoo-payment-import-store";
 import { cn } from "@/lib/utils";
 import { Search, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
 
-type Row = {
-  id: string;
-  order: string;
-  customer: string;
-  amount: number;
-  yahooStatus: "入金待ち" | "入金済" | "キャンセル" | "失敗";
-  paidAt: string;
-  ourStatus: "未取込" | "取込済" | "差異あり";
-  selected: boolean;
-};
-
-const INITIAL: Row[] = [
-  { id: "Y-001", order: "ORD-2026-00824", customer: "佐藤花子", amount: 38400, yahooStatus: "入金済", paidAt: "2026-04-24", ourStatus: "未取込", selected: false },
-  { id: "Y-002", order: "ORD-2026-00818", customer: "高橋健", amount: 22800, yahooStatus: "入金済", paidAt: "2026-04-23", ourStatus: "取込済", selected: false },
-  { id: "Y-003", order: "ORD-2026-00812", customer: "中村あかり", amount: 12800, yahooStatus: "入金待ち", paidAt: "—", ourStatus: "未取込", selected: false },
-  { id: "Y-004", order: "ORD-2026-00808", customer: "渡辺京子", amount: 67800, yahooStatus: "キャンセル", paidAt: "—", ourStatus: "未取込", selected: false },
-  { id: "Y-005", order: "ORD-2026-00800", customer: "伊藤大輔", amount: 22400, yahooStatus: "入金済", paidAt: "2026-04-22", ourStatus: "差異あり", selected: false },
-];
+type Row = YahooPaymentImportRecord;
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function YahooPaymentPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(INITIAL);
+  // payments/yahoo はこのストア（domain: "yahoo-payment-import"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: yahooPaymentImportStore,
+    domain: "yahoo-payment-import",
+    seed: INITIAL_YAHOO_PAYMENT_IMPORT,
+  });
+  const rows = useSyncExternalStore(
+    (cb) => yahooPaymentImportStore.subscribe(cb),
+    () => yahooPaymentImportStore.getState(),
+    () => INITIAL_YAHOO_PAYMENT_IMPORT as readonly Row[],
+  );
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("未取込のみ");
   const [syncing, setSyncing] = useState(false);
@@ -53,7 +52,7 @@ export default function YahooPaymentPage() {
         ourStatus: "未取込",
         selected: false,
       };
-      setRows((prev) => [newRow, ...prev]);
+      yahooPaymentImportStore.setItems([newRow, ...rows]);
       setSyncing(false);
       toast.show("Yahoo!ストアAPIから新規入金1件を取得しました", "success");
     }, 1200);
@@ -69,14 +68,21 @@ export default function YahooPaymentPage() {
     });
   }, [rows, keyword, statusFilter]);
 
-  const toggle = (id: string) => setRows(rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)));
+  const toggle = (id: string) =>
+    yahooPaymentImportStore.setItems(
+      rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)),
+    );
   const importSelected = () => {
     const target = rows.filter((r) => r.selected && r.ourStatus === "未取込" && r.yahooStatus === "入金済");
     if (target.length === 0) {
       toast.show("取込対象が選択されていません");
       return;
     }
-    setRows(rows.map((r) => (target.find((t) => t.id === r.id) ? { ...r, ourStatus: "取込済", selected: false } : r)));
+    yahooPaymentImportStore.setItems(
+      rows.map((r) =>
+        target.find((t) => t.id === r.id) ? { ...r, ourStatus: "取込済" as const, selected: false } : r,
+      ),
+    );
     toast.show(`${target.length}件をOMSに取込みました`, "success");
   };
 
