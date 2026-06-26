@@ -1,23 +1,30 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderNotesCheckStore,
+  INITIAL_ORDER_NOTE_CHECKS,
+  type OrderNoteCheckRecord,
+} from "@/lib/stores/order-notes-check-store";
 import { Search, Maximize2 } from "lucide-react";
 
-type Row = { id: string; customer: string; note: string; checked: boolean };
-
-const initial: Row[] = [
-  { id: "ORD-2026-01102", customer: "株式会社サンプル", note: "ギフト包装希望。のし紙（内のし・御祝・佐藤様）でお願いします。12月23日までに先方へ到着するようにご手配ください。配送状況が分かり次第ご連絡お願いします。", checked: false },
-  { id: "ORD-2026-01101", customer: "山田太郎", note: "午前中指定でお願いします", checked: false },
-  { id: "ORD-2026-01098", customer: "田中一郎", note: "領収書同封希望（宛名：株式会社ABC）", checked: true },
-  { id: "ORD-2026-01095", customer: "鈴木商事", note: "商品Aと商品Bは別梱包でお願いします。納期優先で発送してください。", checked: false },
-  { id: "ORD-2026-01092", customer: "伊藤大輔", note: "不在時は置き配でも可", checked: false },
-  { id: "ORD-2026-01088", customer: "小林修", note: "電話連絡必要", checked: true },
-];
+type Row = OrderNoteCheckRecord;
 
 export default function NotesPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(initial);
+  // orders/notes はこのストア（domain: "order-notes-check"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: orderNotesCheckStore,
+    domain: "order-notes-check",
+    seed: INITIAL_ORDER_NOTE_CHECKS,
+  });
+  const rows = useSyncExternalStore(
+    (cb) => orderNotesCheckStore.subscribe(cb),
+    () => orderNotesCheckStore.getState(),
+    () => INITIAL_ORDER_NOTE_CHECKS as readonly Row[],
+  );
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expand, setExpand] = useState<Row | null>(null);
@@ -51,12 +58,12 @@ export default function NotesPage() {
   }
   function markChecked(ids: string[]) {
     if (ids.length === 0) return;
-    setRows((prev) => prev.map((r) => (ids.includes(r.id) ? { ...r, checked: true } : r)));
+    orderNotesCheckStore.setItems(rows.map((r) => (ids.includes(r.id) ? { ...r, checked: true } : r)));
     setSelected(new Set());
     toast.show(`${ids.length} 件を確認済にしました`);
   }
   function markUnchecked(r: Row) {
-    setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, checked: false } : x)));
+    orderNotesCheckStore.setItems(rows.map((x) => (x.id === r.id ? { ...x, checked: false } : x)));
     toast.show(`${r.id} の確認を取消しました`, "info");
   }
 

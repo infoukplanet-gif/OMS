@@ -1,22 +1,30 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  orderDeactivatedStore,
+  INITIAL_DEACTIVATED_ORDERS,
+  type DeactivatedOrderRecord,
+} from "@/lib/stores/order-deactivated-store";
 import { AlertCircle, Search } from "lucide-react";
 
-type Row = { id: string; reason: string; createdAt: string };
-
-const initial: Row[] = [
-  { id: "ORD-2024-00840", reason: "在庫不足", createdAt: "2026-04-12 10:34" },
-  { id: "ORD-2024-00835", reason: "決済エラー", createdAt: "2026-04-12 09:18" },
-  { id: "ORD-2024-00828", reason: "手動無効化", createdAt: "2026-04-11 17:44" },
-  { id: "ORD-2024-00820", reason: "住所不備", createdAt: "2026-04-11 14:02" },
-  { id: "ORD-2024-00815", reason: "決済エラー", createdAt: "2026-04-11 11:09" },
-];
+type Row = DeactivatedOrderRecord;
 
 export default function ActivatePage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Row[]>(initial);
+  // orders/activate はこのストア（domain: "order-deactivated"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: orderDeactivatedStore,
+    domain: "order-deactivated",
+    seed: INITIAL_DEACTIVATED_ORDERS,
+  });
+  const rows = useSyncExternalStore(
+    (cb) => orderDeactivatedStore.subscribe(cb),
+    () => orderDeactivatedStore.getState(),
+    () => INITIAL_DEACTIVATED_ORDERS as readonly Row[],
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [confirmTarget, setConfirmTarget] = useState<Row | null>(null);
@@ -53,7 +61,7 @@ export default function ActivatePage() {
     }
   }
   function activateOne(r: Row) {
-    setRows((prev) => prev.filter((x) => x.id !== r.id));
+    orderDeactivatedStore.setItems(rows.filter((x) => x.id !== r.id));
     setSelected((prev) => {
       const n = new Set(prev); n.delete(r.id); return n;
     });
@@ -62,7 +70,7 @@ export default function ActivatePage() {
   }
   function activateBulk() {
     const ids = Array.from(selected);
-    setRows((prev) => prev.filter((r) => !selected.has(r.id)));
+    orderDeactivatedStore.setItems(rows.filter((r) => !selected.has(r.id)));
     setSelected(new Set());
     toast.show(`${ids.length} 件の伝票を有効化しました`);
     setConfirmBulk(false);
