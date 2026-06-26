@@ -25,6 +25,7 @@ export type SnapshotDomain =
   | "delivery-note-templates"
   | "mails"
   | "blacklist"
+  | "wholesale"
   | "customer-ranks"
   | "order-confirm-rules"
   | "order-numbering"

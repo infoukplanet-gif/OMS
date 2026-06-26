@@ -8,6 +8,7 @@ import { INITIAL_ORDERS, type OrderSeed } from "@/lib/seeds/orders";
 import { INITIAL_PAYMENTS } from "@/lib/seeds/payments";
 import { computeOrderCreditOutstanding, type CreditOrder, type CreditPayment } from "@/lib/customers/credit-usage";
 import { wholesaleStore, INITIAL_WHOLESALE } from "@/lib/stores/wholesale";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast } from "@/components/ui/interactive";
@@ -64,6 +65,8 @@ const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function WholesalePage() {
   const toast = useToast();
+  // 卸先マスタの永続化オーナー（取込・登録・編集の結果をここで snapshot する）
+  usePersistentStore({ store: wholesaleStore, domain: "wholesale", seed: INITIAL_WHOLESALE });
   // wholesaleStore を購読（登録した卸先を即座に一覧に反映）
   const storeClients = useSyncExternalStore(
     (cb) => wholesaleStore.subscribe(cb),
