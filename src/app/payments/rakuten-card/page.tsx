@@ -1,37 +1,36 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Search, RefreshCw, AlertTriangle, CreditCard } from "lucide-react";
-
-type Auth = {
-  id: string;
-  order: string;
-  customer: string;
-  amount: number;
-  authAt: string;
-  authExpire: string;
-  daysToExpire: number;
-  status: "売上確定待ち" | "売上確定済" | "オーソリ期限切れ" | "失敗";
-  selected: boolean;
-};
-
-const INITIAL: Auth[] = [
-  { id: "RC-001", order: "ORD-2026-00851", customer: "山田太郎", amount: 32400, authAt: "2026-04-25", authExpire: "2026-05-25", daysToExpire: 30, status: "売上確定待ち", selected: false },
-  { id: "RC-002", order: "ORD-2026-00845", customer: "高橋健", amount: 22800, authAt: "2026-04-24", authExpire: "2026-05-24", daysToExpire: 29, status: "売上確定待ち", selected: false },
-  { id: "RC-003", order: "ORD-2026-00838", customer: "井上智", amount: 28500, authAt: "2026-04-23", authExpire: "2026-05-23", daysToExpire: 28, status: "売上確定済", selected: false },
-  { id: "RC-004", order: "ORD-2026-00824", customer: "佐藤花子", amount: 38400, authAt: "2026-04-22", authExpire: "2026-05-22", daysToExpire: 27, status: "売上確定待ち", selected: false },
-  { id: "RC-005", order: "ORD-2026-00802", customer: "中村あかり", amount: 12800, authAt: "2026-03-30", authExpire: "2026-04-29", daysToExpire: 4, status: "売上確定待ち", selected: false },
-];
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { rakutenCardStore } from "@/lib/stores/rakuten-card";
+import { INITIAL_RAKUTEN_CARD_ROWS } from "@/lib/seeds/rakuten-card";
+import { transitionCardAuthorization } from "@/lib/state-machines/card-authorization";
 
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
 
 export default function RakutenCardPage() {
   const toast = useToast();
-  const [rows, setRows] = useState<Auth[]>(INITIAL);
+
+  // 永続化（domain: "rakuten-card-rows"）の正規オーナーページ。
+  usePersistentStore({
+    store: rakutenCardStore,
+    domain: "rakuten-card-rows",
+    seed: INITIAL_RAKUTEN_CARD_ROWS,
+  });
+
+  const rows = useSyncExternalStore(
+    (cb) => rakutenCardStore.subscribe(cb),
+    () => rakutenCardStore.getState(),
+    () => INITIAL_RAKUTEN_CARD_ROWS,
+  );
+
+  // 選択状態は永続化しないUI専用の一時状態（id の集合）。
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("売上確定待ちのみ");
   const [syncing, setSyncing] = useState(false);
@@ -56,16 +55,36 @@ export default function RakutenCardPage() {
     });
   }, [rows, keyword, statusFilter]);
 
-  const toggle = (id: string) => setRows(rows.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)));
-  const toggleAll = (v: boolean) => setRows(rows.map((r) => (filtered.find((f) => f.id === r.id) ? { ...r, selected: v } : r)));
-  const selected = rows.filter((r) => r.selected && r.status === "売上確定待ち");
+  const toggle = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = (v: boolean) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const f of filtered) {
+        if (v) next.add(f.id);
+        else next.delete(f.id);
+      }
+      return next;
+    });
+
+  const selected = rows.filter((r) => selectedIds.has(r.id) && r.status === "売上確定待ち");
 
   const confirm = () => {
     if (selected.length === 0) {
       toast.show("売上確定待ちが選択されていません");
       return;
     }
-    setRows(rows.map((r) => (selected.find((s) => s.id === r.id) ? { ...r, status: "売上確定済", selected: false } : r)));
+    // 状態遷移は state-machine 経由（status を直書きしない）。共有ストアに永続化される。
+    for (const r of selected) {
+      rakutenCardStore.upsert(transitionCardAuthorization(r, "capture"));
+    }
+    setSelectedIds(new Set());
     toast.show(`${selected.length}件の売上を確定しました`, "success");
   };
 
@@ -129,7 +148,7 @@ export default function RakutenCardPage() {
           <thead>
             <tr className="bg-white/50 border-b border-white/40">
               <th className="px-3 py-3 text-center w-10">
-                <input type="checkbox" checked={filtered.length > 0 && filtered.every((r) => r.selected)} onChange={(e) => toggleAll(e.target.checked)} className="accent-blue-500 w-4 h-4" />
+                <input type="checkbox" checked={filtered.length > 0 && filtered.every((r) => selectedIds.has(r.id))} onChange={(e) => toggleAll(e.target.checked)} className="accent-blue-500 w-4 h-4" />
               </th>
               <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">受注番号</th>
               <th className="px-3 py-3 text-left text-xs font-medium text-gray-500">顧客</th>
@@ -141,32 +160,35 @@ export default function RakutenCardPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id} className={cn("border-t border-white/30 hover:bg-white/40", r.selected && "bg-blue-500/8", r.daysToExpire <= 7 && r.status === "売上確定待ち" && "bg-red-500/5")}>
-                <td className="px-3 py-2.5 text-center">
-                  <input type="checkbox" checked={r.selected} disabled={r.status !== "売上確定待ち"} onChange={() => toggle(r.id)} className="accent-blue-500 w-4 h-4 disabled:cursor-not-allowed" />
-                </td>
-                <td className="px-3 py-2.5 font-medium text-blue-600">{r.order}</td>
-                <td className="px-3 py-2.5 text-gray-800">{r.customer}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-gray-800">{fmt(r.amount)}</td>
-                <td className="px-3 py-2.5 text-xs text-gray-600">{r.authAt}</td>
-                <td className="px-3 py-2.5 text-xs text-gray-600">{r.authExpire}</td>
-                <td className={cn("px-3 py-2.5 text-center text-xs tabular-nums", r.daysToExpire <= 7 ? "text-red-700 font-bold" : "text-gray-700")}>{r.daysToExpire}日</td>
-                <td className="px-3 py-2.5 text-center">
-                  <span
-                    className={cn(
-                      "px-2 py-0.5 rounded-full text-xs font-medium",
-                      r.status === "売上確定待ち" && "bg-yellow-500/15 text-yellow-700",
-                      r.status === "売上確定済" && "bg-emerald-500/15 text-emerald-700",
-                      r.status === "オーソリ期限切れ" && "bg-red-500/15 text-red-700",
-                      r.status === "失敗" && "bg-red-500/15 text-red-700"
-                    )}
-                  >
-                    {r.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((r) => {
+              const isSelected = selectedIds.has(r.id);
+              return (
+                <tr key={r.id} className={cn("border-t border-white/30 hover:bg-white/40", isSelected && "bg-blue-500/8", r.daysToExpire <= 7 && r.status === "売上確定待ち" && "bg-red-500/5")}>
+                  <td className="px-3 py-2.5 text-center">
+                    <input type="checkbox" checked={isSelected} disabled={r.status !== "売上確定待ち"} onChange={() => toggle(r.id)} className="accent-blue-500 w-4 h-4 disabled:cursor-not-allowed" />
+                  </td>
+                  <td className="px-3 py-2.5 font-medium text-blue-600">{r.order}</td>
+                  <td className="px-3 py-2.5 text-gray-800">{r.customer}</td>
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-800">{fmt(r.amount)}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-600">{r.authAt}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-600">{r.authExpire}</td>
+                  <td className={cn("px-3 py-2.5 text-center text-xs tabular-nums", r.daysToExpire <= 7 ? "text-red-700 font-bold" : "text-gray-700")}>{r.daysToExpire}日</td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded-full text-xs font-medium",
+                        r.status === "売上確定待ち" && "bg-yellow-500/15 text-yellow-700",
+                        r.status === "売上確定済" && "bg-emerald-500/15 text-emerald-700",
+                        r.status === "オーソリ期限切れ" && "bg-red-500/15 text-red-700",
+                        r.status === "失敗" && "bg-red-500/15 text-red-700"
+                      )}
+                    >
+                      {r.status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </GlassCard>
