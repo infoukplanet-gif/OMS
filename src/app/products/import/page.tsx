@@ -9,6 +9,8 @@ import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } 
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
 import { DetailModal } from "@/components/ui/detail-modal";
+import { productStore, type ProductRecord } from "@/lib/stores/product";
+import { snapshotDomain } from "@/app/_actions/snapshots";
 
 type ImportMode = "new" | "update" | "upsert";
 
@@ -152,8 +154,34 @@ export default function ProductImportPage() {
   }
 
   function confirmImport() {
-    const n = counts.ok + counts.warning;
-    toast.show(`${n} 件を ${MODE_LABEL[mode]} で取込しました`);
+    // プレビューの正常・警告行（エラー行・SKU未入力行は除外）を商品マスタへ実際に反映する。
+    // モードに応じて新規追加のみ／既存更新のみ／両方を出し分け、在庫・価格の上書きはオプションに従う。
+    // 取込ページは商品マスタのオーナーページではないため、reload後も残るよう直接 snapshot する。
+    const importable = previewData.filter((d) => d.status !== "error" && d.sku.trim().length > 0);
+    let applied = 0;
+    for (const row of importable) {
+      const existing = productStore.findByCode(row.sku);
+      if (mode === "new" && existing) continue;
+      if (mode === "update" && !existing) continue;
+      const next: ProductRecord = {
+        code: row.sku,
+        name: row.name,
+        category: existing?.category ?? "未分類",
+        price: existing && !updatePrice ? existing.price : row.price,
+        cost: row.cost,
+        status: existing?.status ?? "販売中",
+        jan: row.jan,
+        stock: existing && !updateStock ? existing.stock : row.stock,
+      };
+      productStore.upsert(next);
+      applied += 1;
+    }
+    if (applied > 0) {
+      void snapshotDomain("products", productStore.getState());
+      toast.show(`${applied} 件を ${MODE_LABEL[mode]} で取込しました`);
+    } else {
+      toast.show(`取込対象の商品がありませんでした（${MODE_LABEL[mode]}）`, "info");
+    }
     setStep(1);
     setFile(null);
   }
