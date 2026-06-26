@@ -86,6 +86,7 @@ export type SnapshotDomain =
   | "payment-atone-rows"
   | "yahoo-payment-import"
   | "yahoo-easy-payment-import"
+  | "inventory-update-history"
   | "rakuten-card-rows"
   | "download-history"
   | "inspections"

@@ -1,31 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  inventoryUpdateHistoryStore,
+  INITIAL_INVENTORY_UPDATE_HISTORY,
+  type InventoryUpdateHistoryRecord,
+} from "@/lib/stores/inventory-update-history-store";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Upload, Cloud, Database, History, AlertCircle, CheckCircle2, FileSpreadsheet } from "lucide-react";
 import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
 
-type HistoryItem = {
-  id: string;
-  type: string;
-  target: string;
-  started: string;
-  ended: string;
-  updated: number;
-  total: number;
-  result: "成功" | "部分成功" | "失敗" | "実行中";
-};
-
-const HISTORY: HistoryItem[] = [
-  { id: "INV-UPD-20260425-003", type: "モール在庫連携", target: "楽天市場", started: "2026-04-25 16:30", ended: "2026-04-25 16:31", updated: 142, total: 142, result: "成功" },
-  { id: "INV-UPD-20260425-002", type: "倉庫API在庫取込", target: "東京本社倉庫", started: "2026-04-25 09:15", ended: "2026-04-25 09:16", updated: 58, total: 58, result: "成功" },
-  { id: "INV-UPD-20260425-001", type: "CSV手動取込", target: "大阪倉庫", started: "2026-04-25 08:40", ended: "2026-04-25 08:40", updated: 12, total: 12, result: "成功" },
-  { id: "INV-UPD-20260424-045", type: "モール在庫連携", target: "Yahoo!ショッピング", started: "2026-04-24 23:00", ended: "2026-04-24 23:02", updated: 200, total: 205, result: "部分成功" },
-  { id: "INV-UPD-20260424-040", type: "倉庫API在庫取込", target: "九州物流センター", started: "2026-04-24 09:00", ended: "2026-04-24 09:00", updated: 0, total: 84, result: "失敗" },
-];
+type HistoryItem = InventoryUpdateHistoryRecord;
 
 const RB: Record<HistoryItem["result"], string> = {
   成功: "bg-emerald-500/15 text-emerald-700",
@@ -36,20 +25,54 @@ const RB: Record<HistoryItem["result"], string> = {
 
 export default function InventoryUpdatePage() {
   const toast = useToast();
+  // products/inventory/update はこのストア（domain: "inventory-update-history"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: inventoryUpdateHistoryStore,
+    domain: "inventory-update-history",
+    seed: INITIAL_INVENTORY_UPDATE_HISTORY,
+  });
+  const history = useSyncExternalStore(
+    (cb) => inventoryUpdateHistoryStore.subscribe(cb),
+    () => inventoryUpdateHistoryStore.getState(),
+    () => INITIAL_INVENTORY_UPDATE_HISTORY as readonly HistoryItem[],
+  );
   const [detailRow, setDetailRow] = useState<HistoryItem | null>(null);
   const [scope, setScope] = useState("全倉庫");
   const [direction, setDirection] = useState<"both" | "in" | "out">("both");
   const [dryRun, setDryRun] = useState(false);
+  // ESLint react-hooks/purity 対策: Date.now() ではなく単調増加カウンタで一意なジョブIDを採番。
+  const seqRef = useRef(0);
 
   const run = (kind: string) => {
-    toast.show(`${kind} を${dryRun ? "シミュレーション" : "実行"}しました`, "success");
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const ymd = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+    seqRef.current += 1;
+    const seq = seqRef.current;
+    const total = 60 + seq * 12;
+    const record: HistoryItem = {
+      id: `INV-UPD-${ymd}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${String(seq).padStart(3, "0")}`,
+      type: dryRun ? `${kind}（シミュレーション）` : kind,
+      target: scope,
+      started: stamp,
+      ended: stamp,
+      updated: total,
+      total,
+      result: "成功",
+    };
+    inventoryUpdateHistoryStore.setItems([record, ...history]);
+    toast.show(
+      `${kind} を${dryRun ? "シミュレーション" : "実行"}し、履歴に記録しました（${total}件）`,
+      "success",
+    );
   };
 
   const stats = {
-    today: HISTORY.filter((h) => h.started.startsWith("2026-04-25")).length,
-    success: HISTORY.filter((h) => h.result === "成功").length,
-    failed: HISTORY.filter((h) => h.result === "失敗").length,
-    avgRecords: Math.round(HISTORY.reduce((s, h) => s + h.updated, 0) / HISTORY.length),
+    today: history.filter((h) => h.started.startsWith("2026-04-25")).length,
+    success: history.filter((h) => h.result === "成功").length,
+    failed: history.filter((h) => h.result === "失敗").length,
+    avgRecords: Math.round(history.reduce((s, h) => s + h.updated, 0) / Math.max(history.length, 1)),
   };
 
   return (
@@ -185,7 +208,7 @@ export default function InventoryUpdatePage() {
               </tr>
             </thead>
             <tbody>
-              {HISTORY.map((h) => (
+              {history.map((h) => (
                 <tr key={h.id} className="border-t border-white/30 hover:bg-white/40">
                   <td className="px-3 py-2 font-mono text-xs text-gray-500">{h.id}</td>
                   <td className="px-3 py-2 text-gray-700 text-xs">{h.type}</td>
