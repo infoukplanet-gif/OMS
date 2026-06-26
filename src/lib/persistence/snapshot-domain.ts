@@ -84,6 +84,7 @@ export type SnapshotDomain =
   | "payment-np-rows"
   | "payment-atone-rows"
   | "rakuten-card-rows"
+  | "download-history"
   | "product-warehouse-link-settings"
   | "shipment-defective-transfer-settings"
   | "shipment-defective-lots"

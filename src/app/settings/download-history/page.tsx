@@ -1,37 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Clock, Download, RefreshCw, Search, Trash2 } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { downloadHistoryStore } from "@/lib/stores/download-history";
+import { INITIAL_DOWNLOAD_JOBS } from "@/lib/seeds/download-history";
+import {
+  transitionDownloadJob,
+  type DownloadJobRecord,
+  type DownloadJobStatus,
+} from "@/lib/state-machines/download-job";
 
-type Job = {
-  id: string;
-  category: string;
-  filename: string;
-  range: string;
-  user: string;
-  format: string;
-  records: number;
-  size: string;
-  startedAt: string;
-  duration: string;
-  status: "success" | "running" | "failed" | "expired";
-};
-
-const data: Job[] = [
-  { id: "DL-20260430-0042", category: "売上明細", filename: "sales_2026-04.xlsx", range: "2026/04/01-2026/04/30", user: "山田", format: "Excel (xlsx)", records: 8423, size: "3.2 MB", startedAt: "2026/04/30 10:32", duration: "12s", status: "success" },
-  { id: "DL-20260430-0041", category: "受注情報", filename: "orders_2026-04-29.csv", range: "2026/04/29", user: "佐藤", format: "CSV", records: 245, size: "180 KB", startedAt: "2026/04/30 09:18", duration: "3s", status: "success" },
-  { id: "DL-20260430-0040", category: "在庫推移", filename: "inventory_2026-04.csv", range: "2026/04/01-2026/04/30", user: "system", format: "CSV", records: 28430, size: "8.5 MB", startedAt: "2026/04/30 02:00", duration: "48s", status: "success" },
-  { id: "DL-20260429-0418", category: "顧客別購入分析", filename: "customers_2026-Q1.xlsx", range: "2026/01/01-2026/03/31", user: "田中", format: "Excel (xlsx)", records: 4520, size: "2.1 MB", startedAt: "2026/04/29 18:00", duration: "8s", status: "success" },
-  { id: "DL-20260429-0417", category: "ABC分析", filename: "abc_2026-Q1.xlsx", range: "2026/01/01-2026/03/31", user: "鈴木", format: "Excel (xlsx)", records: 320, size: "120 KB", startedAt: "2026/04/29 15:40", duration: "2s", status: "success" },
-  { id: "DL-20260429-0416", category: "売上明細", filename: "sales_2026-04-15-29.csv", range: "2026/04/15-2026/04/29", user: "山田", format: "CSV", records: 1245, size: "640 KB", startedAt: "2026/04/29 11:22", duration: "—", status: "running" },
-  { id: "DL-20260429-0415", category: "顧客別購入分析", filename: "customers_2026-04.csv", range: "2026/04/01-2026/04/29", user: "system", format: "CSV", records: 0, size: "—", startedAt: "2026/04/29 08:00", duration: "60s", status: "failed" },
-  { id: "DL-20260420-0123", category: "返品集計", filename: "returns_2026-Q1.xlsx", range: "2026/01/01-2026/03/31", user: "高橋", format: "Excel (xlsx)", records: 88, size: "32 KB", startedAt: "2026/04/20 14:00", duration: "1s", status: "expired" },
-];
+type Job = DownloadJobRecord;
 
 const sb: Record<string, string> = {
   success: "bg-emerald-500/15 text-emerald-700",
@@ -40,8 +25,6 @@ const sb: Record<string, string> = {
   expired: "bg-gray-500/15 text-gray-500",
 };
 const sbLabel: Record<string, string> = { success: "成功", running: "処理中", failed: "失敗", expired: "期限切れ" };
-
-const categories = Array.from(new Set(data.map((d) => d.category)));
 
 function downloadBlob(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -57,12 +40,27 @@ function downloadBlob(filename: string, content: string, mime: string) {
 
 export default function DownloadHistoryPage() {
   const toast = useToast();
-  const [jobs, setJobs] = useState<Job[]>(data);
+
+  // 永続化（domain: "download-history"）の正規オーナーページ。
+  usePersistentStore({
+    store: downloadHistoryStore,
+    domain: "download-history",
+    seed: INITIAL_DOWNLOAD_JOBS,
+  });
+
+  const jobs = useSyncExternalStore(
+    (cb) => downloadHistoryStore.subscribe(cb),
+    () => downloadHistoryStore.getState(),
+    () => INITIAL_DOWNLOAD_JOBS,
+  );
+
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("all");
-  const [status, setStatus] = useState<"all" | Job["status"]>("all");
+  const [status, setStatus] = useState<"all" | DownloadJobStatus>("all");
   const [fromDate, setFromDate] = useState<Date | undefined>(undefined);
   const [toDate, setToDate] = useState<Date | undefined>(undefined);
+
+  const categories = useMemo(() => Array.from(new Set(jobs.map((d) => d.category))), [jobs]);
 
   const filtered = useMemo(() => {
     const k = keyword.trim().toLowerCase();
@@ -104,22 +102,22 @@ export default function DownloadHistoryPage() {
   };
 
   const reRun = (id: string) => {
-    setJobs((prev) => prev.map((d) => (d.id === id ? { ...d, status: "running", duration: "—" } : d)));
+    const job = downloadHistoryStore.findById(id);
+    if (!job) return;
+    // 状態遷移は state-machine 経由（status を直書きしない）。共有ストアに永続化される。
+    downloadHistoryStore.upsert({ ...transitionDownloadJob(job, "start"), duration: "—" });
     toast.show(`${id} を再実行しています…`, "info");
     setTimeout(() => {
-      setJobs((prev) =>
-        prev.map((d) =>
-          d.id === id && d.status === "running"
-            ? { ...d, status: "success", duration: "4s", records: d.records || 1 }
-            : d
-        )
-      );
+      const current = downloadHistoryStore.findById(id);
+      if (!current || current.status !== "running") return;
+      const done = transitionDownloadJob(current, "succeed");
+      downloadHistoryStore.upsert({ ...done, duration: "4s", records: done.records || 1 });
       toast.show(`${id} の再実行が完了しました`, "success");
     }, 1600);
   };
 
   const removeJob = (id: string) => {
-    setJobs((prev) => prev.filter((d) => d.id !== id));
+    downloadHistoryStore.remove(id);
     toast.show(`${id} を削除しました`, "info");
   };
 
@@ -178,7 +176,7 @@ export default function DownloadHistoryPage() {
 
       <GlassCard className="p-0 overflow-hidden">
         <div className="px-4 py-3 border-b border-white/40 bg-white/40 text-xs text-gray-500">
-          {filtered.length} 件 / 全 {data.length} 件
+          {filtered.length} 件 / 全 {jobs.length} 件
         </div>
         <table className="w-full text-sm">
           <thead>
