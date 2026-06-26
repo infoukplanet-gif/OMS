@@ -89,6 +89,7 @@ export type SnapshotDomain =
   | "inventory-update-history"
   | "order-deactivated"
   | "order-notes-check"
+  | "mail-send-triggers"
   | "rakuten-card-rows"
   | "download-history"
   | "inspections"

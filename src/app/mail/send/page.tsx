@@ -1,9 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  mailSendTriggerStore,
+  INITIAL_MAIL_SEND_TRIGGERS,
+  type MailSendTriggerRecord,
+} from "@/lib/stores/mail-send-trigger-store";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Clock, Loader2, Pause, Play, RefreshCw, Search, Send } from "lucide-react";
 import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
@@ -32,14 +38,6 @@ const INITIAL_QUEUE: SendJob[] = [
   { id: "SND-20260429-0417", trigger: "発送完了", target: "出荷済み", template: "出荷通知", count: 56, status: "送信完了", progress: 56, started: "2026/04/29 18:00", finished: "2026/04/29 18:08" },
 ];
 
-const triggers = [
-  { name: "受注確認", template: "サンクスメール", autoSend: true, delay: "受注後即時", target: 12 },
-  { name: "発送完了", template: "出荷通知", autoSend: true, delay: "出荷登録後即時", target: 45 },
-  { name: "入金確認", template: "入金確認", autoSend: true, delay: "入金待ち3日後", target: 7 },
-  { name: "フォローアップ", template: "フォロー", autoSend: false, delay: "発送後3日後", target: 23 },
-  { name: "再発送通知", template: "再発送のお知らせ", autoSend: false, delay: "手動", target: 3 },
-];
-
 const sb: Record<string, string> = {
   送信中: "bg-blue-500/15 text-blue-700",
   待機中: "bg-amber-500/15 text-amber-700",
@@ -55,19 +53,32 @@ const nowStamp = (): string => {
 
 export default function MailSendPage() {
   const toast = useToast();
+  // mail/send はこのストア（domain: "mail-send-triggers"）の唯一の永続化オーナー。
+  usePersistentStore({
+    store: mailSendTriggerStore,
+    domain: "mail-send-triggers",
+    seed: INITIAL_MAIL_SEND_TRIGGERS,
+  });
+  const triggerList = useSyncExternalStore(
+    (cb) => mailSendTriggerStore.subscribe(cb),
+    () => mailSendTriggerStore.getState(),
+    () => INITIAL_MAIL_SEND_TRIGGERS as readonly MailSendTriggerRecord[],
+  );
   const [keyword, setKeyword] = useState("");
   const [triggerFilter, setTriggerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [triggerList, setTriggerList] = useState(triggers);
   const [queue, setQueue] = useState<SendJob[]>(INITIAL_QUEUE);
   const [reloading, setReloading] = useState(false);
   const [running, setRunning] = useState(false);
   const [detailJob, setDetailJob] = useState<SendJob | null>(null);
 
   const toggleTrigger = (name: string) => {
-    setTriggerList((prev) => prev.map((t) => (t.name === name ? { ...t, autoSend: !t.autoSend } : t)));
-    const target = triggerList.find((t) => t.name === name);
-    if (target) toast.show(`「${name}」の自動送信を${target.autoSend ? "停止" : "有効化"}しました`, "success");
+    const target = triggerList.find((t) => t.id === name);
+    if (!target) return;
+    mailSendTriggerStore.setItems(
+      triggerList.map((t) => (t.id === name ? { ...t, autoSend: !t.autoSend } : t)),
+    );
+    toast.show(`「${name}」の自動送信を${target.autoSend ? "停止" : "有効化"}しました`, "success");
   };
 
   // 再読込: 送信中ジョブの進捗を取り込み、完了したものは送信完了へ繰り上げる
@@ -190,11 +201,11 @@ export default function MailSendPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {triggerList.map((t) => (
-            <div key={t.name} className="p-3 rounded-xl bg-white/50 border border-white/60">
+            <div key={t.id} className="p-3 rounded-xl bg-white/50 border border-white/60">
               <div className="flex items-center justify-between mb-2">
-                <div className="font-medium text-gray-800 text-sm">{t.name}</div>
+                <div className="font-medium text-gray-800 text-sm">{t.id}</div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" checked={t.autoSend} onChange={() => toggleTrigger(t.name)} className="sr-only peer" />
+                  <input type="checkbox" checked={t.autoSend} onChange={() => toggleTrigger(t.id)} className="sr-only peer" />
                   <div className="w-9 h-5 bg-gray-200 peer-checked:bg-blue-500 rounded-full transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
                 </label>
               </div>
@@ -226,7 +237,7 @@ export default function MailSendPage() {
             className="px-3 py-2 rounded-xl text-sm bg-white/70 border border-white/60 focus:outline-none focus:border-blue-400/60"
           >
             <option value="all">トリガー: すべて</option>
-            {triggers.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+            {triggerList.map((t) => <option key={t.id} value={t.id}>{t.id}</option>)}
           </select>
           <select
             value={statusFilter}
