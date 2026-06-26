@@ -1,19 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ScanLine, CheckCircle2, AlertTriangle, History, Package, X } from "lucide-react";
-
-type ScanItem = {
-  sku: string;
-  name: string;
-  required: number;
-  scanned: number;
-};
+import { inspectionStore } from "@/lib/stores/inspection";
+import { INITIAL_INSPECTIONS } from "@/lib/seeds/inspection";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  type InspectionRecord,
+  isInspectionComplete,
+  resolveScan,
+  transitionInspection,
+} from "@/lib/state-machines/inspection";
 
 type ScanLog = {
   id: number;
@@ -23,20 +25,28 @@ type ScanLog = {
   detail?: string;
 };
 
-const INITIAL_ITEMS: ScanItem[] = [
-  { sku: "WEP-001", name: "ワイヤレスイヤホン Pro", required: 2, scanned: 2 },
-  { sku: "UCB-002", name: "USB-Cケーブル 2m", required: 3, scanned: 1 },
-  { sku: "MBT-004", name: "モバイルバッテリー 20000mAh", required: 1, scanned: 0 },
-  { sku: "PFS-005", name: "保護フィルム セット", required: 4, scanned: 4 },
-];
-
 export default function ShipmentsInspectionBarcodePage() {
   const toast = useToast();
   const router = useRouter();
+
+  // 検品セッション（受注ごとのSKUスキャン進捗）は共有ストアに永続化する。
+  usePersistentStore({
+    store: inspectionStore,
+    domain: "inspections",
+    seed: INITIAL_INSPECTIONS,
+  });
+  const records = useSyncExternalStore(
+    (cb) => inspectionStore.subscribe(cb),
+    () => inspectionStore.getState(),
+    () => INITIAL_INSPECTIONS,
+  );
+
   const [orderNo, setOrderNo] = useState("ORD-2026-00851");
   const [completing, setCompleting] = useState(false);
-  const [items, setItems] = useState<ScanItem[]>(INITIAL_ITEMS);
   const [scanCode, setScanCode] = useState("");
+  // ログIDの単調増加カウンタ（Date.now() は render 純粋性ルールに抵触するため使わない）。
+  const logSeq = useRef(1000);
+  // スキャン履歴はセッション中の活動ログ（UIフィード）なので ephemeral。
   const [logs, setLogs] = useState<ScanLog[]>([
     { id: 1, at: "10:24:18", sku: "WEP-001", result: "ok" },
     { id: 2, at: "10:24:14", sku: "WEP-001", result: "ok" },
@@ -45,40 +55,47 @@ export default function ShipmentsInspectionBarcodePage() {
     { id: 5, at: "10:23:58", sku: "PFS-005", result: "duplicate", detail: "既に4回スキャン済み" },
   ]);
 
+  const active: InspectionRecord | undefined = records.find((r) => r.id === orderNo);
+  const items = active?.items ?? [];
+
   const handleScan = (e: React.FormEvent) => {
     e.preventDefault();
     const code = scanCode.trim().toUpperCase();
     if (!code) return;
-    const target = items.find((i) => i.sku === code);
     const now = new Date().toLocaleTimeString("ja-JP", { hour12: false });
-    if (!target) {
-      setLogs([{ id: Date.now(), at: now, sku: code, result: "ng", detail: "受注外SKU" }, ...logs]);
-      toast.show(`未知のSKUです: ${code}`, "error");
+    if (!active) {
+      toast.show(`対象受注が見つかりません: ${orderNo}`, "error");
       setScanCode("");
       return;
     }
-    if (target.scanned >= target.required) {
-      setLogs([{ id: Date.now(), at: now, sku: code, result: "duplicate", detail: "既定数を超過" }, ...logs]);
+    const res = resolveScan(active, code);
+    const logId = (logSeq.current += 1);
+    if (res.result === "ok") {
+      inspectionStore.upsert(res.record);
+      setLogs([{ id: logId, at: now, sku: code, result: "ok" }, ...logs]);
+      toast.show(`${res.itemName} をスキャンしました`, "success");
+    } else if (res.result === "duplicate") {
+      setLogs([{ id: logId, at: now, sku: code, result: "duplicate", detail: res.detail }, ...logs]);
       toast.show("既に必要数をスキャン済みです", "error");
-      setScanCode("");
-      return;
+    } else {
+      setLogs([{ id: logId, at: now, sku: code, result: "ng", detail: res.detail }, ...logs]);
+      toast.show(`未知のSKUです: ${code}`, "error");
     }
-    setItems(items.map((i) => (i.sku === code ? { ...i, scanned: i.scanned + 1 } : i)));
-    setLogs([{ id: Date.now(), at: now, sku: code, result: "ok" }, ...logs]);
-    toast.show(`${target.name} をスキャンしました`, "success");
     setScanCode("");
   };
 
   const totalRequired = items.reduce((s, i) => s + i.required, 0);
   const totalScanned = items.reduce((s, i) => s + i.scanned, 0);
-  const allDone = totalScanned === totalRequired;
+  const allDone = active ? isInspectionComplete(active) : false;
 
   const completeShipment = () => {
-    if (!allDone || completing) return;
+    if (!active || !allDone || completing) return;
     setCompleting(true);
+    inspectionStore.upsert(transitionInspection(active, "complete"));
     const now = new Date().toLocaleTimeString("ja-JP", { hour12: false });
+    const logId = (logSeq.current += 1);
     setLogs((prev) => [
-      { id: prev.length + 1, at: now, sku: orderNo, result: "ok", detail: "検品完了・出荷確定へ送信" },
+      { id: logId, at: now, sku: orderNo, result: "ok", detail: "検品完了・出荷確定へ送信" },
       ...prev,
     ]);
     toast.show(`${orderNo} の検品が完了しました。出荷確定へ移動します`, "success");
@@ -101,6 +118,11 @@ export default function ShipmentsInspectionBarcodePage() {
           <p className="text-sm text-gray-500 mt-1">
             受注: <span className="font-semibold text-blue-700">{orderNo}</span> ／ 進捗:{" "}
             <span className="font-semibold">{totalScanned}/{totalRequired}</span> 個
+            {active?.status === "検品完了" && (
+              <span className="ml-2 inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700">
+                <CheckCircle2 className="h-3 w-3" />検品完了
+              </span>
+            )}
           </p>
         </div>
         <PrimaryButton onClick={completeShipment} disabled={!allDone || completing}>
@@ -162,28 +184,36 @@ export default function ShipmentsInspectionBarcodePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((i) => {
-                    const done = i.scanned >= i.required;
-                    return (
-                      <tr key={i.sku} className={cn("border-t border-white/30", done && "bg-emerald-500/5")}>
-                        <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{i.sku}</td>
-                        <td className="px-4 py-2.5 text-gray-800">{i.name}</td>
-                        <td className="px-4 py-2.5 text-center tabular-nums text-gray-700">{i.required}</td>
-                        <td className="px-4 py-2.5 text-center tabular-nums font-semibold text-gray-800">{i.scanned}</td>
-                        <td className="px-4 py-2.5 text-center">
-                          {done ? (
-                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700">
-                              <CheckCircle2 className="h-3 w-3" />完了
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-700">
-                              残 {i.required - i.scanned}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {items.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-400">
+                        対象受注の検品アイテムがありません
+                      </td>
+                    </tr>
+                  ) : (
+                    items.map((i) => {
+                      const done = i.scanned >= i.required;
+                      return (
+                        <tr key={i.sku} className={cn("border-t border-white/30", done && "bg-emerald-500/5")}>
+                          <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{i.sku}</td>
+                          <td className="px-4 py-2.5 text-gray-800">{i.name}</td>
+                          <td className="px-4 py-2.5 text-center tabular-nums text-gray-700">{i.required}</td>
+                          <td className="px-4 py-2.5 text-center tabular-nums font-semibold text-gray-800">{i.scanned}</td>
+                          <td className="px-4 py-2.5 text-center">
+                            {done ? (
+                              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" />完了
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-700">
+                                残 {i.required - i.scanned}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
