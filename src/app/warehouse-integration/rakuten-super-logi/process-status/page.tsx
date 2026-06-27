@@ -1,36 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle2, Clock, RefreshCw, Search } from "lucide-react";
 import { DetailModal, type DetailRow } from "@/components/ui/detail-modal";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { rslProcessLogStore, type RslProcessLog } from "@/lib/stores/rsl-process-log-store";
+import { INITIAL_RSL_PROCESS_LOGS } from "@/lib/seeds/rsl-process-log";
 
-type ProcessLog = {
-  id: string;
-  job: string;
-  type: "出荷" | "入荷" | "在庫" | "返品" | "棚卸";
-  startAt: string;
-  endAt: string;
-  duration: string;
-  total: number;
-  done: number;
-  failed: number;
-  status: "完了" | "実行中" | "失敗" | "待機";
-  detail: string;
-};
-
-const data: ProcessLog[] = [
-  { id: "RSL-PROC-20260430-0125", job: "出荷指示送信バッチ", type: "出荷", startAt: "2026/04/30 10:00", endAt: "2026/04/30 10:08", duration: "8m 12s", total: 145, done: 145, failed: 0, status: "完了", detail: "全件正常終了" },
-  { id: "RSL-PROC-20260430-0124", job: "在庫数取得バッチ", type: "在庫", startAt: "2026/04/30 09:30", endAt: "2026/04/30 09:32", duration: "2m 4s", total: 845, done: 845, failed: 0, status: "完了", detail: "SKU 845件更新" },
-  { id: "RSL-PROC-20260430-0123", job: "出荷実績取込", type: "出荷", startAt: "2026/04/30 09:00", endAt: "2026/04/30 09:02", duration: "1m 48s", total: 132, done: 132, failed: 0, status: "完了", detail: "送り状番号反映" },
-  { id: "RSL-PROC-20260430-0122", job: "入荷予定送信", type: "入荷", startAt: "2026/04/30 06:00", endAt: "2026/04/30 06:01", duration: "55s", total: 8, done: 8, failed: 0, status: "完了", detail: "RSL受領確認済" },
-  { id: "RSL-PROC-20260430-0121", job: "返品入荷取込", type: "返品", startAt: "2026/04/30 11:00", endAt: "—", duration: "実行中", total: 12, done: 8, failed: 0, status: "実行中", detail: "進捗 8/12" },
-  { id: "RSL-PROC-20260429-0418", job: "棚卸結果取込", type: "棚卸", startAt: "2026/04/29 22:00", endAt: "2026/04/29 22:18", duration: "18m 4s", total: 8423, done: 8420, failed: 3, status: "完了", detail: "3件 ロケーション不一致" },
-  { id: "RSL-PROC-20260429-0417", job: "出荷指示送信バッチ", type: "出荷", startAt: "2026/04/29 17:00", endAt: "2026/04/29 17:01", duration: "1m 12s", total: 8, done: 5, failed: 3, status: "失敗", detail: "RSL側受信制限により一部失敗" },
-];
+type ProcessLog = RslProcessLog;
 
 const sb: Record<string, string> = {
   完了: "bg-emerald-500/15 text-emerald-700",
@@ -52,7 +33,18 @@ export default function RsrLogiProcessStatusPage() {
   const [keyword, setKeyword] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | ProcessLog["type"]>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | ProcessLog["status"]>("all");
-  const [items, setItems] = useState(data);
+
+  usePersistentStore({
+    store: rslProcessLogStore,
+    domain: "rsl-process-log",
+    seed: INITIAL_RSL_PROCESS_LOGS,
+  });
+  const items = useSyncExternalStore(
+    (cb) => rslProcessLogStore.subscribe(cb),
+    () => rslProcessLogStore.getState(),
+    () => INITIAL_RSL_PROCESS_LOGS as readonly ProcessLog[],
+  );
+
   const [lastChecked, setLastChecked] = useState("10:08");
   const [refreshing, setRefreshing] = useState(false);
   const [detailRow, setDetailRow] = useState<ProcessLog | null>(null);
@@ -80,22 +72,30 @@ export default function RsrLogiProcessStatusPage() {
   }
 
   function handleRetry(id: string) {
-    setItems((prev) =>
-      prev.map((d) =>
-        d.id === id
-          ? { ...d, status: "実行中" as const, endAt: "—", duration: "実行中", failed: 0, done: 0, detail: "再実行中..." }
-          : d
-      )
-    );
+    const target = rslProcessLogStore.findById(id);
+    if (!target) return;
+    rslProcessLogStore.upsert({
+      ...target,
+      status: "実行中",
+      endAt: "—",
+      duration: "実行中",
+      failed: 0,
+      done: 0,
+      detail: "再実行中...",
+    });
     setTimeout(() => {
-      setItems((prev) =>
-        prev.map((d) => {
-          if (d.id !== id || d.status !== "実行中") return d;
-          const now = new Date();
-          const ts = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-          return { ...d, status: "完了" as const, endAt: ts, duration: "1m 08s", done: d.total, detail: "再実行完了" };
-        })
-      );
+      const current = rslProcessLogStore.findById(id);
+      if (!current || current.status !== "実行中") return;
+      const now = new Date();
+      const ts = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      rslProcessLogStore.upsert({
+        ...current,
+        status: "完了",
+        endAt: ts,
+        duration: "1m 08s",
+        done: current.total,
+        detail: "再実行完了",
+      });
       toast.show(`ジョブを再実行しました`, "success");
     }, 2000);
   }
@@ -121,19 +121,19 @@ export default function RsrLogiProcessStatusPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">本日実行数</div>
-          <div className="text-2xl font-bold text-gray-800 mt-1">{data.filter((d) => d.startAt.startsWith("2026/04/30")).length}</div>
+          <div className="text-2xl font-bold text-gray-800 mt-1">{items.filter((d) => d.startAt.startsWith("2026/04/30")).length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">実行中</div>
-          <div className="text-2xl font-bold text-blue-600 mt-1">{data.filter((d) => d.status === "実行中").length}</div>
+          <div className="text-2xl font-bold text-blue-600 mt-1">{items.filter((d) => d.status === "実行中").length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">完了</div>
-          <div className="text-2xl font-bold text-emerald-600 mt-1">{data.filter((d) => d.status === "完了").length}</div>
+          <div className="text-2xl font-bold text-emerald-600 mt-1">{items.filter((d) => d.status === "完了").length}</div>
         </GlassCard>
         <GlassCard className="p-4">
           <div className="text-xs text-gray-500">失敗（要対応）</div>
-          <div className="text-2xl font-bold text-red-600 mt-1">{data.filter((d) => d.status === "失敗").length}</div>
+          <div className="text-2xl font-bold text-red-600 mt-1">{items.filter((d) => d.status === "失敗").length}</div>
         </GlassCard>
       </div>
 
