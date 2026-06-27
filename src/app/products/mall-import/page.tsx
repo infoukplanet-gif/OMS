@@ -1,11 +1,17 @@
 "use client";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { Upload, Download, Store, CheckCircle2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
 import { DetailModal } from "@/components/ui/detail-modal";
+import { parseMallCsv, type MallProductRow } from "@/lib/products/mall-import";
+import { productStore, type ProductRecord } from "@/lib/stores/product";
+import { snapshotDomain } from "@/app/_actions/snapshots";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { mallImportHistoryStore, type MallImportBatch } from "@/lib/stores/mall-import-history";
+import { INITIAL_MALL_IMPORT_HISTORY } from "@/lib/seeds/mall-import-history";
 
 type Mall = {
   key: string;
@@ -26,16 +32,6 @@ const MALLS: Mall[] = [
   { key: "colorme", label: "カラーミーショップ", icon: "🎨", hasTemplate: true, note: "商品CSV対応" },
 ];
 
-type ImportHistory = {
-  id: number;
-  mall: string;
-  filename: string;
-  rows: number;
-  success: number;
-  error: number;
-  at: string;
-};
-
 /** モール公式の商品CSVフォーマットに合わせたテンプレートヘッダー（hasTemplate のモールのみ）。 */
 const TEMPLATE_HEADERS: Record<string, string[]> = {
   rakuten: ["商品管理番号（商品URL）", "商品番号", "商品名", "販売価格", "在庫数", "ジャンルID", "カタログID"],
@@ -46,21 +42,87 @@ const TEMPLATE_HEADERS: Record<string, string[]> = {
   colorme: ["商品ID", "商品名", "型番", "販売価格", "在庫数", "カテゴリー"],
 };
 
-const initialHistory: ImportHistory[] = [
-  { id: 1, mall: "楽天市場", filename: "item_20260423.csv", rows: 512, success: 508, error: 4, at: "2026-04-23 17:05" },
-  { id: 2, mall: "Amazon", filename: "Inventory_Template.txt", rows: 230, success: 230, error: 0, at: "2026-04-22 10:12" },
-  { id: 3, mall: "Shopify", filename: "products_export_1.csv", rows: 145, success: 144, error: 1, at: "2026-04-19 14:33" },
-];
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** モール種別キーから商品マスタ表示用カテゴリへのフォールバック（新規取込商品の初期分類）。 */
+const NEW_PRODUCT_CATEGORY = "未分類";
+
+/**
+ * パース済み1行を、重複時動作（skip/overwrite/merge）に従って商品マスタへ反映する。
+ * @returns 反映できた件数（skip で既存に当たった行は反映しないので数えない）
+ */
+function applyRowsToProducts(
+  rows: readonly MallProductRow[],
+  duplicateAction: "skip" | "overwrite" | "merge",
+): number {
+  let applied = 0;
+  for (const row of rows) {
+    const existing = productStore.findByCode(row.code);
+    if (existing) {
+      if (duplicateAction === "skip") continue;
+      if (duplicateAction === "overwrite") {
+        productStore.upsert({
+          ...existing,
+          name: row.name,
+          price: row.price,
+          jan: row.jan,
+          stock: row.stock,
+        });
+        applied += 1;
+        continue;
+      }
+      // merge: 既存の空欄（未設定・0・空文字）だけをモール側の値で埋める。
+      const merged: ProductRecord = {
+        ...existing,
+        name: existing.name ? existing.name : row.name,
+        price: existing.price > 0 ? existing.price : row.price,
+        jan: existing.jan ? existing.jan : row.jan,
+        stock: typeof existing.stock === "number" && existing.stock > 0 ? existing.stock : row.stock,
+      };
+      productStore.upsert(merged);
+      applied += 1;
+      continue;
+    }
+    // 新規商品: モール取込分は最小項目で登録（分類・状態・原価は既定値）。
+    productStore.upsert({
+      code: row.code,
+      name: row.name,
+      category: NEW_PRODUCT_CATEGORY,
+      price: row.price,
+      cost: 0,
+      status: "販売中",
+      jan: row.jan,
+      stock: row.stock,
+    });
+    applied += 1;
+  }
+  return applied;
+}
 
 export default function MallImportPage() {
   const toast = useToast();
-  const [detailRow, setDetailRow] = useState<ImportHistory | null>(null);
+  const [detailRow, setDetailRow] = useState<MallImportBatch | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [selectedMall, setSelectedMall] = useState<string>("rakuten");
   const [file, setFile] = useState<File | null>(null);
   const [duplicateAction, setDuplicateAction] = useState<"skip" | "overwrite" | "merge">("merge");
   const [autoMapSku, setAutoMapSku] = useState(true);
   const [dragOver, setDragOver] = useState(false);
+
+  // 永続化（domain: "mall-import-history"）の正規オーナーページ。
+  usePersistentStore({
+    store: mallImportHistoryStore,
+    domain: "mall-import-history",
+    seed: INITIAL_MALL_IMPORT_HISTORY,
+  });
+
+  const history = useSyncExternalStore(
+    (cb) => mallImportHistoryStore.subscribe(cb),
+    () => mallImportHistoryStore.getState(),
+    () => INITIAL_MALL_IMPORT_HISTORY,
+  );
+  // 新しいバッチを上に（at は "YYYY-MM-DD HH:MM" で文字列降順ソート可能）。
+  const sortedHistory = [...history].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 
   const mall = MALLS.find((m) => m.key === selectedMall)!;
 
@@ -78,10 +140,56 @@ export default function MallImportPage() {
     toast.show(`${mall.label} のテンプレートをダウンロードしました`, "success");
   }
 
-  function handleExecute() {
-    if (!file) return toast.show("ファイルが選択されていません", "error");
-    toast.show(`${mall.label} へ ${file.name} を取込しました`);
+  async function handleExecute() {
+    if (!file) {
+      toast.show("ファイルが選択されていません", "error");
+      return;
+    }
+
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      toast.show("ファイルの読み込みに失敗しました", "error");
+      return;
+    }
+
+    const parsed = parseMallCsv(mall.key, text);
+    if (parsed.totalRows === 0) {
+      toast.show("有効なデータ行が見つかりませんでした（ヘッダー行のみ／空ファイル）", "error");
+      return;
+    }
+
+    // 実反映: パース済み行を重複時動作に従って商品マスタへ upsert。
+    const applied = applyRowsToProducts(parsed.rows, duplicateAction);
+    // 取り込めなかった行 = パース失敗行 + 重複スキップ（skip で既存に当たった分）。
+    const error = parsed.totalRows - applied;
+
+    // 商品マスタの更新を永続化（非オーナー書き込みなので明示スナップショット）。
+    void snapshotDomain("products", productStore.getState());
+
+    // 取込バッチを履歴ストアへ実レコードとして追加（リロード後も残す）。
+    const now = new Date();
+    const at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const id = `MALLB-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    mallImportHistoryStore.upsert({
+      id,
+      mall: mall.label,
+      filename: file.name,
+      rows: parsed.totalRows,
+      success: applied,
+      error,
+      at,
+    });
+
     setFile(null);
+    if (applied === 0) {
+      toast.show(`${mall.label}: ${parsed.totalRows}行を読み込みましたが、反映できた商品はありません`, "info");
+    } else if (error > 0) {
+      toast.show(`${mall.label}: ${applied}件を商品マスタへ反映（${error}件はスキップ／取込不可）`, "success");
+    } else {
+      toast.show(`${mall.label}: ${applied}件を商品マスタへ反映しました`, "success");
+    }
   }
 
   return (
@@ -221,7 +329,7 @@ export default function MallImportPage() {
               </tr>
             </thead>
             <tbody>
-              {initialHistory.map((h) => (
+              {sortedHistory.map((h) => (
                 <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{h.at}</td>
                   <td className="py-2 px-2 text-gray-800 flex items-center gap-1.5">
