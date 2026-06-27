@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Box, CheckCircle2, ClipboardList, Inbox, Loader2, RefreshCw, Truck, Undo2, XCircle } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { rslSyncLogStore, type RslSyncLog } from "@/lib/stores/rsl-sync-log-store";
+import { INITIAL_RSL_SYNC_LOGS } from "@/lib/seeds/rsl-sync-log";
 
 const subPages = [
   { href: "/warehouse-integration/rakuten-super-logi/setup", title: "初期登録", desc: "店舗情報・連携キー・契約倉庫の登録", icon: ClipboardList, color: "text-blue-600" },
@@ -17,13 +20,6 @@ const subPages = [
   { href: "/warehouse-integration/rakuten-super-logi/return", title: "返品処理", desc: "返品入荷・検品・在庫戻し", icon: Undo2, color: "text-rose-600" },
 ];
 
-const INITIAL_EVENTS = [
-  { time: "2026/04/30 10:30", action: "出荷指示送信", count: 145, result: "成功" },
-  { time: "2026/04/30 10:00", action: "在庫数取得", count: 22130, result: "成功" },
-  { time: "2026/04/30 09:30", action: "出荷実績取込", count: 132, result: "成功" },
-  { time: "2026/04/30 06:00", action: "入荷予定送信", count: 8, result: "成功" },
-];
-
 type ConnStatus = "正常" | "確認中" | "エラー";
 
 export default function RsrLogiHomePage() {
@@ -31,7 +27,13 @@ export default function RsrLogiHomePage() {
   const [connStatus, setConnStatus] = useState<ConnStatus>("正常");
   const [lastSync, setLastSync] = useState("10:30");
   const [syncing, setSyncing] = useState(false);
-  const [events, setEvents] = useState(INITIAL_EVENTS);
+  usePersistentStore({ store: rslSyncLogStore, domain: "rsl-sync-log", seed: INITIAL_RSL_SYNC_LOGS });
+  const syncLogs = useSyncExternalStore(
+    (cb) => rslSyncLogStore.subscribe(cb),
+    () => rslSyncLogStore.getState(),
+    () => INITIAL_RSL_SYNC_LOGS as readonly RslSyncLog[],
+  );
+  const events = [...syncLogs].sort((a, b) => b.time.localeCompare(a.time)).slice(0, 10);
 
   function handleConnectionTest() {
     setConnStatus("確認中");
@@ -51,12 +53,11 @@ export default function RsrLogiHomePage() {
       setSyncing(false);
       const now = new Date();
       const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${timeStr}`;
+      const p = (v: number) => String(v).padStart(2, "0");
+      const dateStr = `${now.getFullYear()}/${p(now.getMonth() + 1)}/${p(now.getDate())} ${timeStr}`;
+      const logId = `RSL-SYNC-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
       setLastSync(timeStr);
-      setEvents((prev) => [
-        { time: dateStr, action: "全件同期", count: 22130, result: "成功" },
-        ...prev,
-      ]);
+      rslSyncLogStore.upsert({ id: logId, time: dateStr, action: "全件同期", count: 22130, result: "成功" });
       toast.show("全データの同期が完了しました", "success");
     }, 2000);
   }
@@ -148,8 +149,8 @@ export default function RsrLogiHomePage() {
             </tr>
           </thead>
           <tbody>
-            {events.map((e, i) => (
-              <tr key={i} className="border-t border-white/30 hover:bg-white/40">
+            {events.map((e) => (
+              <tr key={e.id} className="border-t border-white/30 hover:bg-white/40">
                 <td className="px-3 py-2.5 text-xs text-gray-500">{e.time}</td>
                 <td className="px-3 py-2.5 text-gray-800">{e.action}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums text-gray-800">{e.count.toLocaleString()}</td>
