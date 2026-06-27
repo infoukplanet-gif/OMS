@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { Mail, Send, History, CheckCircle2, AlertCircle } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { paymentConfirmMailHistoryStore } from "@/lib/stores/payment-confirm-mail-history";
+import { INITIAL_PAYMENT_CONFIRM_MAIL_HISTORY } from "@/lib/seeds/payment-confirm-mail-history";
+import { mailQueue, type MailJob } from "@/lib/mail/queue";
 
 type Pending = {
   id: string;
@@ -24,16 +28,30 @@ const INITIAL: Pending[] = [
   { id: "4", order: "ORD-2026-00820", customer: "中村あかり", email: "nakamura@example.com", amount: 12800, paidAt: "2026-04-24", selected: false },
 ];
 
-const HISTORY = [
-  { id: 1, at: "2026-04-25 10:42", target: "84件", template: "入金確認メール（標準）", status: "success" as const },
-  { id: 2, at: "2026-04-24 16:18", target: "92件", template: "入金確認メール（標準）", status: "success" as const },
-  { id: 3, at: "2026-04-23 14:32", target: "8件", template: "入金確認メール（VIP用）", status: "success" as const },
-];
-
 const fmt = (n: number) => `¥${n.toLocaleString()}`;
+const pad = (n: number) => String(n).padStart(2, "0");
 
 export default function PaymentEmailConfirmPage() {
   const toast = useToast();
+
+  // 永続化（domain: "payment-confirm-mail-history"）の正規オーナーページ。
+  usePersistentStore({
+    store: paymentConfirmMailHistoryStore,
+    domain: "payment-confirm-mail-history",
+    seed: INITIAL_PAYMENT_CONFIRM_MAIL_HISTORY,
+  });
+
+  const history = useSyncExternalStore(
+    (cb) => paymentConfirmMailHistoryStore.subscribe(cb),
+    () => paymentConfirmMailHistoryStore.getState(),
+    () => INITIAL_PAYMENT_CONFIRM_MAIL_HISTORY,
+  );
+  // 新しいバッチを上に表示（at は文字列比較で降順ソート可能）。
+  const sortedHistory = useMemo(
+    () => [...history].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
+    [history],
+  );
+
   const [rows, setRows] = useState<Pending[]>(INITIAL);
   const [template, setTemplate] = useState("入金確認メール（標準）");
   const [sender, setSender] = useState("OMSサポート <support@example.com>");
@@ -52,7 +70,40 @@ export default function PaymentEmailConfirmPage() {
       toast.show("差出人のメールアドレス形式が不正です", "error");
       return;
     }
-    toast.show(`${selected.length}件にメールを送信しました（${template}）`, "success");
+
+    // 実 enqueue: 選択受注を入金確認メール（payment-confirmed）として共有 mailQueue へ投入。
+    // 手動一括送信なので自動トリガー設定では抑止せず、(orderId, triggerType) で二重送信のみ防ぐ。
+    const jobs: MailJob[] = selected.map((r) => ({
+      orderId: r.order,
+      triggerType: "payment-confirmed",
+      dedupeKey: `${r.order}:payment-confirmed`,
+    }));
+    const result = mailQueue.enqueueAll(jobs);
+
+    // 送信バッチを共有ストアへ永続化（送信履歴に実レコードとして残す）。
+    const now = new Date();
+    const at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const id = `MAILB-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    paymentConfirmMailHistoryStore.upsert({
+      id,
+      at,
+      target: `${result.enqueued}件`,
+      count: result.enqueued,
+      template,
+      status: result.duplicateSkipped > 0 ? "partial" : "success",
+      duplicateSkipped: result.duplicateSkipped,
+    });
+
+    // 送信済み行は選択解除（再送の二重チェックを避ける）。
+    setRows(rows.map((r) => (r.selected ? { ...r, selected: false } : r)));
+
+    if (result.enqueued === 0) {
+      toast.show("選択した受注はすべて送信済みのためスキップしました", "info");
+    } else if (result.duplicateSkipped > 0) {
+      toast.show(`${result.enqueued}件を送信キューへ投入（${result.duplicateSkipped}件は送信済みでスキップ）`, "info");
+    } else {
+      toast.show(`${result.enqueued}件を送信キューへ投入しました（${template}）`, "success");
+    }
   };
 
   return (
@@ -154,16 +205,23 @@ export default function PaymentEmailConfirmPage() {
               </tr>
             </thead>
             <tbody>
-              {HISTORY.map((h) => (
+              {sortedHistory.map((h) => (
                 <tr key={h.id} className="border-t border-white/30 hover:bg-white/40">
                   <td className="px-3 py-2 text-xs text-gray-700 tabular-nums">{h.at}</td>
                   <td className="px-3 py-2 text-gray-700 text-xs">{h.target}</td>
                   <td className="px-3 py-2 text-gray-600 text-xs">{h.template}</td>
                   <td className="px-3 py-2 text-center">
-                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700">
-                      {h.status === "success" ? <CheckCircle2 className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                      正常
-                    </span>
+                    {h.status === "partial" ? (
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-700">
+                        <AlertCircle className="h-3 w-3" />
+                        一部スキップ
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700">
+                        <CheckCircle2 className="h-3 w-3" />
+                        正常
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}

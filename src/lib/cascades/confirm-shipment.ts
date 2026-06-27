@@ -16,6 +16,10 @@ import type { ShipmentStore } from "../stores/shipment";
 import type { OrderStore } from "../stores/orders";
 import type { InventoryStore } from "../stores/inventory";
 import type { SalesStore } from "../stores/sales";
+import type { MallShipmentNotificationStore } from "../stores/mall-shipment-notifications";
+import type { WarehouseFtpDeliveryStore } from "../stores/warehouse-ftp-deliveries";
+import type { ShipmentConfirmAuditLogStore } from "../stores/shipment-confirm-audit-log";
+import { onShipmentConfirmed } from "../events/shipment-confirm-effects";
 
 export interface ConfirmShipmentDeps {
   shipmentStore: ShipmentStore;
@@ -28,6 +32,16 @@ export interface ConfirmShipmentDeps {
    * shipmentId が冪等キーなので、同一出荷の再確定でも二重計上されない。
    */
   salesStore?: SalesStore;
+  /** モール出荷通知データ台帳（任意）。楽天/Yahoo!/Amazon 受注の出荷通知データを生成する。 */
+  mallNotificationStore?: MallShipmentNotificationStore;
+  /** 倉庫委託先 FTP 配信キュー（任意）。出庫元倉庫への確定報告ファイルを投入する。 */
+  warehouseFtpDeliveryStore?: WarehouseFtpDeliveryStore;
+  /** 出荷確定の監査ログ台帳（任意）。確定操作の証跡を残す。 */
+  auditLogStore?: ShipmentConfirmAuditLogStore;
+  /** 追加副作用に刻む確定日時（YYYY/MM/DD）。未指定は空文字。 */
+  confirmedAt?: string;
+  /** 監査ログの実行者。未指定は「システム」。 */
+  actor?: string;
 }
 
 export interface ConfirmShipmentCascadeResult extends EnqueueResult {
@@ -43,6 +57,12 @@ export interface ConfirmShipmentCascadeResult extends EnqueueResult {
   consumeFailed: number;
   /** 出荷ベースで台帳に計上された確定売上額（計上なしは 0）。 */
   revenueRecognized: number;
+  /** モール出荷通知データを生成した件数（0 or 1）。 */
+  mallNotified: number;
+  /** 倉庫委託先 FTP 配信キューへ投入した件数（0 or 1）。 */
+  ftpQueued: number;
+  /** 出荷確定の監査ログを記録した件数（0 or 1）。 */
+  auditLogged: number;
 }
 
 /**
@@ -55,9 +75,20 @@ export function applyConfirmShipmentCascade(
   shipmentId: string,
   deps: ConfirmShipmentDeps,
 ): ConfirmShipmentCascadeResult {
-  const { shipmentStore, orderStore, inventoryStore, salesStore, mailQueue, autoMailEnabled } = deps;
+  const {
+    shipmentStore,
+    orderStore,
+    inventoryStore,
+    salesStore,
+    mailQueue,
+    autoMailEnabled,
+    mallNotificationStore,
+    warehouseFtpDeliveryStore,
+    auditLogStore,
+  } = deps;
 
-  const tracking = shipmentStore.getState().find((s) => s.id === shipmentId)?.trackingNumber;
+  const shipmentRecord = shipmentStore.getState().find((s) => s.id === shipmentId);
+  const tracking = shipmentRecord?.trackingNumber as string | undefined;
   const result = shipmentStore.applyTransition(shipmentId, "confirmShipment", {
     trackingNumber: tracking,
   });
@@ -68,6 +99,9 @@ export function applyConfirmShipmentCascade(
   let consumed = 0;
   let consumeFailed = 0;
   let revenueRecognized = 0;
+  let mallNotified = 0;
+  let ftpQueued = 0;
+  let auditLogged = 0;
 
   if (!result.applied) {
     return {
@@ -78,6 +112,9 @@ export function applyConfirmShipmentCascade(
       consumed,
       consumeFailed,
       revenueRecognized,
+      mallNotified,
+      ftpQueued,
+      auditLogged,
     };
   }
 
@@ -126,6 +163,65 @@ export function applyConfirmShipmentCascade(
     }
   }
 
+  // 追加副作用: モール出荷通知データ生成 / 倉庫委託先 FTP 配信 / 出荷確定の監査ログ。
+  // 純粋関数 onShipmentConfirmed で記述子を組み立て、注入されたストアにのみ反映する
+  // （shipmentId が冪等キーなので再確定でも二重生成されない）。
+  if (mallNotificationStore || warehouseFtpDeliveryStore || auditLogStore) {
+    const effectOrderId = result.effects.cascadeOrderAction?.orderId ?? result.effects.consumeInventory?.orderId;
+    const effectOrder = effectOrderId
+      ? orderStore.getState().find((o) => o.id === effectOrderId)
+      : undefined;
+    const effectAllocation = effectOrder?.allocation as AllocationLine[] | undefined;
+    const confirmedAt = deps.confirmedAt ?? "";
+
+    const effects = onShipmentConfirmed({
+      shipmentId,
+      orderId: effectOrderId,
+      shop: String(effectOrder?.shop ?? shipmentRecord?.shop ?? ""),
+      customer: String(effectOrder?.customer ?? shipmentRecord?.customer ?? ""),
+      carrier: String(shipmentRecord?.carrier ?? ""),
+      warehouse: String(effectAllocation?.[0]?.warehouse ?? ""),
+      trackingNumber: tracking,
+      actor: deps.actor ?? "システム",
+    });
+
+    if (effects.mallNotification && mallNotificationStore) {
+      const d = effects.mallNotification;
+      const r = mallNotificationStore.add({
+        ...d,
+        status: "生成済み",
+        generatedAt: confirmedAt,
+      });
+      if (r.applied) mallNotified += 1;
+    }
+
+    if (effects.warehouseFtp && warehouseFtpDeliveryStore) {
+      const d = effects.warehouseFtp;
+      const r = warehouseFtpDeliveryStore.add({
+        shipmentId: d.shipmentId,
+        orderId: d.orderId,
+        warehouse: d.warehouse,
+        fileName: d.fileName,
+        status: "配信待ち",
+        queuedAt: confirmedAt,
+      });
+      if (r.applied) ftpQueued += 1;
+    }
+
+    if (effects.auditLog && auditLogStore) {
+      const d = effects.auditLog;
+      const r = auditLogStore.add({
+        shipmentId: d.shipmentId,
+        orderId: d.orderId,
+        action: "出荷確定",
+        actor: d.actor,
+        detail: d.detail,
+        recordedAt: confirmedAt,
+      });
+      if (r.applied) auditLogged += 1;
+    }
+  }
+
   return {
     applied: true,
     ...mailQueue.enqueueAll(mailJobs, autoMailEnabled),
@@ -134,5 +230,8 @@ export function applyConfirmShipmentCascade(
     consumed,
     consumeFailed,
     revenueRecognized,
+    mallNotified,
+    ftpQueued,
+    auditLogged,
   };
 }

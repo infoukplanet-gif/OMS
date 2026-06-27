@@ -6,6 +6,9 @@ import { createInventoryStore } from "../stores/inventory";
 import { createSalesStore } from "../stores/sales";
 import { createMailQueue, type AutoMailEnabled } from "../mail/queue";
 import type { InventoryRecord } from "../state-machines/inventory";
+import { createMallShipmentNotificationStore } from "../stores/mall-shipment-notifications";
+import { createWarehouseFtpDeliveryStore } from "../stores/warehouse-ftp-deliveries";
+import { createShipmentConfirmAuditLogStore } from "../stores/shipment-confirm-audit-log";
 
 const ALL_ENABLED: AutoMailEnabled = {
   thanks: true,
@@ -47,14 +50,26 @@ function makeDeps(opts: {
   orders?: OrderRecord[];
   inventory?: InventoryRecord[];
   autoMailEnabled?: AutoMailEnabled;
+  withExtraEffects?: boolean;
+  confirmedAt?: string;
+  actor?: string;
 }): ConfirmShipmentDeps {
-  return {
+  const base: ConfirmShipmentDeps = {
     shipmentStore: createShipmentStore(opts.shipments),
     orderStore: createOrderStore(opts.orders ?? []),
     inventoryStore: createInventoryStore(opts.inventory ?? []),
     salesStore: createSalesStore(),
     mailQueue: createMailQueue(),
     autoMailEnabled: opts.autoMailEnabled ?? ALL_ENABLED,
+  };
+  if (!opts.withExtraEffects) return base;
+  return {
+    ...base,
+    mallNotificationStore: createMallShipmentNotificationStore(),
+    warehouseFtpDeliveryStore: createWarehouseFtpDeliveryStore(),
+    auditLogStore: createShipmentConfirmAuditLogStore(),
+    confirmedAt: opts.confirmedAt ?? "2026/06/27",
+    actor: opts.actor ?? "システム",
   };
 }
 
@@ -160,5 +175,98 @@ describe("applyConfirmShipmentCascade — 出荷確定の全連鎖", () => {
     expect(result.cascadeApplied).toBe(0);
     expect(result.cascadeSkipped).toBe(1);
     expect(deps.shipmentStore.getState()[0].status).toBe("出荷済み");
+  });
+});
+
+describe("applyConfirmShipmentCascade — 出荷確定の追加副作用（モール通知 / FTP配信 / 監査ログ）", () => {
+  it("モール受注では モール通知 / FTP配信 / 監査ログ の3副作用を生成する", () => {
+    const deps = makeDeps({
+      shipments: [shipment({ carrier: "ヤマト運輸" } as Partial<ShipmentRecord>)],
+      orders: [order({ shop: "楽天市場", customer: "山田 太郎", amount: 32_400 })],
+      inventory: [inv(10, 2)],
+      withExtraEffects: true,
+      confirmedAt: "2026/06/27",
+    });
+
+    const result = applyConfirmShipmentCascade("SHP-2026-00001", deps);
+
+    expect(result.mallNotified).toBe(1);
+    expect(result.ftpQueued).toBe(1);
+    expect(result.auditLogged).toBe(1);
+
+    const mall = deps.mallNotificationStore!.getState();
+    expect(mall).toHaveLength(1);
+    expect(mall[0]).toMatchObject({
+      shipmentId: "SHP-2026-00001",
+      orderId: "ORD-1",
+      mall: "rakuten",
+      carrier: "ヤマト運輸",
+      trackingNumber: "TRK-123",
+      status: "生成済み",
+      generatedAt: "2026/06/27",
+    });
+
+    const ftp = deps.warehouseFtpDeliveryStore!.getState();
+    expect(ftp[0]).toMatchObject({
+      shipmentId: "SHP-2026-00001",
+      warehouse: "本社倉庫",
+      fileName: "出荷確定_SHP-2026-00001.csv",
+      status: "配信待ち",
+      queuedAt: "2026/06/27",
+    });
+
+    const audit = deps.auditLogStore!.getState();
+    expect(audit[0]).toMatchObject({
+      shipmentId: "SHP-2026-00001",
+      action: "出荷確定",
+      actor: "システム",
+      recordedAt: "2026/06/27",
+    });
+  });
+
+  it("自社店舗（本店）ではモール通知を生成しない（FTP・監査は生成）", () => {
+    const deps = makeDeps({
+      shipments: [shipment()],
+      orders: [order({ shop: "本店" })],
+      inventory: [inv(10, 2)],
+      withExtraEffects: true,
+    });
+
+    const result = applyConfirmShipmentCascade("SHP-2026-00001", deps);
+
+    expect(result.mallNotified).toBe(0);
+    expect(result.ftpQueued).toBe(1);
+    expect(result.auditLogged).toBe(1);
+    expect(deps.mallNotificationStore!.getState()).toHaveLength(0);
+  });
+
+  it("再確定では3副作用も二重生成されない（冪等性）", () => {
+    const deps = makeDeps({
+      shipments: [shipment()],
+      orders: [order({ shop: "楽天市場" })],
+      inventory: [inv(10, 2)],
+      withExtraEffects: true,
+    });
+
+    applyConfirmShipmentCascade("SHP-2026-00001", deps);
+    const again = applyConfirmShipmentCascade("SHP-2026-00001", deps);
+
+    expect(again.mallNotified).toBe(0);
+    expect(again.ftpQueued).toBe(0);
+    expect(again.auditLogged).toBe(0);
+    expect(deps.mallNotificationStore!.getState()).toHaveLength(1);
+    expect(deps.warehouseFtpDeliveryStore!.getState()).toHaveLength(1);
+    expect(deps.auditLogStore!.getState()).toHaveLength(1);
+  });
+
+  it("3副作用ストア未注入でも従来の連鎖は動作する（後方互換）", () => {
+    const deps = makeDeps({ shipments: [shipment()], orders: [order()], inventory: [inv(10, 2)] });
+
+    const result = applyConfirmShipmentCascade("SHP-2026-00001", deps);
+
+    expect(result.applied).toBe(true);
+    expect(result.mallNotified).toBe(0);
+    expect(result.ftpQueued).toBe(0);
+    expect(result.auditLogged).toBe(0);
   });
 });
