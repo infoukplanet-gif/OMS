@@ -22,23 +22,10 @@ import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import { INITIAL_INVENTORY } from "@/lib/seeds/inventory";
 import { allocationAutoJobStore } from "@/lib/stores/allocation-auto-jobs";
 import { INITIAL_ALLOCATION_AUTO_JOBS } from "@/lib/seeds/allocation-auto-jobs";
+import { allocationRunLogStore, type AllocationRunLog } from "@/lib/stores/allocation-run-log-store";
+import { INITIAL_ALLOCATION_RUN_LOGS } from "@/lib/seeds/allocation-run-log";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
-
-type RunLogEntry = { id: number; at: string; job: string; success: number; partial: number; failed: number };
-
-function nowStamp(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
-const RECENT_LOG: RunLogEntry[] = [
-  { id: 1, at: "2026-04-25 13:00", job: "昼次自動引当", success: 58, partial: 0, failed: 0 },
-  { id: 2, at: "2026-04-25 09:00", job: "朝次自動引当", success: 140, partial: 2, failed: 0 },
-  { id: 3, at: "2026-04-25 08:30", job: "卸先優先引当", success: 28, partial: 0, failed: 0 },
-  { id: 4, at: "2026-04-24 17:00", job: "夕次自動引当", success: 71, partial: 1, failed: 1 },
-];
 
 export default function AllocationAutoPage() {
   const toast = useToast();
@@ -62,7 +49,15 @@ export default function AllocationAutoPage() {
   const [holdNotify, setHoldNotify] = useState(true);
   // 入荷時の自動再引当（auto-reallocate-settings シングルトンと双方向）
   const [autoReallocate, setAutoReallocate] = useState(getAutoReallocateSettings().enabled);
-  const [runLog, setRunLog] = useState<RunLogEntry[]>(RECENT_LOG);
+
+  // 実行ログ — 共有ストア経由で永続化（domain: "allocation-run-log"）
+  usePersistentStore({ store: allocationRunLogStore, domain: "allocation-run-log", seed: INITIAL_ALLOCATION_RUN_LOGS });
+  const runLogRecords = useSyncExternalStore(
+    (cb) => allocationRunLogStore.subscribe(cb),
+    () => allocationRunLogStore.getState(),
+    () => INITIAL_ALLOCATION_RUN_LOGS as readonly AllocationRunLog[],
+  );
+  const runLog = [...runLogRecords].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
 
   const moveWarehouse = (index: number, dir: -1 | 1) => {
     setWarehousePriority((prev) => {
@@ -121,10 +116,11 @@ export default function AllocationAutoPage() {
       return;
     }
     const res = allocatePendingOrders({ orderStore, inventoryStore });
-    setRunLog((prev) => [
-      { id: Date.now(), at: nowStamp(), job: jobName, success: res.allocated, partial: 0, failed: res.shortage },
-      ...prev,
-    ]);
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const logId = `ALC-RUN-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    allocationRunLogStore.upsert({ id: logId, at, job: jobName, success: res.allocated, partial: 0, failed: res.shortage });
     toast.show(
       `${jobName}: ${res.processed}件処理（引当成功 ${res.allocated}件 / 在庫不足 ${res.shortage}件）`,
       res.shortage > 0 ? "info" : "success",
