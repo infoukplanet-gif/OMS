@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { DatePicker } from "@/components/ui/date-picker";
 import { PrimaryButton, useToast } from "@/components/ui/interactive";
@@ -7,6 +7,12 @@ import { FileDown, CheckSquare, Square } from "lucide-react";
 import { downloadCsv, type CsvCell } from "@/lib/export/csv";
 import { productStore } from "@/lib/stores/product";
 import { INITIAL_PRODUCTS, type SeededProduct } from "@/lib/seeds/products";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  productMasterDownloadHistoryStore,
+  type ProductMasterDownloadBatch,
+} from "@/lib/stores/product-master-download-history";
+import { INITIAL_PRODUCT_MASTER_DOWNLOAD_HISTORY } from "@/lib/seeds/product-master-download-history";
 
 type Field = { key: string; label: string; group: string };
 
@@ -37,19 +43,14 @@ const FIELDS: Field[] = [
   { key: "status", label: "販売状態", group: "モール" },
 ];
 
-type DownloadHistory = {
-  id: number;
-  filename: string;
-  count: number;
-  format: string;
-  user: string;
-  at: string;
+const FORMAT_LABEL: Record<string, string> = {
+  csv_utf8: "CSV (UTF-8)",
+  csv_sjis: "CSV (Shift-JIS)",
+  xlsx: "Excel",
+  tsv: "TSV",
 };
 
-const initialHistory: DownloadHistory[] = [
-  { id: 1, filename: "products_20260423.csv", count: 1842, format: "CSV (UTF-8)", user: "佐藤 花子", at: "2026-04-23 11:22" },
-  { id: 2, filename: "products_rakuten.xlsx", count: 820, format: "Excel", user: "田中 太郎", at: "2026-04-18 09:30" },
-];
+const pad = (n: number): string => String(n).padStart(2, "0");
 
 export default function MasterDownloadPage() {
   const toast = useToast();
@@ -58,6 +59,20 @@ export default function MasterDownloadPage() {
   const [status, setStatus] = useState("all");
   const [format, setFormat] = useState("csv_utf8");
   const [selected, setSelected] = useState<Set<string>>(new Set(FIELDS.map((f) => f.key)));
+
+  // このページが商品マスタDL履歴ドメインの正規オーナー（永続化はここ 1 箇所）。
+  usePersistentStore({
+    store: productMasterDownloadHistoryStore,
+    domain: "product-master-download-history",
+    seed: INITIAL_PRODUCT_MASTER_DOWNLOAD_HISTORY,
+  });
+  const history = useSyncExternalStore(
+    (cb) => productMasterDownloadHistoryStore.subscribe(cb),
+    () => productMasterDownloadHistoryStore.getState(),
+    () => INITIAL_PRODUCT_MASTER_DOWNLOAD_HISTORY as readonly ProductMasterDownloadBatch[],
+  );
+  // 実行日時(at)の降順。id は実行日時から採番するため文字列比較で十分。
+  const sortedHistory = [...history].sort((a, b) => b.at.localeCompare(a.at));
 
   const groups = Array.from(new Set(FIELDS.map((f) => f.group)));
 
@@ -103,11 +118,26 @@ export default function MasterDownloadPage() {
     const products = (productStore.getState().length > 0 ? productStore.getState() : INITIAL_PRODUCTS) as readonly SeededProduct[];
     const target = products.filter((p) => status === "all" || p.status === STATUS_LABEL[status]);
     const fields = FIELDS.filter((f) => selected.has(f.key));
+    const filename = "商品マスタ全件.csv";
     downloadCsv(
-      "商品マスタ全件.csv",
+      filename,
       fields.map((f) => f.label),
       target.map((p) => fields.map((f) => fieldValue(p, f.key))),
     );
+
+    // 実行結果を履歴ストアに追記（リロード後も残る）。
+    const now = new Date();
+    const at = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const id = `PMDL-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    productMasterDownloadHistoryStore.upsert({
+      id,
+      filename,
+      count: target.length,
+      format: FORMAT_LABEL[format] ?? format,
+      user: "担当者",
+      at,
+    });
+
     toast.show(`${target.length} 件 × ${fields.length} 項目をダウンロードしました`, "success");
   }
 
@@ -229,7 +259,7 @@ export default function MasterDownloadPage() {
               </tr>
             </thead>
             <tbody>
-              {initialHistory.map((h) => (
+              {sortedHistory.map((h) => (
                 <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{h.at}</td>
                   <td className="py-2 px-2 text-gray-800">{h.filename}</td>
