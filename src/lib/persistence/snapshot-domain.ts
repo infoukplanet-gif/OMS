@@ -107,7 +107,8 @@ export type SnapshotDomain =
   | "shipment-confirm-audit-log"
   | "payment-confirm-mail-history"
   | "mall-import-history"
-  | "product-master-download-history";
+  | "product-master-download-history"
+  | "wholesale-import-history";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;

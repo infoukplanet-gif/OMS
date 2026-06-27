@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -10,20 +10,14 @@ import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
 import { DetailModal } from "@/components/ui/detail-modal";
 import { wholesaleStore, type WholesaleRecord } from "@/lib/stores/wholesale";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import {
+  wholesaleImportHistoryStore,
+  type WholesaleImportBatch,
+} from "@/lib/stores/wholesale-import-history";
+import { INITIAL_WHOLESALE_IMPORT_HISTORY } from "@/lib/seeds/wholesale-import-history";
 
 type ImportMode = "new" | "update" | "upsert";
-
-type ImportHistory = {
-  id: number;
-  filename: string;
-  rows: number;
-  success: number;
-  error: number;
-  mode: ImportMode;
-  template: string;
-  user: string;
-  at: string;
-};
 
 const MODE_LABEL: Record<ImportMode, string> = {
   new: "新規追加のみ",
@@ -99,15 +93,9 @@ const previewData: PreviewRow[] = [
   { row: 5, code: "W-00049", name: "サンライズ商会", contact: "佐藤 大輔", email: "sato@sunrise-shokai.jp", creditLimit: 4500000, paymentTerms: "末締翌月25日払", status: "ok" },
 ];
 
-const initialHistory: ImportHistory[] = [
-  { id: 1, filename: "wholesale_april_2026.csv", rows: 58, success: 57, error: 1, mode: "upsert", template: "自社CSV用", user: "佐藤 花子", at: "2026-04-22 10:14" },
-  { id: 2, filename: "credit_limit_update.csv", rows: 32, success: 32, error: 0, mode: "update", template: "MerchantSync連携用", user: "田中 太郎", at: "2026-04-18 15:48" },
-  { id: 3, filename: "new_wholesales_q2.csv", rows: 14, success: 14, error: 0, mode: "new", template: "自社CSV用", user: "鈴木 一郎", at: "2026-04-10 09:22" },
-];
-
 export default function WholesaleImportPage() {
   const toast = useToast();
-  const [detailRow, setDetailRow] = useState<ImportHistory | null>(null);
+  const [detailRow, setDetailRow] = useState<WholesaleImportBatch | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState(1);
@@ -123,8 +111,20 @@ export default function WholesaleImportPage() {
   const [templates, setTemplates] = useState<string[]>(initialTemplates);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
   const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
-  const [history, setHistory] = useState<ImportHistory[]>(initialHistory);
-  const historySeq = useRef(initialHistory.length);
+
+  // このページが卸先取込履歴ドメインの正規オーナー（永続化はここ 1 箇所）。
+  usePersistentStore({
+    store: wholesaleImportHistoryStore,
+    domain: "wholesale-import-history",
+    seed: INITIAL_WHOLESALE_IMPORT_HISTORY,
+  });
+  const history = useSyncExternalStore(
+    (cb) => wholesaleImportHistoryStore.subscribe(cb),
+    () => wholesaleImportHistoryStore.getState(),
+    () => INITIAL_WHOLESALE_IMPORT_HISTORY as readonly WholesaleImportBatch[],
+  );
+  // 実行日時(at)の降順で直近10件。id は実行日時から採番するため文字列比較で十分。
+  const sortedHistory = [...history].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
 
   const counts = {
     all: previewData.length,
@@ -165,6 +165,7 @@ export default function WholesaleImportPage() {
     const p = (x: number) => String(x).padStart(2, "0");
     const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     const startedAt = `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
+    const batchId = `WHIMP-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 
     // 取込対象は error 以外（卸先コードあり）。登録モードで新規/更新を分岐し、
     // 実際に卸先マスタへ upsert された件数のみを成功件数として集計する。
@@ -206,9 +207,9 @@ export default function WholesaleImportPage() {
       applied += 1;
     }
 
-    historySeq.current += 1;
-    const record: ImportHistory = {
-      id: historySeq.current,
+    // 取込実行を履歴ストアに追記（リロード後も残る）。
+    wholesaleImportHistoryStore.upsert({
+      id: batchId,
       filename: file?.name ?? "import.csv",
       rows: counts.all,
       success: applied,
@@ -217,8 +218,7 @@ export default function WholesaleImportPage() {
       template: templateKey,
       user: "現在のユーザー",
       at,
-    };
-    setHistory((prev) => [record, ...prev]);
+    });
     toast.show(`${applied} 件を ${MODE_LABEL[mode]} で卸先マスタに反映しました`, "success");
     setStep(1);
     setFile(null);
@@ -570,7 +570,7 @@ export default function WholesaleImportPage() {
               </tr>
             </thead>
             <tbody>
-              {history.map((h) => (
+              {sortedHistory.map((h) => (
                 <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{h.at}</td>
                   <td className="py-2 px-2 text-gray-800">
