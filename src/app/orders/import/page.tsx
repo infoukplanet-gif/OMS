@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -12,6 +12,9 @@ import {
   type ImportProductRow,
 } from "@/lib/calculations/product-auto-create";
 import { getProductAutoCreateSettings } from "@/lib/products/auto-create-settings";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { orderImportHistoryStore, type OrderImportBatch } from "@/lib/stores/order-import-history-store";
+import { INITIAL_ORDER_IMPORT_HISTORY } from "@/lib/seeds/order-import-history";
 import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
 import { DetailModal } from "@/components/ui/detail-modal";
 
@@ -84,28 +87,23 @@ const previewData: PreviewRow[] = [
   { row: 7, productName: "Bluetoothスピーカー", skuCode: "BTS-008", price: 7000, quantity: 4, status: "ok" },
 ];
 
-type OrderImportHistory = {
-  id: number;
-  filename: string;
-  rows: number;
-  success: number;
-  warning: number;
-  error: number;
-  template: string;
-  user: string;
-  at: string;
-};
-
-const initialOrderHistory: OrderImportHistory[] = [
-  { id: 1, filename: "rakuten_orders_20260424.csv", rows: 187, success: 184, warning: 2, error: 1, template: "楽天CSV用", user: "佐藤 花子", at: "2026-04-24 18:05" },
-  { id: 2, filename: "amazon_orders_20260423.csv", rows: 92, success: 92, warning: 0, error: 0, template: "Amazon用", user: "田中 太郎", at: "2026-04-23 17:32" },
-  { id: 3, filename: "wholesale_a_april.xlsx", rows: 45, success: 43, warning: 1, error: 1, template: "卸先A用", user: "鈴木 一郎", at: "2026-04-22 11:18" },
-];
-
 export default function ImportPage() {
   const toast = useToast();
-  const [detailRow, setDetailRow] = useState<OrderImportHistory | null>(null);
+  const [detailRow, setDetailRow] = useState<OrderImportBatch | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  usePersistentStore({
+    store: orderImportHistoryStore,
+    domain: "order-import-history",
+    seed: INITIAL_ORDER_IMPORT_HISTORY,
+  });
+  const history = useSyncExternalStore(
+    (cb) => orderImportHistoryStore.subscribe(cb),
+    () => orderImportHistoryStore.getState(),
+    () => INITIAL_ORDER_IMPORT_HISTORY as readonly OrderImportBatch[],
+  );
+  // 実行日時(at)の降順で直近10件。id は実行日時から採番するため文字列比較で十分。
+  const sortedHistory = [...history].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
 
   const [step, setStep] = useState(1);
   const [filter, setFilter] = useState<"all" | "ok" | "warning" | "error">("all");
@@ -181,6 +179,23 @@ export default function ImportPage() {
     for (const rec of [...plan.created, ...plan.updated]) {
       productStore.upsert(rec);
     }
+
+    // 取込履歴へ 1 バッチ追記する（共有ストアへ永続化）。
+    const d = new Date();
+    const p = (v: number) => String(v).padStart(2, "0");
+    const batchId = `ORDIMP-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    orderImportHistoryStore.upsert({
+      id: batchId,
+      filename: fileName ?? "（不明なファイル）",
+      rows: previewData.length,
+      success: counts.ok,
+      warning: counts.warning,
+      error: counts.error,
+      template: templateKey,
+      user: "現在のユーザー",
+      at,
+    });
 
     const autoLine =
       plan.created.length > 0 || plan.updated.length > 0
@@ -453,7 +468,7 @@ export default function ImportPage() {
               </tr>
             </thead>
             <tbody>
-              {initialOrderHistory.map((h) => (
+              {sortedHistory.map((h) => (
                 <tr key={h.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
                   <td className="py-2 px-2 text-gray-700">{h.at}</td>
                   <td className="py-2 px-2 text-gray-800">
