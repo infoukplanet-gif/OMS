@@ -1,38 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { DatePicker } from "@/components/ui/date-picker";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Clock, Loader2, RefreshCw, Search, Send, Truck } from "lucide-react";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { rslOutboundStore, type RslOutbound } from "@/lib/stores/rsl-outbound-store";
+import { INITIAL_RSL_OUTBOUND } from "@/lib/seeds/rsl-outbound";
 
-type Outbound = {
-  id: string;
-  orderNo: string;
-  customer: string;
-  zipPrefix: string;
-  items: number;
-  qty: number;
-  cutoff: string;
-  shippedAt: string;
-  carrier: string;
-  trackingNo: string;
-  status: "指示送信" | "ピッキング中" | "梱包中" | "発送済" | "保留" | "失敗";
-  shop: string;
-};
-
-const data: Outbound[] = [
-  { id: "RSL-OUT-20260430-0145", orderNo: "ORD-2026-08423", customer: "田中 太郎", zipPrefix: "100", items: 2, qty: 3, cutoff: "2026/04/30 12:00", shippedAt: "—", carrier: "—", trackingNo: "—", status: "ピッキング中", shop: "楽天店" },
-  { id: "RSL-OUT-20260430-0144", orderNo: "ORD-2026-08418", customer: "山田 花子", zipPrefix: "150", items: 1, qty: 1, cutoff: "2026/04/30 12:00", shippedAt: "2026/04/30 10:30", carrier: "ヤマト", trackingNo: "1234-5678-9012", status: "発送済", shop: "楽天店" },
-  { id: "RSL-OUT-20260430-0143", orderNo: "ORD-2026-08410", customer: "佐藤 一郎", zipPrefix: "060", items: 3, qty: 5, cutoff: "2026/04/30 12:00", shippedAt: "2026/04/30 10:15", carrier: "ヤマト", trackingNo: "2345-6789-0123", status: "発送済", shop: "楽天店" },
-  { id: "RSL-OUT-20260430-0142", orderNo: "ORD-2026-08405", customer: "渡辺 美咲", zipPrefix: "530", items: 1, qty: 2, cutoff: "2026/04/30 12:00", shippedAt: "—", carrier: "—", trackingNo: "—", status: "梱包中", shop: "楽天店" },
-  { id: "RSL-OUT-20260430-0141", orderNo: "ORD-2026-08400", customer: "木村 健", zipPrefix: "812", items: 2, qty: 2, cutoff: "2026/04/30 12:00", shippedAt: "—", carrier: "—", trackingNo: "—", status: "指示送信", shop: "楽天店" },
-  { id: "RSL-OUT-20260429-0418", orderNo: "ORD-2026-08398", customer: "伊藤 さくら", zipPrefix: "900", items: 1, qty: 1, cutoff: "2026/04/29 12:00", shippedAt: "—", carrier: "—", trackingNo: "—", status: "保留", shop: "楽天店" },
-  { id: "RSL-OUT-20260429-0417", orderNo: "ORD-2026-08395", customer: "小林 大輔", zipPrefix: "240", items: 2, qty: 4, cutoff: "2026/04/29 12:00", shippedAt: "2026/04/29 16:00", carrier: "ヤマト", trackingNo: "3456-7890-1234", status: "発送済", shop: "楽天店" },
-  { id: "RSL-OUT-20260429-0416", orderNo: "ORD-2026-08390", customer: "吉田 あゆみ", zipPrefix: "950", items: 1, qty: 1, cutoff: "2026/04/29 12:00", shippedAt: "—", carrier: "—", trackingNo: "—", status: "失敗", shop: "楽天店" },
-];
+type Outbound = RslOutbound;
 
 const sb: Record<string, string> = {
   指示送信: "bg-blue-500/15 text-blue-700",
@@ -48,7 +27,12 @@ export default function RsrLogiOutboundPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Outbound["status"]>("all");
   const [cutoffFilter, setCutoffFilter] = useState<Date | undefined>(undefined);
-  const [items, setItems] = useState(data);
+  usePersistentStore({ store: rslOutboundStore, domain: "rsl-outbound", seed: INITIAL_RSL_OUTBOUND });
+  const items = useSyncExternalStore(
+    (cb) => rslOutboundStore.subscribe(cb),
+    () => rslOutboundStore.getState(),
+    () => INITIAL_RSL_OUTBOUND as readonly Outbound[],
+  );
   const [retrying, setRetrying] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -70,9 +54,11 @@ export default function RsrLogiOutboundPage() {
     setRetrying(true);
     setTimeout(() => {
       setRetrying(false);
-      setItems((prev) =>
-        prev.map((d) => (d.status === "失敗" ? { ...d, status: "指示送信" as const } : d))
-      );
+      for (const d of rslOutboundStore.getState()) {
+        if (d.status === "失敗") {
+          rslOutboundStore.upsert({ ...d, status: "指示送信" });
+        }
+      }
       toast.show("失敗キューを再送しました", "success");
     }, 1500);
   }
@@ -82,9 +68,11 @@ export default function RsrLogiOutboundPage() {
     setSending(true);
     setTimeout(() => {
       setSending(false);
-      setItems((prev) =>
-        prev.map((d) => (d.status === "保留" || d.status === "指示送信" ? { ...d, status: "ピッキング中" as const } : d))
-      );
+      for (const d of rslOutboundStore.getState()) {
+        if (d.status === "保留" || d.status === "指示送信") {
+          rslOutboundStore.upsert({ ...d, status: "ピッキング中" });
+        }
+      }
       toast.show("出荷指示を即時送信しました", "success");
     }, 1800);
   }

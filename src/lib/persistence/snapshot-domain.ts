@@ -109,7 +109,8 @@ export type SnapshotDomain =
   | "mall-import-history"
   | "product-master-download-history"
   | "wholesale-import-history"
-  | "rsl-process-log";
+  | "rsl-process-log"
+  | "rsl-outbound";
 
 /** 1 スナップショットに保存できる最大行数（DoS・暴走入力対策）。 */
 export const MAX_SNAPSHOT_ROWS = 50_000;
