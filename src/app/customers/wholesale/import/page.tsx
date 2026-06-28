@@ -16,6 +16,8 @@ import {
   type WholesaleImportBatch,
 } from "@/lib/stores/wholesale-import-history";
 import { INITIAL_WHOLESALE_IMPORT_HISTORY } from "@/lib/seeds/wholesale-import-history";
+import { wholesaleImportTemplateStore, type ImportTemplateRecord } from "@/lib/stores/import-templates-store";
+import { INITIAL_WHOLESALE_IMPORT_TEMPLATES } from "@/lib/seeds/import-templates";
 
 type ImportMode = "new" | "update" | "upsert";
 
@@ -108,7 +110,13 @@ export default function WholesaleImportPage() {
   const [updatePaymentTerms, setUpdatePaymentTerms] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  const [templates, setTemplates] = useState<string[]>(initialTemplates);
+  usePersistentStore({ store: wholesaleImportTemplateStore, domain: "import-templates-wholesale", seed: INITIAL_WHOLESALE_IMPORT_TEMPLATES });
+  const templateRecords = useSyncExternalStore(
+    (cb) => wholesaleImportTemplateStore.subscribe(cb),
+    () => wholesaleImportTemplateStore.getState(),
+    () => INITIAL_WHOLESALE_IMPORT_TEMPLATES as readonly ImportTemplateRecord[],
+  );
+  const templates = templateRecords.map((t) => t.name);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
   const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
 
@@ -150,7 +158,7 @@ export default function WholesaleImportPage() {
   }
 
   function addTemplate(name: string) {
-    setTemplates((prev) => [...prev, name]);
+    wholesaleImportTemplateStore.upsert({ id: name, name });
     setTemplateKey(name);
   }
 

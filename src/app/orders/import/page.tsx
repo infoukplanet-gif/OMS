@@ -15,6 +15,8 @@ import { getProductAutoCreateSettings } from "@/lib/products/auto-create-setting
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
 import { orderImportHistoryStore, type OrderImportBatch } from "@/lib/stores/order-import-history-store";
 import { INITIAL_ORDER_IMPORT_HISTORY } from "@/lib/seeds/order-import-history";
+import { orderImportTemplateStore, type ImportTemplateRecord } from "@/lib/stores/import-templates-store";
+import { INITIAL_ORDER_IMPORT_TEMPLATES } from "@/lib/seeds/import-templates";
 import { Upload, FileSpreadsheet, Check, AlertCircle, Eye, X, FileText } from "lucide-react";
 import { DetailModal } from "@/components/ui/detail-modal";
 
@@ -111,7 +113,14 @@ export default function ImportPage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileSize, setFileSize] = useState<number | null>(null);
 
-  const [templates, setTemplates] = useState<string[]>(initialTemplates);
+  // マッピングテンプレート名 — 共有ストア経由で永続化（domain: "import-templates-orders"）
+  usePersistentStore({ store: orderImportTemplateStore, domain: "import-templates-orders", seed: INITIAL_ORDER_IMPORT_TEMPLATES });
+  const templateRecords = useSyncExternalStore(
+    (cb) => orderImportTemplateStore.subscribe(cb),
+    () => orderImportTemplateStore.getState(),
+    () => INITIAL_ORDER_IMPORT_TEMPLATES as readonly ImportTemplateRecord[],
+  );
+  const templates = templateRecords.map((t) => t.name);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
   const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
 
@@ -149,7 +158,7 @@ export default function ImportPage() {
   }
 
   function addTemplate(name: string) {
-    setTemplates((prev) => [...prev, name]);
+    orderImportTemplateStore.upsert({ id: name, name });
     setTemplateKey(name);
   }
 

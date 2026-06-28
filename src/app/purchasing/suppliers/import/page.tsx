@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
@@ -11,6 +11,9 @@ import { downloadCsv } from "@/lib/export/csv";
 import { DetailModal } from "@/components/ui/detail-modal";
 import { supplierStore, type SupplierRecord } from "@/lib/stores/supplier";
 import { snapshotDomain } from "@/app/_actions/snapshots";
+import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { supplierImportTemplateStore, type ImportTemplateRecord } from "@/lib/stores/import-templates-store";
+import { INITIAL_SUPPLIER_IMPORT_TEMPLATES } from "@/lib/seeds/import-templates";
 
 type ImportMode = "new" | "update" | "upsert";
 
@@ -125,7 +128,13 @@ export default function SupplierImportPage() {
   const [updateBankAccount, setUpdateBankAccount] = useState(false);
   const [dragOver, setDragOver] = useState(false);
 
-  const [templates, setTemplates] = useState<string[]>(initialTemplates);
+  usePersistentStore({ store: supplierImportTemplateStore, domain: "import-templates-suppliers", seed: INITIAL_SUPPLIER_IMPORT_TEMPLATES });
+  const templateRecords = useSyncExternalStore(
+    (cb) => supplierImportTemplateStore.subscribe(cb),
+    () => supplierImportTemplateStore.getState(),
+    () => INITIAL_SUPPLIER_IMPORT_TEMPLATES as readonly ImportTemplateRecord[],
+  );
+  const templates = templateRecords.map((t) => t.name);
   const [templateKey, setTemplateKey] = useState<string>(initialTemplates[0]);
   const [mappingRows, setMappingRows] = useState<MappingRow[]>(initialMappingRows);
 
@@ -153,7 +162,7 @@ export default function SupplierImportPage() {
   }
 
   function addTemplate(name: string) {
-    setTemplates((prev) => [...prev, name]);
+    supplierImportTemplateStore.upsert({ id: name, name });
     setTemplateKey(name);
   }
 
