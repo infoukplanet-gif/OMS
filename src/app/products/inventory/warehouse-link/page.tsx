@@ -65,17 +65,20 @@ export default function WarehouseLinkPage() {
 
   function addLink() {
     const nextNo = Math.max(0, ...links.map((l) => Number(l.id) || 0)) + 1;
+    // フィルタ中の店舗があればその店舗で追加する（フィルタで即座に隠れて
+    // 「追加されない」ように見えるのを防ぐ）。未フィルタ時は先頭店舗を既定にする。
+    const targetShop = filterShop === "all" ? SHOPS[0].key : filterShop;
     warehouseLinkStore.upsert({
       id: String(nextNo),
-      shop: "rakuten",
+      shop: targetShop,
       warehouse: "main",
-      priority: links.filter((p) => p.shop === "rakuten").length + 1,
+      priority: links.filter((p) => p.shop === targetShop).length + 1,
       ratio: 0,
       enabled: true,
       lowStockThreshold: 5,
       autoReserve: true,
     });
-    toast.show("連携を追加しました");
+    toast.show(`${shopLabel(targetShop)}の連携を追加しました`);
   }
 
   function discardChanges() {
@@ -151,8 +154,17 @@ export default function WarehouseLinkPage() {
             <tbody>
               {filtered.map((l) => (
                 <tr key={l.id} className="border-b border-white/40 hover:bg-white/40 transition-colors">
-                  <td className="py-2 px-2 text-gray-800 flex items-center gap-1.5">
-                    <Store className="h-3.5 w-3.5 text-gray-400" />{shopLabel(l.shop)}
+                  <td className="py-2 px-2 text-gray-800">
+                    <div className="flex items-center gap-1.5">
+                      <Store className="h-3.5 w-3.5 text-gray-400" />
+                      <select
+                        value={l.shop}
+                        onChange={(e) => updateLink(l.id, "shop", e.target.value)}
+                        className="h-7 px-2 rounded-lg text-xs bg-white/60 border border-white/60"
+                      >
+                        {SHOPS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+                      </select>
+                    </div>
                   </td>
                   <td className="py-2 px-2 text-gray-700">
                     <div className="flex items-center gap-1.5">

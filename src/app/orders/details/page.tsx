@@ -13,13 +13,26 @@ import {
 } from "@/lib/state-machines/order";
 import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import { mailQueue } from "@/lib/mail/queue";
+import { buildOrderAcknowledgementDocument } from "@/lib/documents/order-acknowledgement-document";
+import { renderOrderAcknowledgementHtml } from "@/lib/documents/order-acknowledgement-html";
+import { printDocumentHtml } from "@/lib/documents/print-document";
+import { COMPANY_ISSUER } from "@/lib/seeds/company";
 import { ChevronDown, Printer, MoreHorizontal, Package, MapPin, CreditCard, StickyNote, Copy, X, Trash2, Download, Mail } from "lucide-react";
 
+// 受注明細（単価・数量は数値を単一の真実として持ち、表示は yen() で導出する）。
 const orderItems = [
-  { name: "ワイヤレスイヤホン Pro", sku: "WEP-001", price: "¥12,800", qty: 2, subtotal: "¥25,600" },
-  { name: "USB-Cケーブル 2m", sku: "UCB-002", price: "¥1,280", qty: 3, subtotal: "¥3,840" },
-  { name: "保護フィルム セット", sku: "PFS-005", price: "¥1,580", qty: 1, subtotal: "¥1,580" },
+  { name: "ワイヤレスイヤホン Pro", sku: "WEP-001", price: 12800, qty: 2 },
+  { name: "USB-Cケーブル 2m", sku: "UCB-002", price: 1280, qty: 3 },
+  { name: "保護フィルム セット", sku: "PFS-005", price: 1580, qty: 1 },
 ];
+
+// 送料（受注詳細の合計計算と帳票で共有）。
+const SHIPPING_FEE = 800;
+
+/** 決定的な3桁区切りの円表記（ロケール差を避ける）。 */
+function yen(n: number): string {
+  return `¥${Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
+}
 
 type TimelineEntry = { status: OrderStatus; date: string; by: string };
 
@@ -164,9 +177,27 @@ export default function OrderDetailPage() {
     toast.show(`ステータスを「${result.after.status}」に変更しました`, "success");
   }
 
+  // 注文請書（帳票）を standalone HTML として生成し、印刷専用ウィンドウで開く。
+  // 画面そのものの window.print() ではなく、印刷に最適化した帳票を出す。
   function handlePrint() {
-    toast.show("印刷ダイアログを開きます", "info");
-    setTimeout(() => window.print(), 200);
+    const doc = buildOrderAcknowledgementDocument(
+      {
+        id: DEMO_ORDER_ID,
+        customerName: "山田太郎",
+        orderDate: timeline[0]?.date && timeline[0].date !== "—" ? timeline[0].date : formatNow().slice(0, 10),
+        status: currentStatus,
+        shippingFee: SHIPPING_FEE,
+        lines: orderItems.map((i) => ({ sku: i.sku, name: i.name, unitPrice: i.price, qty: i.qty })),
+      },
+      formatNow().slice(0, 10),
+    );
+    const html = renderOrderAcknowledgementHtml(doc, COMPANY_ISSUER);
+    const opened = printDocumentHtml(html, `注文請書 ${DEMO_ORDER_ID}`);
+    if (opened) {
+      toast.show("注文請書を印刷ウィンドウで開きました", "success");
+    } else {
+      toast.show("印刷ウィンドウを開けませんでした（ポップアップ許可をご確認ください）", "error");
+    }
   }
 
   // 伝票を複製：共有ストアに新規受注として実際に追加する（own domain）。
@@ -205,7 +236,7 @@ export default function OrderDetailPage() {
       `ステータス: ${currentStatus}`,
       "",
       ["商品名", "SKU", "単価", "数量", "小計"].join("\t"),
-      ...orderItems.map((i) => [i.name, i.sku, i.price, String(i.qty), i.subtotal].join("\t")),
+      ...orderItems.map((i) => [i.name, i.sku, yen(i.price), String(i.qty), yen(i.price * i.qty)].join("\t")),
       "",
       ["合計", "", "", "", "¥35,002"].join("\t"),
     ];
@@ -354,9 +385,9 @@ export default function OrderDetailPage() {
                     <tr key={i.sku} className="border-t border-white/30 hover:bg-white/40">
                       <td className="px-3 py-2.5 font-medium text-gray-800">{i.name}</td>
                       <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{i.sku}</td>
-                      <td className="px-3 py-2.5 text-right text-gray-700">{i.price}</td>
+                      <td className="px-3 py-2.5 text-right text-gray-700">{yen(i.price)}</td>
                       <td className="px-3 py-2.5 text-center text-gray-700">{i.qty}</td>
-                      <td className="px-3 py-2.5 text-right font-medium text-gray-800">{i.subtotal}</td>
+                      <td className="px-3 py-2.5 text-right font-medium text-gray-800">{yen(i.price * i.qty)}</td>
                     </tr>
                   ))}
                 </tbody>

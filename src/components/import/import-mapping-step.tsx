@@ -4,8 +4,10 @@ import { useState } from "react";
 import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { Modal, PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
-import { Check, AlertCircle, FileSpreadsheet } from "lucide-react";
+import { Check, AlertCircle, FileSpreadsheet, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { ImportFieldDef } from "@/lib/import/field-registry";
+import { missingRequiredKeys } from "@/lib/import/auto-map";
 
 export type MappingRow = {
   csv: string;
@@ -29,6 +31,10 @@ interface ImportMappingStepProps {
   onNext: () => void;
   nextLabel?: string;
   helpText?: string;
+  /** 宣言的フィールド定義。渡すと「自動マッピング」ボタンと必須項目チェックが有効になる。 */
+  fields?: ImportFieldDef[];
+  /** 「自動マッピング」ボタン押下時のハンドラ。fields と併用する。 */
+  onAutoMap?: () => void;
 }
 
 export function ImportMappingStep({
@@ -45,10 +51,14 @@ export function ImportMappingStep({
   onNext,
   nextLabel = "次へ: バリデーション",
   helpText,
+  fields,
+  onAutoMap,
 }: ImportMappingStepProps) {
   const toast = useToast();
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
+
+  const missingRequired = fields ? missingRequiredKeys(fields, mappingRows) : [];
 
   function saveTemplate() {
     const name = saveName.trim();
@@ -69,10 +79,20 @@ export function ImportMappingStep({
           <h2 className="text-base font-semibold text-gray-800">マッピング設定</h2>
           <HelpHint>
             {helpText ??
-              "外部ファイルの列名をシステムマスタの項目に紐付けます。\nテンプレートとして保存すれば、次回同じ取込元のデータをワンクリックで再利用できます。"}
+              "外部ファイルの列名をシステムマスタの項目に紐付けます。\n「自動マッピング」で大半の列を一括紐付けし、自動で当たらなかった列（琥珀色）は各行のドロップダウンから手動で選べます。\nテンプレートとして保存すれば、次回同じ取込元のデータをワンクリックで再利用できます。"}
           </HelpHint>
         </div>
         <div className="flex items-center gap-2">
+          {onAutoMap && (
+            <button
+              type="button"
+              onClick={onAutoMap}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-xl text-sm font-medium text-blue-700 bg-blue-500/10 border border-blue-300/50 hover:bg-blue-500/20 transition-colors"
+            >
+              <Wand2 className="h-4 w-4" />
+              自動マッピング
+            </button>
+          )}
           <label className="text-sm font-medium text-gray-700">テンプレート:</label>
           <select
             value={templateKey}
@@ -104,7 +124,7 @@ export function ImportMappingStep({
                 key={row.csv}
                 className={cn(
                   "border-t border-white/30 transition-colors",
-                  !row.matched && !row.system && "bg-yellow-500/5"
+                  !row.matched && !row.system && "bg-amber-500/[0.07]"
                 )}
               >
                 <td className="px-4 py-3 font-medium text-gray-800">{row.csv}</td>
@@ -114,9 +134,15 @@ export function ImportMappingStep({
                   <select
                     value={row.system || ""}
                     onChange={(e) => onMappingChange?.(row.csv, e.target.value)}
-                    className="h-8 px-2 rounded-lg text-sm w-full bg-white/50 border border-white/50 focus:outline-none focus:ring-1 focus:ring-blue-500/20"
+                    aria-label={`「${row.csv}」の紐付け先システム項目`}
+                    className={cn(
+                      "h-8 px-2 rounded-lg text-sm w-full focus:outline-none focus:ring-2",
+                      row.system
+                        ? "bg-white/50 border border-white/50 focus:ring-blue-500/20"
+                        : "bg-amber-50/80 border border-amber-400/70 text-amber-800 ring-1 ring-amber-300/40 focus:ring-amber-500/30"
+                    )}
                   >
-                    <option value="">未選択</option>
+                    <option value="">未選択（手動で選ぶ）</option>
                     {systemFields.map((f) => (
                       <option key={f} value={f}>{f}</option>
                     ))}
@@ -155,14 +181,22 @@ export function ImportMappingStep({
           <FileSpreadsheet className="h-4 w-4 inline mr-1" />
           {fileName} — {totalRows.toLocaleString()} 件のデータを読み込み済み
           {unmatched > 0 && (
-            <span className="ml-3 text-yellow-700">
-              <AlertCircle className="h-3.5 w-3.5 inline mr-1" />未設定 {unmatched} 列
+            <span className="ml-3 text-amber-700">
+              <AlertCircle className="h-3.5 w-3.5 inline mr-1" />未設定 {unmatched} 列（ドロップダウンから手動で選択）
+            </span>
+          )}
+          {missingRequired.length > 0 && (
+            <span className="ml-3 text-rose-600">
+              <AlertCircle className="h-3.5 w-3.5 inline mr-1" />
+              必須未割当: {missingRequired.join("・")}
             </span>
           )}
         </p>
         <div className="flex gap-2">
           <SecondaryButton onClick={onBack}>戻る</SecondaryButton>
-          <PrimaryButton onClick={onNext}>{nextLabel}</PrimaryButton>
+          <PrimaryButton onClick={onNext} disabled={missingRequired.length > 0}>
+            {nextLabel}
+          </PrimaryButton>
         </div>
       </div>
 

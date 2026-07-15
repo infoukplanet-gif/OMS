@@ -5,6 +5,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
+import { PRODUCT_IMPORT_FIELDS, fieldKeysWithSkip } from "@/lib/import/field-registry";
+import { autoMapColumns } from "@/lib/import/auto-map";
 import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
@@ -57,23 +59,8 @@ const initialMappingRows: MappingRow[] = [
   { csv: "仕入先名", sample: "グリーンファクトリー", system: "", matched: false },
 ];
 
-const systemFields = [
-  "商品コード(SKU)",
-  "商品名",
-  "商品名カナ",
-  "JANコード",
-  "原価",
-  "販売価格",
-  "在庫数",
-  "カテゴリ",
-  "ブランド",
-  "サイズ",
-  "カラー",
-  "重量",
-  "商品説明",
-  "状態",
-  "スキップ（取り込まない）",
-];
+// システム項目は宣言的レジストリ（PRODUCT_IMPORT_FIELDS）から生成し、自動マッピングも同じ定義で駆動する。
+const systemFields = fieldKeysWithSkip(PRODUCT_IMPORT_FIELDS);
 
 type PreviewRow = {
   row: number;
@@ -160,6 +147,18 @@ export default function ProductImportPage() {
     setMappingRows((prev) =>
       prev.map((r) => (r.csv === csv ? { ...r, system, matched: r.matched && system === r.system } : r))
     );
+  }
+
+  // 列名の表記ゆれをレジストリの別名で吸収し、ワンクリックで自動割当する。
+  function handleAutoMap() {
+    const samples = Object.fromEntries(mappingRows.map((r) => [r.csv, r.sample]));
+    const remapped = autoMapColumns(
+      mappingRows.map((r) => r.csv),
+      PRODUCT_IMPORT_FIELDS,
+      { samples },
+    );
+    setMappingRows(remapped);
+    toast.show(`${remapped.filter((r) => r.matched).length} 列を自動マッピングしました`);
   }
 
   function confirmImport() {
@@ -385,11 +384,13 @@ export default function ProductImportPage() {
           onTemplateChange={setTemplateKey}
           onTemplateAdd={addTemplate}
           systemFields={systemFields}
+          fields={PRODUCT_IMPORT_FIELDS}
+          onAutoMap={handleAutoMap}
           mappingRows={mappingRows}
           onMappingChange={handleMappingChange}
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
-          helpText={"楽天RMS / Amazon SP-API / Shopify / 自社EDIなど、取込元ごとに列名が違うCSVを商品マスタの正規項目に紐付けます。\nテンプレート保存しておけば、次回同じ取込元のデータをワンクリックで再利用できます。"}
+          helpText={"楽天RMS / Amazon SP-API / Shopify / 自社EDIなど、取込元ごとに列名が違うCSVを商品マスタの正規項目に紐付けます。\n「自動マッピング」で列名の表記ゆれを吸収して一括紐付け。テンプレート保存で次回ワンクリック再利用も可能です。"}
         />
       )}
 

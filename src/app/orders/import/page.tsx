@@ -5,6 +5,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
+import { ORDER_IMPORT_FIELDS, fieldKeysWithSkip } from "@/lib/import/field-registry";
+import { autoMapColumns } from "@/lib/import/auto-map";
 import { cn } from "@/lib/utils";
 import { productStore } from "@/lib/stores/product";
 import {
@@ -51,22 +53,9 @@ const initialMappingRows: MappingRow[] = [
   { csv: "備考", sample: "ギフト包装希望", system: "スキップ（取り込まない）", matched: false },
 ];
 
-const systemFields = [
-  "商品名",
-  "商品コード(SKU)",
-  "販売価格",
-  "数量",
-  "顧客名",
-  "メールアドレス",
-  "電話番号",
-  "郵便番号",
-  "住所",
-  "カテゴリ",
-  "備考",
-  "配送方法",
-  "支払方法",
-  "スキップ（取り込まない）",
-];
+// システム項目は宣言的レジストリ（ORDER_IMPORT_FIELDS）から生成する。
+// これを唯一の情報源として自動マッピング（autoMapColumns）も駆動する。
+const systemFields = fieldKeysWithSkip(ORDER_IMPORT_FIELDS);
 
 type PreviewRow = {
   row: number;
@@ -166,6 +155,18 @@ export default function ImportPage() {
     setMappingRows((prev) =>
       prev.map((r) => (r.csv === csv ? { ...r, system, matched: r.matched && system === r.system } : r))
     );
+  }
+
+  // 現在の列名（とサンプル値）にレジストリの別名を突き合わせ、ワンクリックで自動割当する。
+  function handleAutoMap() {
+    const samples = Object.fromEntries(mappingRows.map((r) => [r.csv, r.sample]));
+    const remapped = autoMapColumns(
+      mappingRows.map((r) => r.csv),
+      ORDER_IMPORT_FIELDS,
+      { samples },
+    );
+    setMappingRows(remapped);
+    toast.show(`${remapped.filter((r) => r.matched).length} 列を自動マッピングしました`);
   }
 
   function confirmImport() {
@@ -325,11 +326,13 @@ export default function ImportPage() {
           onTemplateChange={setTemplateKey}
           onTemplateAdd={addTemplate}
           systemFields={systemFields}
+          fields={ORDER_IMPORT_FIELDS}
+          onAutoMap={handleAutoMap}
           mappingRows={mappingRows}
           onMappingChange={handleMappingChange}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
-          helpText={"楽天/Amazon/各卸先からエクスポートしたCSVの列名を、システム受注の正規項目に紐付けます。\nテンプレート保存しておけば、次回同じ取込元のデータをワンクリックで再利用できます。"}
+          helpText={"楽天/Amazon/各卸先からエクスポートしたCSVの列名を、システム受注の正規項目に紐付けます。\n「自動マッピング」を押すと列名の表記ゆれを吸収して一括で紐付けます。テンプレート保存で次回ワンクリック再利用も可能です。"}
         />
       )}
 

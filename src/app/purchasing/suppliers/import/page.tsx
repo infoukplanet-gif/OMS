@@ -5,6 +5,8 @@ import { GlassCard } from "@/components/ui/glass-card";
 import { HelpHint } from "@/components/ui/help-hint";
 import { PrimaryButton, SecondaryButton, useToast } from "@/components/ui/interactive";
 import { ImportMappingStep, type MappingRow } from "@/components/import/import-mapping-step";
+import { SUPPLIER_IMPORT_FIELDS, fieldKeysWithSkip } from "@/lib/import/field-registry";
+import { autoMapColumns } from "@/lib/import/auto-map";
 import { Upload, Download, FileText, CheckCircle2, Check, AlertCircle, Eye, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/export/csv";
@@ -61,30 +63,8 @@ const initialMappingRows: MappingRow[] = [
   { csv: "紹介元", sample: "商工会経由", system: "スキップ（取り込まない）", matched: false },
 ];
 
-const systemFields = [
-  "仕入先コード",
-  "仕入先名",
-  "仕入先名カナ",
-  "担当者",
-  "担当者カナ",
-  "部署",
-  "メールアドレス",
-  "電話",
-  "FAX",
-  "郵便番号",
-  "住所",
-  "支払条件",
-  "支払サイト",
-  "振込先銀行",
-  "支店",
-  "預金種別",
-  "口座番号",
-  "口座名義",
-  "締日",
-  "取引開始日",
-  "備考",
-  "スキップ（取り込まない）",
-];
+// システム項目は宣言的レジストリ（SUPPLIER_IMPORT_FIELDS）から生成し、自動マッピングも同じ定義で駆動する。
+const systemFields = fieldKeysWithSkip(SUPPLIER_IMPORT_FIELDS);
 
 type PreviewRow = {
   row: number;
@@ -170,6 +150,18 @@ export default function SupplierImportPage() {
     setMappingRows((prev) =>
       prev.map((r) => (r.csv === csv ? { ...r, system, matched: r.matched && system === r.system } : r))
     );
+  }
+
+  // 列名の表記ゆれをレジストリの別名で吸収し、ワンクリックで自動割当する。
+  function handleAutoMap() {
+    const samples = Object.fromEntries(mappingRows.map((r) => [r.csv, r.sample]));
+    const remapped = autoMapColumns(
+      mappingRows.map((r) => r.csv),
+      SUPPLIER_IMPORT_FIELDS,
+      { samples },
+    );
+    setMappingRows(remapped);
+    toast.show(`${remapped.filter((r) => r.matched).length} 列を自動マッピングしました`);
   }
 
   function confirmImport() {
@@ -400,11 +392,13 @@ export default function SupplierImportPage() {
           onTemplateChange={setTemplateKey}
           onTemplateAdd={addTemplate}
           systemFields={systemFields}
+          fields={SUPPLIER_IMPORT_FIELDS}
+          onAutoMap={handleAutoMap}
           mappingRows={mappingRows}
           onMappingChange={handleMappingChange}
           onBack={() => setStep(2)}
           onNext={() => setStep(4)}
-          helpText={"仕入先から受領した取引先台帳や銀行マスタCSVの列名を、仕入先マスタの正規項目に紐付けます。\n口座名義・支店名など振込先関連の表記揺れはテンプレート保存で吸収できます。"}
+          helpText={"仕入先から受領した取引先台帳や銀行マスタCSVの列名を、仕入先マスタの正規項目に紐付けます。\n「自動マッピング」で列名の表記ゆれを吸収して一括紐付け。口座名義・支店名などもテンプレート保存で次回再利用できます。"}
         />
       )}
 
