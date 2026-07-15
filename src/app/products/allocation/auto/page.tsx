@@ -7,7 +7,9 @@ import { useToast, PrimaryButton } from "@/components/ui/interactive";
 import { cn } from "@/lib/utils";
 import { orderStore, type OrderRecord } from "@/lib/stores/orders";
 import { inventoryStore } from "@/lib/stores/inventory";
+import { purchaseStore } from "@/lib/stores/purchase";
 import { allocatePendingOrders } from "@/lib/cascades/allocate-orders";
+import { runReorderOnShortageGlobal } from "@/lib/cascades/run-reorder-on-shortage";
 import {
   getAllocationRules,
   setAllocationRules,
@@ -25,6 +27,7 @@ import { INITIAL_ALLOCATION_AUTO_JOBS } from "@/lib/seeds/allocation-auto-jobs";
 import { allocationRunLogStore, type AllocationRunLog } from "@/lib/stores/allocation-run-log-store";
 import { INITIAL_ALLOCATION_RUN_LOGS } from "@/lib/seeds/allocation-run-log";
 import { usePersistentStore } from "@/lib/hooks/use-persistent-store";
+import { INITIAL_PURCHASE_ORDERS } from "@/lib/seeds/purchase-orders";
 import { Save, Settings2, Clock, Play, History, Boxes, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 export default function AllocationAutoPage() {
@@ -78,10 +81,12 @@ export default function AllocationAutoPage() {
     );
   };
 
-  // 引当は共有 orderStore/inventoryStore 上で実行する。両方を seed。
+  // 引当は共有 orderStore/inventoryStore 上で実行する。
+  // 欠品→発注の自動連鎖が purchaseStore へ未発行POを起票／マージするため purchaseStore も seed。
   useEffect(() => {
     if (orderStore.getState().length === 0) orderStore.setItems(INITIAL_ORDERS);
     if (inventoryStore.getState().length === 0) inventoryStore.setItems(INITIAL_INVENTORY);
+    if (purchaseStore.getState().length === 0) purchaseStore.setItems(INITIAL_PURCHASE_ORDERS);
   }, []);
 
   const orders = useSyncExternalStore(
@@ -121,10 +126,21 @@ export default function AllocationAutoPage() {
     const at = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     const logId = `ALC-RUN-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
     allocationRunLogStore.upsert({ id: logId, at, job: jobName, success: res.allocated, partial: 0, failed: res.shortage });
-    toast.show(
-      `${jobName}: ${res.processed}件処理（引当成功 ${res.allocated}件 / 在庫不足 ${res.shortage}件）`,
-      res.shortage > 0 ? "info" : "success",
-    );
+    // 欠品が残ったら 発注の自動連鎖を発火（未発行POを自動起票／既存未発行POへマージ）。
+    // 数量は max(欠品実数, 発注点補充数) の「両方併用」。人手による発行は発注管理側で行う。
+    const reorder = res.shortage > 0 ? runReorderOnShortageGlobal() : null;
+    if (reorder && reorder.created + reorder.merged > 0) {
+      toast.show(
+        `${jobName}: ${res.processed}件処理（引当成功 ${res.allocated}件 / 在庫不足 ${res.shortage}件）— ` +
+          `欠品${reorder.shortageSkus}品目から未発行発注書を新規${reorder.created}件・更新${reorder.merged}件（計${reorder.totalQty.toLocaleString()}点）自動起票`,
+        "info",
+      );
+    } else {
+      toast.show(
+        `${jobName}: ${res.processed}件処理（引当成功 ${res.allocated}件 / 在庫不足 ${res.shortage}件）`,
+        res.shortage > 0 ? "info" : "success",
+      );
+    }
   };
 
   return (

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Calculator, Play, Download, Info, AlertCircle, ArrowRight } from "lucide-react";
 import { inventoryStore } from "@/lib/stores/inventory";
 import { purchaseStore } from "@/lib/stores/purchase";
+import { orderStore, type OrderRecord } from "@/lib/stores/orders";
 import {
   INITIAL_INVENTORY,
   SKU_NAMES,
@@ -15,12 +16,14 @@ import {
   SKU_UNIT_COST,
 } from "@/lib/seeds/inventory";
 import { INITIAL_PURCHASE_ORDERS } from "@/lib/seeds/purchase-orders";
+import { INITIAL_ORDERS } from "@/lib/seeds/orders";
 import {
   freeStock,
   inventoryHealth,
   type InventoryRecord,
 } from "@/lib/state-machines/inventory";
 import { recommendReorderQty } from "@/lib/calculations/reorder-calculation";
+import { computeShortageDemand } from "@/lib/calculations/shortage-demand";
 import { buildPurchaseOrdersFromReorder, nextPoSeq } from "@/lib/calculations/reorder-to-po";
 import { downloadCsv } from "@/lib/export/csv";
 
@@ -32,12 +35,16 @@ export default function CalculatePage() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   // shared store seeding（発注計算から先に入った場合も初期データを満たす）。
+  // 欠品実数（両方併用）の算定に受注も必要なため orderStore も seed。
   useEffect(() => {
     if (inventoryStore.getState().length === 0) {
       inventoryStore.setItems(INITIAL_INVENTORY);
     }
     if (purchaseStore.getState().length === 0) {
       purchaseStore.setItems(INITIAL_PURCHASE_ORDERS);
+    }
+    if (orderStore.getState().length === 0) {
+      orderStore.setItems(INITIAL_ORDERS);
     }
   }, []);
 
@@ -51,6 +58,20 @@ export default function CalculatePage() {
     () => purchaseStore.getState(),
     () => INITIAL_PURCHASE_ORDERS,
   );
+  const orders = useSyncExternalStore(
+    (cb) => orderStore.subscribe(cb),
+    () => orderStore.getState(),
+    () => INITIAL_ORDERS,
+  ) as ReadonlyArray<OrderRecord>;
+
+  // 引当待ちに残った欠品受注から SKU×倉庫別の不足実数を算定（両方併用の「欠品実数」側）。
+  const shortageBySku = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const line of computeShortageDemand(orders, inventory)) {
+      map.set(rowKey(line.sku, line.warehouse), line.shortQty);
+    }
+    return map;
+  }, [orders, inventory]);
 
   // 未入荷の発注残（発行済・注残あり・未発行）を SKU ごとに集計（情報表示用）。
   const pendingBySku = useMemo(() => {
@@ -73,18 +94,22 @@ export default function CalculatePage() {
     () =>
       inventory.map((rec) => {
         const free = freeStock(rec);
+        // 両方併用: 推奨発注数 = max(発注点補充数, 欠品実数)。
+        const reorderQty = recommendReorderQty(rec);
+        const shortQty = shortageBySku.get(rowKey(rec.sku, rec.warehouse)) ?? 0;
         return {
           ...rec,
           free,
           shortfall: Math.max(0, rec.constant - free),
           pending: pendingBySku.get(rec.sku) ?? 0,
-          suggestedQty: recommendReorderQty(rec),
+          shortQty,
+          suggestedQty: Math.max(reorderQty, shortQty),
           health: inventoryHealth(rec),
           name: SKU_NAMES[rec.sku] ?? rec.sku,
           supplier: SKU_SUPPLIER[rec.sku] ?? "仕入先未設定",
         };
       }),
-    [inventory, pendingBySku],
+    [inventory, pendingBySku, shortageBySku],
   );
 
   const reorderRows = useMemo(() => rows.filter((r) => r.suggestedQty > 0), [rows]);
@@ -272,7 +297,12 @@ export default function CalculatePage() {
                 <th className="px-2 py-2 text-center font-medium text-gray-500">発注点</th>
                 <th className="px-2 py-2 text-center font-medium text-gray-500">発注残</th>
                 <th className="px-2 py-2 text-center font-medium text-gray-500">ロット</th>
-                <th className="px-2 py-2 text-center font-medium text-blue-700">推奨発注数</th>
+                <th className="px-2 py-2 text-center font-medium text-blue-700">
+                  <span className="inline-flex items-center gap-1">
+                    推奨発注数
+                    <HelpHint side="left">発注点補充数と欠品受注の不足実数の大きい方（両方併用）。「欠品」バッジは欠品実数が反映された行です。</HelpHint>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -309,6 +339,14 @@ export default function CalculatePage() {
                       <td className="px-2 py-2 text-center text-gray-500">{r.lot}</td>
                       <td className="px-2 py-2 text-center">
                         <span className="font-bold text-blue-600 text-sm">{r.suggestedQty}</span>
+                        {r.shortQty > 0 && (
+                          <span
+                            className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-red-500/15 text-red-700 align-middle"
+                            title={`欠品受注の不足実数 ${r.shortQty} 点を反映（両方併用）`}
+                          >
+                            欠品{r.shortQty}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
