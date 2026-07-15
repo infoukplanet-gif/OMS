@@ -11,6 +11,7 @@
  * - 連番は startSeq から採番し、仕入先の初出順（投入順）で安定させる。
  */
 
+import type { PurchaseOrderLine, PurchaseOrderStatus } from "../state-machines/purchase";
 import type { ReorderSuggestion } from "./reorder-calculation";
 
 /** SKU → 仕入先 / 原価 のマスタ参照。発注計算ページから seed マップを渡す。 */
@@ -50,6 +51,8 @@ export interface NewPurchaseOrderInput {
   date: string;
   expected: string;
   daysToArrive: number;
+  /** purchaseStore レコード（[extra]: unknown）と構造整合させ、マージ層へそのまま渡せるようにする。 */
+  [extra: string]: unknown;
 }
 
 const UNASSIGNED_SUPPLIER = "仕入先未設定";
@@ -118,4 +121,120 @@ export function buildPurchaseOrdersFromReorder(
       daysToArrive: 0,
     };
   });
+}
+
+/**
+ * purchaseStore が保持する発注書のうち、マージ対象として読み書きするフィールドを表す構造型。
+ * 表示用の付帯フィールド（date / expected / daysToArrive 等）は index signature で温存する。
+ */
+export interface MergeablePurchaseOrder {
+  id: string;
+  supplier: string;
+  status: PurchaseOrderStatus;
+  lines: PurchaseOrderLine[];
+  /** 合計数量（マージ後は lines から再計算）。 */
+  items: number;
+  /** 合計金額（マージ後は 数量 × 原価 で再計算）。 */
+  amount: number;
+  [extra: string]: unknown;
+}
+
+export interface MergeReorderResult {
+  /** マージ後の発注書全件（新規は先頭、既存は元の並びで温存）。 */
+  orders: MergeablePurchaseOrder[];
+  /** 新規に起票した未発行 PO 件数。 */
+  created: number;
+  /** 既存の未発行 PO を実際に更新した件数。 */
+  merged: number;
+}
+
+const lineKey = (sku: string, warehouse: string) => `${sku}@@${warehouse}`;
+
+/** 明細合計の再計算（数量合計・金額合計）。 */
+function recomputeTotals(
+  lines: PurchaseOrderLine[],
+  unitCost: Record<string, number>,
+): { items: number; amount: number } {
+  return {
+    items: lines.reduce((sum, l) => sum + l.orderedQty, 0),
+    amount: lines.reduce((sum, l) => sum + l.orderedQty * (unitCost[l.sku] ?? 0), 0),
+  };
+}
+
+/**
+ * 発注推奨（ReorderSuggestion[]）を既存の発注書へ**冪等にマージ**する。
+ *
+ * 仕様（インタビュー回答 2026-07-09「既存未発行POとマージ」）:
+ *  - 仕入先ごとにグループ化し、同一仕入先の「未発行」PO があればそこへ集約する
+ *  - 同一 SKU×倉庫 の明細があれば数量を max(既存, 推奨) に更新（二重起票せず、手動で積んだ
+ *    大きい数量も削らない）。無ければ明細を追加する
+ *  - 未発行 PO が無い仕入先は新規に未発行 PO を起票する（発行済/仕入完了等には一切触れない）
+ *  - suggestedQty <= 0 の提案は無視
+ *  - 変更が生じた未発行 PO の件数を merged、新規起票を created に計上（再実行時は 0/0 で安定）
+ *
+ * 金額・数量合計はマージ後の明細から unitCost で再計算し整合させる。
+ */
+export function mergeReorderIntoPurchaseOrders(
+  existing: ReadonlyArray<MergeablePurchaseOrder>,
+  suggestions: ReadonlyArray<ReorderSuggestion>,
+  maps: ReorderMasterMaps,
+  opts: BuildPurchaseOrdersOptions,
+): MergeReorderResult {
+  // 仕入先ごとに推奨をグループ化（初出順を保持）。
+  const supplierOrder: string[] = [];
+  const bySupplier = new Map<string, ReorderSuggestion[]>();
+  for (const s of suggestions) {
+    if (s.suggestedQty <= 0) continue;
+    const supplier = maps.supplier[s.sku] ?? UNASSIGNED_SUPPLIER;
+    if (!bySupplier.has(supplier)) {
+      bySupplier.set(supplier, []);
+      supplierOrder.push(supplier);
+    }
+    bySupplier.get(supplier)!.push(s);
+  }
+
+  // 既存リストのミュータブルコピー（マージ結果を in-place で差し替える）。
+  const next: MergeablePurchaseOrder[] = existing.map((po) => ({ ...po, lines: [...po.lines] }));
+  const created: MergeablePurchaseOrder[] = [];
+  let mergedCount = 0;
+  let seq = opts.startSeq;
+
+  for (const supplier of supplierOrder) {
+    const group = bySupplier.get(supplier)!;
+    const targetIdx = next.findIndex((po) => po.status === "未発行" && po.supplier === supplier);
+
+    if (targetIdx === -1) {
+      // 未発行 PO が無い → 新規起票。
+      const built = buildPurchaseOrdersFromReorder(group, maps, { ...opts, startSeq: seq });
+      for (const b of built) created.push(b);
+      seq += built.length;
+      continue;
+    }
+
+    // 既存未発行 PO へマージ。
+    const target = next[targetIdx];
+    const lines = [...target.lines];
+    let changed = false;
+    for (const s of group) {
+      const k = lineKey(s.sku, s.warehouse);
+      const idx = lines.findIndex((l) => lineKey(l.sku, l.warehouse) === k);
+      if (idx === -1) {
+        lines.push({ sku: s.sku, warehouse: s.warehouse, orderedQty: s.suggestedQty, receivedQty: 0 });
+        changed = true;
+      } else {
+        const nextQty = Math.max(lines[idx].orderedQty, s.suggestedQty);
+        if (nextQty !== lines[idx].orderedQty) {
+          lines[idx] = { ...lines[idx], orderedQty: nextQty };
+          changed = true;
+        }
+      }
+    }
+    if (changed) {
+      const totals = recomputeTotals(lines, maps.unitCost);
+      next[targetIdx] = { ...target, lines, items: totals.items, amount: totals.amount };
+      mergedCount += 1;
+    }
+  }
+
+  return { orders: [...created, ...next], created: created.length, merged: mergedCount };
 }
